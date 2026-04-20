@@ -1,0 +1,12 @@
+steps:
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - build
+      - -t
+      - '$_IMAGE'
+      - -f
+      - ingest/Dockerfile   # Dockerfile is inside ingest/, build context is repo root
+      - .                   # repo root = build context (needed for COPY config/cities.csv)
+
+images:
+  - '$_IMAGE'

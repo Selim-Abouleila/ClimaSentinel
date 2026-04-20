@@ -33,7 +33,8 @@ bootstrap:
 build:
 	@echo "Submitting build to Cloud Build: $(IMAGE_URI)"
 	gcloud builds submit \
-		--tag $(IMAGE_URI) \
+		--config cloudbuild.yaml \
+		--substitutions _IMAGE=$(IMAGE_URI) \
 		--region $(GCP_REGION) \
 		--project $(GCP_PROJECT_ID) \
 		.
