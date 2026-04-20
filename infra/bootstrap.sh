@@ -129,8 +129,24 @@ else
 fi
 # ──────────────────────────────────────────────────────────────────────────────
 
+
+# ─── BigQuery cost cap (1 GB max per query) ───────────────────────────────────
+BQ_ALIAS="alias bq='bq --maximum_bytes_billed=1073741824'"
+BASHRC="$HOME/.bashrc"
+
+if grep -qF "maximum_bytes_billed" "$BASHRC" 2>/dev/null; then
+  warn "BQ cost cap alias already set in $BASHRC — skipping."
+else
+  echo "$BQ_ALIAS" >> "$BASHRC"
+  # shellcheck disable=SC1090
+  source "$BASHRC"
+  info "BQ cost cap set: max 1 GB scanned per query (~\$0.005 max)."
+fi
+# ──────────────────────────────────────────────────────────────────────────────
+
 echo ""
 info "Bootstrap complete!"
 info "GCS bucket  : gs://$BUCKET_NAME"
 info "Backend file: $BACKEND_FILE"
+info "BQ cap      : 1 GB max per query (alias in ~/.bashrc)"
 info "Next steps  : add your resources to infra/terraform/ and run 'terraform plan'."
