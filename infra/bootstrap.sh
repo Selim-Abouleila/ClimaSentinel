@@ -70,7 +70,28 @@ info "Enabling required GCP APIs..."
 gcloud services enable \
   storage.googleapis.com \
   cloudresourcemanager.googleapis.com \
+  artifactregistry.googleapis.com \
+  run.googleapis.com \
+  cloudscheduler.googleapis.com \
+  bigquery.googleapis.com \
   --project="$PROJECT_ID"
+# ──────────────────────────────────────────────────────────────────────────────
+
+# ─── Artifact Registry — create Docker repo (needed before make deploy) ───────
+AR_REPO="clima-sentinel"
+info "Checking Artifact Registry repo: $AR_REPO ..."
+if gcloud artifacts repositories describe "$AR_REPO" \
+    --location="$REGION" --project="$PROJECT_ID" >/dev/null 2>&1; then
+  warn "Artifact Registry repo '$AR_REPO' already exists — skipping."
+else
+  info "Creating Artifact Registry Docker repo: $AR_REPO ..."
+  gcloud artifacts repositories create "$AR_REPO" \
+    --repository-format=docker \
+    --location="$REGION" \
+    --project="$PROJECT_ID" \
+    --description="Docker images for ClimaSentinel Cloud Run jobs"
+  info "Artifact Registry repo created."
+fi
 # ──────────────────────────────────────────────────────────────────────────────
 
 # ─── Create GCS bucket ────────────────────────────────────────────────────────
