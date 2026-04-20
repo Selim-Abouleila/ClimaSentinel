@@ -12,6 +12,7 @@ AIR_QUALITY_API_URL = "https://air-quality-api.open-meteo.com/v1/air-quality"
 def fetch_weather_forecast(city: dict) -> list[dict]:
     """
     Fetch hourly weather forecast for the next 7 days.
+    Intended cadence: once daily (cron: 0 6 * * *)
     Returns a list of flat row dicts ready for BigQuery insertion.
     """
     params = {
@@ -19,7 +20,7 @@ def fetch_weather_forecast(city: dict) -> list[dict]:
         "longitude": city["longitude"],
         "hourly": "temperature_2m,precipitation,wind_speed_10m,wind_gusts_10m,weather_code",
         "timezone": city["timezone"],
-        "forecast_days": 7,
+        "forecast_days": 7,   # 7 days × 24h = 168 rows per city
     }
 
     response = requests.get(WEATHER_API_URL, params=params, timeout=30)
@@ -46,7 +47,9 @@ def fetch_weather_forecast(city: dict) -> list[dict]:
 
 def fetch_air_quality(city: dict) -> list[dict]:
     """
-    Fetch hourly air quality data for the next 2 days.
+    Fetch hourly air quality data for the next 5 days.
+    Intended cadence: once daily (cron: 0 6 * * *)
+    5 days used (instead of 2) since we only ingest once per day.
     Returns a list of flat row dicts ready for BigQuery insertion.
     """
     params = {
@@ -54,7 +57,7 @@ def fetch_air_quality(city: dict) -> list[dict]:
         "longitude": city["longitude"],
         "hourly": "european_aqi,pm2_5,pm10,no2,ozone",
         "timezone": city["timezone"],
-        "forecast_days": 2,
+        "forecast_days": 5,   # 5 days × 24h = 120 rows per city
     }
 
     response = requests.get(AIR_QUALITY_API_URL, params=params, timeout=30)
