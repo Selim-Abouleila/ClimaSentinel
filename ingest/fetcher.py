@@ -55,7 +55,7 @@ def fetch_air_quality(city: dict) -> list[dict]:
     params = {
         "latitude": city["latitude"],
         "longitude": city["longitude"],
-        "hourly": "european_aqi,pm2_5,pm10,no2,ozone",
+        "hourly": "european_aqi,pm2_5,pm10,nitrogen_dioxide,ozone",
         "timezone": city["timezone"],
         "forecast_days": 5,   # 5 days × 24h = 120 rows per city
     }
@@ -75,7 +75,7 @@ def fetch_air_quality(city: dict) -> list[dict]:
             "european_aqi":  hourly["european_aqi"][i],
             "pm2_5":         hourly["pm2_5"][i],
             "pm10":          hourly["pm10"][i],
-            "no2":           hourly["no2"][i],
+            "no2":           hourly["nitrogen_dioxide"][i],
             "o3":            hourly["ozone"][i],
         })
 
