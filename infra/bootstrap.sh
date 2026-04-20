@@ -74,6 +74,7 @@ gcloud services enable \
   run.googleapis.com \
   cloudscheduler.googleapis.com \
   bigquery.googleapis.com \
+  cloudbuild.googleapis.com \
   --project="$PROJECT_ID"
 # ──────────────────────────────────────────────────────────────────────────────
 

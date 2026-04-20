@@ -29,15 +29,15 @@ bootstrap:
 	@chmod +x infra/bootstrap.sh
 	@bash infra/bootstrap.sh
 
-## Build & push the ingest Docker image to Artifact Registry
+## Build & push the ingest Docker image via Cloud Build (no local Docker auth needed)
 build:
-	@echo "Configuring Docker for Artifact Registry..."
-	gcloud auth configure-docker $(GCP_REGION)-docker.pkg.dev --quiet
-	@echo "Building image: $(IMAGE_URI)"
-	docker build -t $(IMAGE_URI) -f ingest/Dockerfile .
-	@echo "Pushing image: $(IMAGE_URI)"
-	docker push $(IMAGE_URI)
-	@echo "Image pushed successfully."
+	@echo "Submitting build to Cloud Build: $(IMAGE_URI)"
+	gcloud builds submit \
+		--tag $(IMAGE_URI) \
+		--region $(GCP_REGION) \
+		--project $(GCP_PROJECT_ID) \
+		.
+	@echo "Image built and pushed successfully: $(IMAGE_URI)"
 
 ## Build image then deploy GCP resources (terraform plan + apply)
 deploy: build
