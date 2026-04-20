@@ -1,0 +1,11 @@
+city_id,city_name,country_code,latitude,longitude,timezone,region,active,river_enabled,display_order
+paris_fr,Paris,FR,48.85341,2.3488,Europe/Paris,Western Europe,true,true,1
+london_gb,London,GB,51.50853,-0.12574,Europe/London,Western Europe,true,false,2
+madrid_es,Madrid,ES,40.4165,-3.70256,Europe/Madrid,Southern Europe,true,false,3
+berlin_de,Berlin,DE,52.52437,13.41053,Europe/Berlin,Central Europe,true,false,4
+rome_it,Rome,IT,41.89193,12.51133,Europe/Rome,Southern Europe,true,false,5
+amsterdam_nl,Amsterdam,NL,52.37403,4.88969,Europe/Amsterdam,Western Europe,true,true,6
+athens_gr,Athens,GR,37.98376,23.72784,Europe/Athens,Southern Europe,true,false,7
+warsaw_pl,Warsaw,PL,52.22977,21.01178,Europe/Warsaw,Central Europe,true,true,8
+lisbon_pt,Lisbon,PT,38.71667,-9.13333,Europe/Lisbon,Southern Europe,true,false,9
+stockholm_se,Stockholm,SE,59.32938,18.06871,Europe/Stockholm,Northern Europe,true,false,10
