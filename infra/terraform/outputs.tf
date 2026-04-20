@@ -10,7 +10,7 @@ output "scheduler_job_name" {
 
 output "artifact_registry_repo" {
   description = "Artifact Registry repo URI for pushing the ingest Docker image"
-  value       = "${var.region}-docker.pkg.dev/${var.project_id}/${google_artifact_registry_repository.ingest.repository_id}"
+  value       = "${var.region}-docker.pkg.dev/${var.project_id}/clima-sentinel"
 }
 
 output "ingest_sa_email" {

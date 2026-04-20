@@ -29,16 +29,6 @@ resource "google_project_service" "apis" {
   disable_on_destroy = false
 }
 
-# ─── Artifact Registry — Docker image repository ──────────────────────────────
-resource "google_artifact_registry_repository" "ingest" {
-  repository_id = "clima-sentinel"
-  format        = "DOCKER"
-  location      = var.region
-  description   = "Docker images for ClimaSentinel Cloud Run jobs"
-
-  depends_on = [google_project_service.apis]
-}
-
 # ─── Service Account — runs the ingest job ────────────────────────────────────
 resource "google_service_account" "ingest_sa" {
   account_id   = "ingest-sa"
@@ -79,10 +69,6 @@ resource "google_cloud_run_v2_job" "ingest" {
         env {
           name  = "BQ_DATASET_RAW"
           value = "raw"
-        }
-        env {
-          name  = "BQ_DATASET_OPS"
-          value = "ops"
         }
         env {
           name  = "GCP_REGION"
@@ -126,7 +112,7 @@ resource "google_cloud_scheduler_job" "ingest_daily" {
   schedule         = var.ingest_schedule
   time_zone        = "UTC"
   attempt_deadline = "600s"
-  region           = var.region
+  region           = "europe-west1"  # Scheduler is not available in europe-west9
 
   http_target {
     http_method = "POST"

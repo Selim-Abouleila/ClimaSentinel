@@ -15,7 +15,7 @@ from dotenv import load_dotenv
 from google.cloud import bigquery
 
 from fetcher import fetch_weather_forecast, fetch_air_quality
-from loader import insert_weather_rows, insert_air_quality_rows, log_run
+from loader import insert_weather_rows, insert_air_quality_rows
 
 # ─── Logging ──────────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -31,7 +31,6 @@ load_dotenv(Path(__file__).parent.parent / ".env")
 
 PROJECT_ID   = os.environ["GCP_PROJECT_ID"]
 DATASET_RAW  = os.getenv("BQ_DATASET_RAW", "raw")
-DATASET_OPS  = os.getenv("BQ_DATASET_OPS", "ops")
 CITIES_CSV   = Path(__file__).parent.parent / "config" / "cities.csv"
 
 
@@ -91,17 +90,6 @@ def run():
     # ── Log run result ────────────────────────────────────────────────────────
     total_rows    = total_weather_rows + total_air_rows
     status        = "success" if not errors else "partial_failure" if total_rows > 0 else "failure"
-    error_message = " | ".join(errors) if errors else None
-
-    log_run(
-        client, PROJECT_ID, DATASET_OPS,
-        run_id=run_id,
-        source_name="open_meteo",
-        started_at=started_at,
-        status=status,
-        rows_loaded=total_rows,
-        error_message=error_message,
-    )
 
     log.info(
         f"Run {run_id} complete — status={status} "
