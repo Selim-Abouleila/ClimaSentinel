@@ -18,7 +18,7 @@ make bootstrap
 make deploy
 ```
 
-See the full guide in [docs/bootstrap-initialization.md](docs/bootstrap-initialization.md).
+See the full guide in [docs/1-bootstrap-initialization.md](docs/1-bootstrap-initialization.md).
 
 ### All commands
 
@@ -35,4 +35,5 @@ See the full guide in [docs/bootstrap-initialization.md](docs/bootstrap-initiali
 
 | Document | Description |
 |---|---|
-| [Bootstrap Initialization](docs/bootstrap-initialization.md) | How to clone this project in GCP Cloud Shell and initialize the Terraform remote state backend |
+| [1. Bootstrap Initialization](docs/1-bootstrap-initialization.md) | How to clone this project in GCP Cloud Shell and initialize the Terraform remote state backend |
+| [2. Ingestion Pipeline](docs/2-ingestion-pipeline.md) | Details on the Cloud Run and BigQuery pipeline architecture and real-time APIs fetched |

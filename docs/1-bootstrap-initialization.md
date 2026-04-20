@@ -1,4 +1,4 @@
-# Bootstrap Initialization Guide
+# 1. Bootstrap Initialization Guide
 
 This document describes how to clone the ClimaSentinel repository into GCP Cloud Shell and initialize the Terraform remote state backend on Google Cloud Storage (GCS).
 
