@@ -28,9 +28,11 @@ See the full guide in [docs/1-bootstrap-initialization.md](docs/1-bootstrap-init
 |---|---|
 | `make bootstrap` | Enable GCP APIs, create Artifact Registry repo, GCS state bucket, init Terraform |
 | `make build` | Build & push the ingest Docker image via Cloud Build |
-| `make deploy` | Build image + `terraform plan` + `terraform apply` |
+| `make deploy` | Full pipeline: build image + terraform apply + dbt run + dbt test |
 | `make plan` | Dry run — show changes without applying |
 | `make destroy` | Tear down all GCP resources |
+| `make dbt-stg` | Run staging dbt models only |
+| `make dbt-test` | Run dbt schema tests |
 
 ---
 
@@ -52,7 +54,7 @@ flowchart LR
         region: europe-west9
         1 vCPU · 512 MB · 600s"]
 
-        BQ["🗄️ BigQuery
+        BQ_RAW["🗄️ BigQuery (Bronze)
         ─────────────
         raw.weather_forecast_hourly
         raw.air_quality_hourly
@@ -60,8 +62,28 @@ flowchart LR
         raw.flood_daily
         raw.climate_projections_daily"]
 
+        DBT["⚙️ dbt (Transform)
+        ─────────────
+        Dedup, harmonize, aggregate
+        Runs after Terraform apply"]
+
+        BQ_STG["🗄️ BigQuery (Silver)
+        ─────────────
+        stg.stg_latest_*
+        stg.stg_city_daily_*
+        stg.stg_city_signal_input"]
+
+        BQ_MART["🗄️ BigQuery (Gold)
+        ─────────────
+        mart.city_score_current
+        mart.city_score_history
+        mart.city_zone_current"]
+
         SCH -->|"HTTP POST (OAuth2)"| CRJ
-        CRJ -->|"Streaming inserts"| BQ
+        CRJ -->|"Streaming inserts"| BQ_RAW
+        BQ_RAW --> DBT
+        DBT -->|"Views"| BQ_STG
+        DBT -->|"Tables"| BQ_MART
     end
 
     subgraph APIs["Open-Meteo APIs (Free · No API key)"]
@@ -112,16 +134,15 @@ flowchart LR
 
 ---
 
-## BigQuery Datasets
+## BigQuery Datasets (Medallion Architecture)
 
-| Dataset | Purpose | Key Tables |
-|---|---|---|
-| `cfg` | Configuration tables | `city`, `metric`, `parameters`, `flood_override` |
-| `raw` | Raw API loads — append-only, partitioned by day | `weather_forecast_hourly`, `air_quality_hourly`, `flood_daily`, `historical_weather_daily`, `climate_projections_daily` |
-| `stg` | Staging & harmonization — latest clean views | `latest_weather_hourly`, `city_signal_input` |
-| `mart` | Analytics marts — aggregated scores | `city_score_history`, `city_score_current`, `city_zone_current` |
+| Layer | Dataset | Purpose | Key Tables | Status |
+|---|---|---|---|---|
+| 🥉 Bronze | `raw` | Raw API loads — append-only, partitioned by day | `weather_forecast_hourly`, `air_quality_hourly`, `flood_daily`, `historical_weather_daily`, `climate_projections_daily` | ✅ Live |
+| 🥈 Silver | `stg` | Deduplicated, harmonized daily views (dbt) | `stg_latest_weather_hourly`, `stg_latest_air_quality_hourly`, `stg_latest_flood_daily`, `stg_latest_historical_daily`, `stg_city_daily_weather`, `stg_city_daily_air_quality`, `stg_city_signal_input` | ✅ Live |
+| 🥇 Gold | `mart` | Tipping scores, city ranking, driver attribution | `city_score_current`, `city_score_history`, `city_zone_current` | 🔜 Next |
 
-> **Note:** `raw` tables are auto-created on first run by the ingestion job. `stg` and `mart` layers are the next phase of development (SQL transformations).
+> **Bronze** tables are auto-created by the ingest job. **Silver** views are managed by dbt and deployed via `make deploy`. **Gold** marts are the next phase of development.
 
 ---
 
@@ -147,4 +168,5 @@ flowchart LR
 | Document | Description |
 |---|---|
 | [1. Bootstrap Initialization](docs/1-bootstrap-initialization.md) | How to clone this project in GCP Cloud Shell and initialize the Terraform remote state backend |
-| [2. Ingestion Pipeline](docs/2-ingestion-pipeline.md) | Details on the Cloud Run and BigQuery pipeline architecture and real-time APIs fetched |
+| [2. Ingestion Pipeline](docs/2-ingestion-pipeline.md) | Details on the Cloud Run and BigQuery pipeline architecture and the 5 Open-Meteo APIs fetched |
+| [3. Staging Layer](docs/3-staging-layer.md) | Silver layer: dbt deduplication, daily aggregation, and the unified `city_signal_input` view |
