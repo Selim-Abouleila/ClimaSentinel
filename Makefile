@@ -52,6 +52,8 @@ deploy: build
 		-var="ingest_image=$(IMAGE_URI)"
 	@terraform -chdir=$(TF_DIR) apply tfplan
 	@echo ""
+	@echo "── Installing dbt (if needed) ──────────────────────────────────"
+	@pip install -q -r $(DBT_DIR)/requirements.txt
 	@echo "── Running dbt models (staging views) ──────────────────────────"
 	@dbt run --project-dir $(DBT_DIR) --profiles-dir $(DBT_DIR)
 	@echo ""
