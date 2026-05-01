@@ -1,0 +1,96 @@
+version: 2
+
+models:
+  # ─── Dedup views ────────────────────────────────────────────────────────────
+  - name: stg_latest_weather_hourly
+    description: >
+      Deduplicated weather forecast — one row per (city_id, valid_ts_utc).
+      Keeps only the most recently ingested forecast for each city-hour pair.
+    columns:
+      - name: city_id
+        tests: [not_null]
+      - name: valid_ts_utc
+        tests: [not_null]
+
+  - name: stg_latest_air_quality_hourly
+    description: >
+      Deduplicated air quality — one row per (city_id, valid_ts_utc).
+    columns:
+      - name: city_id
+        tests: [not_null]
+      - name: valid_ts_utc
+        tests: [not_null]
+
+  - name: stg_latest_flood_daily
+    description: >
+      Deduplicated river discharge — one row per (city_id, date).
+      Only river-enabled cities (Paris, Amsterdam, Warsaw).
+    columns:
+      - name: city_id
+        tests: [not_null]
+      - name: date
+        tests: [not_null]
+
+  - name: stg_latest_historical_daily
+    description: >
+      Deduplicated ERA5 historical weather — one row per (city_id, date).
+    columns:
+      - name: city_id
+        tests: [not_null]
+      - name: date
+        tests: [not_null]
+
+  # ─── Aggregation views ─────────────────────────────────────────────────────
+  - name: stg_city_daily_weather
+    description: >
+      Daily weather aggregation — one row per (city_id, date).
+      Rolls up hourly weather into daily min/max/mean temperature,
+      total precipitation, and max wind speed.
+    columns:
+      - name: city_id
+        tests: [not_null]
+      - name: date
+        tests: [not_null]
+      - name: hour_count
+        description: Number of hourly readings. Expect 24 for a complete day.
+
+  - name: stg_city_daily_air_quality
+    description: >
+      Daily air quality aggregation — one row per (city_id, date).
+      Rolls up hourly AQ readings into daily mean/max AQI,
+      mean PM2.5, PM10, NO₂, O₃.
+    columns:
+      - name: city_id
+        tests: [not_null]
+      - name: date
+        tests: [not_null]
+      - name: hour_count
+        description: Number of hourly readings. Expect 24 for a complete day.
+
+  # ─── Unified signal table ──────────────────────────────────────────────────
+  - name: stg_city_signal_input
+    description: >
+      ⭐ Key deliverable of the Silver layer.
+      Unified daily signal table — one row per (city_id, date) joining
+      weather, air quality, river discharge, and historical baseline.
+      This is the sole input for the Gold/mart tipping-score layer.
+      CMIP6 climate projections are excluded (different grain).
+    columns:
+      - name: city_id
+        tests:
+          - not_null
+      - name: date
+        tests:
+          - not_null
+      - name: temperature_2m_mean
+        description: Daily mean temperature from forecast (°C)
+      - name: precipitation_sum_mm
+        description: Total daily precipitation from forecast (mm)
+      - name: wind_speed_10m_max
+        description: Max daily wind speed from forecast (km/h)
+      - name: european_aqi_mean
+        description: Daily mean European AQI (nullable if AQ data missing)
+      - name: river_discharge_m3s
+        description: River discharge in m³/s (NULL for non-river-enabled cities)
+      - name: hist_temperature_2m_mean
+        description: ERA5 historical mean temp (NULL if date outside ERA5 lag window)

@@ -1,0 +1,121 @@
+version: 2
+
+sources:
+  - name: raw
+    description: >
+      Bronze layer — raw append-only tables loaded daily by the ingest Cloud Run job.
+      Each run appends new rows; duplicates are expected across overlapping forecast windows.
+    database: "{{ var('project_id', target.project) }}"
+    schema: raw
+    tables:
+      - name: weather_forecast_hourly
+        description: >
+          Hourly weather forecast data (7-day window) from Open-Meteo Forecast API.
+          168 rows per city per daily ingestion run.
+        columns:
+          - name: city_id
+            description: City identifier matching config/cities.csv
+          - name: valid_ts_utc
+            description: Forecast validity timestamp (hourly)
+          - name: ingested_at_utc
+            description: UTC timestamp of the ingestion run
+          - name: ingestion_run_id
+            description: UUID of the ingestion run (for lineage)
+          - name: temperature_2m
+            description: Temperature at 2m height in °C
+          - name: precipitation_mm
+            description: Precipitation in mm/hour
+          - name: wind_speed_10m
+            description: Wind speed at 10m in km/h
+          - name: wind_gusts_10m
+            description: Wind gusts at 10m in km/h
+          - name: weather_code
+            description: WMO weather interpretation code
+
+      - name: air_quality_hourly
+        description: >
+          Hourly air quality data (5-day window) from Open-Meteo Air Quality API.
+          120 rows per city per daily ingestion run.
+        columns:
+          - name: city_id
+            description: City identifier
+          - name: valid_ts_utc
+            description: Forecast validity timestamp (hourly)
+          - name: ingested_at_utc
+            description: UTC timestamp of the ingestion run
+          - name: ingestion_run_id
+            description: UUID of the ingestion run
+          - name: european_aqi
+            description: European Air Quality Index (0-500)
+          - name: pm2_5
+            description: Particulate matter < 2.5 µm in µg/m³
+          - name: pm10
+            description: Particulate matter < 10 µm in µg/m³
+          - name: no2
+            description: Nitrogen dioxide in µg/m³
+          - name: o3
+            description: Ozone in µg/m³
+
+      - name: flood_daily
+        description: >
+          Daily river discharge forecast (7-day window) from Open-Meteo Flood API.
+          Only ingested for river-enabled cities (Paris, Amsterdam, Warsaw).
+        columns:
+          - name: city_id
+            description: City identifier
+          - name: date
+            description: Forecast date
+          - name: ingested_at_utc
+            description: UTC timestamp of the ingestion run
+          - name: ingestion_run_id
+            description: UUID of the ingestion run
+          - name: river_discharge_m3s
+            description: River discharge in m³/s (nearest river within 5 km)
+
+      - name: historical_weather_daily
+        description: >
+          ERA5 reanalysis daily weather (rolling 7-day window, offset by 6-12 days for publication lag).
+          7 rows per city per daily ingestion run.
+        columns:
+          - name: city_id
+            description: City identifier
+          - name: date
+            description: Historical observation date
+          - name: ingested_at_utc
+            description: UTC timestamp of the ingestion run
+          - name: ingestion_run_id
+            description: UUID of the ingestion run
+          - name: temperature_2m_mean
+            description: Daily mean temperature in °C
+          - name: temperature_2m_max
+            description: Daily max temperature in °C
+          - name: temperature_2m_min
+            description: Daily min temperature in °C
+          - name: precipitation_sum_mm
+            description: Total daily precipitation in mm
+          - name: wind_speed_10m_max
+            description: Max daily wind speed in km/h
+
+      - name: climate_projections_daily
+        description: >
+          CMIP6 climate projections (10-year daily window) from Open-Meteo Climate API.
+          Only ingested on the 1st of each month. ~3,650 rows per city per run.
+        columns:
+          - name: city_id
+            description: City identifier
+          - name: date
+            description: Projected date
+          - name: ingested_at_utc
+            description: UTC timestamp of the ingestion run
+          - name: ingestion_run_id
+            description: UUID of the ingestion run
+          - name: model
+            description: Climate model name (MRI_AGCM3_2_S)
+          - name: temperature_2m_max
+            description: Projected daily max temperature in °C
+          - name: temperature_2m_min
+            description: Projected daily min temperature in °C
+          - name: precipitation_sum_mm
+            description: Projected total daily precipitation in mm
+          - name: wind_speed_10m_max
+            description: Projected max daily wind speed in km/h

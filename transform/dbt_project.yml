@@ -1,0 +1,32 @@
+# =============================================================================
+# ClimaSentinel — dbt Project Configuration
+# =============================================================================
+# Transforms raw Open-Meteo data (Bronze) into clean, deduplicated staging
+# views (Silver) and analytics marts (Gold) in BigQuery.
+# =============================================================================
+
+name: 'clima_sentinel'
+version: '1.0.0'
+
+profile: 'clima_sentinel'
+
+model-paths: ["models"]
+analysis-paths: ["analyses"]
+test-paths: ["tests"]
+seed-paths: ["seeds"]
+macro-paths: ["macros"]
+snapshot-paths: ["snapshots"]
+
+clean-targets:
+  - "target"
+  - "dbt_packages"
+
+# ─── Model materialization defaults ──────────────────────────────────────────
+models:
+  clima_sentinel:
+    stg:
+      +materialized: view          # Staging = views (always fresh, zero cost)
+      +schema: stg                 # All staging models land in the `stg` dataset
+    mart:
+      +materialized: table         # Marts = tables (precomputed for dashboard perf)
+      +schema: mart                # All mart models land in the `mart` dataset

@@ -1,0 +1,22 @@
+# =============================================================================
+# ClimaSentinel — dbt Profile
+# =============================================================================
+# This file is committed to git. It contains NO secrets.
+# All values are read from environment variables (sourced from .env by the
+# Makefile, or set in Cloud Shell / CI).
+#
+# dbt reads this via: --profiles-dir transform/
+# =============================================================================
+
+clima_sentinel:
+  target: dev
+  outputs:
+    dev:
+      type: bigquery
+      method: oauth
+      project: "{{ env_var('GCP_PROJECT_ID') }}"
+      dataset: stg
+      location: "{{ env_var('GCP_REGION', 'europe-west9') }}"
+      threads: 4
+      timeout_seconds: 300
+      priority: interactive
