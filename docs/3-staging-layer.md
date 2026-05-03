@@ -31,6 +31,14 @@ raw.historical_weather_daily ──→ stg_latest_historical_daily ────�
 
 ## Models
 
+### Static Seeds (1)
+
+Static configuration data loaded directly into BigQuery tables via `dbt seed`.
+
+| Seed | Description | Source |
+|---|---|---|
+| `city_monthly_normals` | 10-year historical averages (2014-2023) for temp, rain, wind per month. Used by Gold layer as the absolute baseline to compute tipping deviations. | `transform/seeds/city_monthly_normals.csv` (generated from Open-Meteo ERA5) |
+
 ### Deduplication Views (4)
 
 These views apply a `ROW_NUMBER() OVER (PARTITION BY ... ORDER BY ingested_at_utc DESC)` pattern to keep only the most recently ingested row for each natural key.

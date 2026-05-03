@@ -69,6 +69,7 @@ flowchart LR
 
         BQ_STG["🗄️ BigQuery (Silver)
         ─────────────
+        stg.city_monthly_normals (seed)
         stg.stg_latest_*
         stg.stg_city_daily_*
         stg.stg_city_signal_input"]
@@ -111,8 +112,12 @@ flowchart LR
 
     CITIES["📋 config/cities.csv
     10 European cities"]
+    
+    NORMALS["🌱 transform/seeds/city_monthly_normals.csv
+    10-year historical baselines"]
 
     CITIES -->|"10 cities × 5 APIs"| CRJ
+    NORMALS -->|"dbt seed"| BQ_STG
     W  --> CRJ
     AQ --> CRJ
     FL -->|"river_enabled cities only"| CRJ
@@ -139,7 +144,7 @@ flowchart LR
 | Layer | Dataset | Purpose | Key Tables | Status |
 |---|---|---|---|---|
 | 🥉 Bronze | `raw` | Raw API loads — append-only, partitioned by day | `weather_forecast_hourly`, `air_quality_hourly`, `flood_daily`, `historical_weather_daily`, `climate_projections_daily` | ✅ Live |
-| 🥈 Silver | `stg` | Deduplicated, harmonized daily views (dbt) | `stg_latest_weather_hourly`, `stg_latest_air_quality_hourly`, `stg_latest_flood_daily`, `stg_latest_historical_daily`, `stg_city_daily_weather`, `stg_city_daily_air_quality`, `stg_city_signal_input` | ✅ Live |
+| 🥈 Silver | `stg` | Static seeds and harmonized daily views (dbt) | `city_monthly_normals` (table), `stg_city_daily_weather`, `stg_city_signal_input` | ✅ Live |
 | 🥇 Gold | `mart` | Tipping scores, city ranking, driver attribution | `city_score_current`, `city_score_history`, `city_zone_current` | 🔜 Next |
 
 > **Bronze** tables are auto-created by the ingest job. **Silver** views are managed by dbt and deployed via `make deploy`. **Gold** marts are the next phase of development.
