@@ -54,6 +54,8 @@ deploy: build
 	@echo ""
 	@echo "── Installing dbt (if needed) ──────────────────────────────────"
 	@pip install -q -r $(DBT_DIR)/requirements.txt
+	@echo "── Seeding static data (CSV to BigQuery) ───────────────────────"
+	@dbt seed --project-dir $(DBT_DIR) --profiles-dir $(DBT_DIR)
 	@echo "── Running dbt models (staging views) ──────────────────────────"
 	@dbt run --project-dir $(DBT_DIR) --profiles-dir $(DBT_DIR)
 	@echo ""
