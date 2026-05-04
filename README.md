@@ -10,8 +10,8 @@ ClimaSentinel is an automated climate data pipeline running on Google Cloud Plat
 |---|---|---|---|
 | **DE1 / Lead** | Selim Abouleila | Terraform, deployments, integration, unblocking issues | GitHub, Terraform, Cloud Run, BigQuery |
 | **DE2** | Anaïs Robert | Ingestion code and raw data modelling | Python, Cloud Run, BigQuery |
-| **DA1** | Begum Sozer, Rhita Moum, Nathan Germany | Scoring logic and datamart tables (business layer) | BigQuery SQL |
-| **DA2** | Nathan Germany, Xan Doyhenart | Data validation, quality checks, Monday docs & deliverables | BigQuery SQL, docs, spreadsheets |
+| **DA1** | Begum Sozer, Rhita Moum, Nathan Germany | Scoring logic, datamart tables (business layer), dashboard | BigQuery SQL, Power BI, Streamlit |
+| **DA2** | Nathan Germany, Xan Doyhenart | Data validation, quality checks, Monday docs & deliverables | BigQuery SQL, Power BI, Streamlit, docs, spreadsheets |
 
 ---
 
