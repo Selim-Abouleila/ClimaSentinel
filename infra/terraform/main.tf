@@ -105,6 +105,27 @@ resource "google_project_iam_member" "scheduler_run_invoker" {
   member  = "serviceAccount:${google_service_account.scheduler_sa.email}"
 }
 
+# ─── Service Account — Power BI Dashboard ─────────────────────────────────────
+resource "google_service_account" "powerbi_sa" {
+  account_id   = "powerbi-sa"
+  display_name = "ClimaSentinel Power BI Service Account"
+  description  = "Used by Power BI to read Gold layer marts from BigQuery"
+}
+
+# Allow Power BI to read data from BigQuery
+resource "google_project_iam_member" "powerbi_bq_viewer" {
+  project = var.project_id
+  role    = "roles/bigquery.dataViewer"
+  member  = "serviceAccount:${google_service_account.powerbi_sa.email}"
+}
+
+# Allow Power BI to run BigQuery jobs
+resource "google_project_iam_member" "powerbi_bq_job_user" {
+  project = var.project_id
+  role    = "roles/bigquery.jobUser"
+  member  = "serviceAccount:${google_service_account.powerbi_sa.email}"
+}
+
 # ─── Cloud Scheduler — daily trigger at 06:00 UTC ────────────────────────────
 resource "google_cloud_scheduler_job" "ingest_daily" {
   name             = "clima-sentinel-ingest-daily"

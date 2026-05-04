@@ -76,9 +76,9 @@ flowchart LR
 
         BQ_MART["🗄️ BigQuery (Gold)
         ─────────────
-        mart.city_score_current
-        mart.city_score_history
-        mart.city_zone_current"]
+        mart.mart_city_score_current
+        mart.mart_city_score_history
+        mart.mart_city_zone_current"]
 
         SCH -->|"HTTP POST (OAuth2)"| CRJ
         CRJ -->|"Streaming inserts"| BQ_RAW
@@ -145,9 +145,9 @@ flowchart LR
 |---|---|---|---|---|
 | 🥉 Bronze | `raw` | Raw API loads — append-only, partitioned by day | `weather_forecast_hourly`, `air_quality_hourly`, `flood_daily`, `historical_weather_daily`, `climate_projections_daily` | ✅ Live |
 | 🥈 Silver | `stg` | Static seeds and harmonized daily views (dbt) | `city_monthly_normals` (table), `stg_city_daily_weather`, `stg_city_signal_input` | ✅ Live |
-| 🥇 Gold | `mart` | Tipping scores, city ranking, driver attribution | `city_score_current`, `city_score_history`, `city_zone_current` | 🔜 Next |
+| 🥇 Gold | `mart` | Tipping scores, city ranking, driver attribution | `mart_city_score_current`, `mart_city_score_history`, `mart_city_zone_current` | ✅ Live |
 
-> **Bronze** tables are auto-created by the ingest job. **Silver** views are managed by dbt and deployed via `make deploy`. **Gold** marts are the next phase of development.
+> **Bronze** tables are auto-created by the ingest job. **Silver** and **Gold** models are managed by dbt and deployed via `make deploy`.
 
 ---
 

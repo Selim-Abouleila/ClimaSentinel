@@ -113,4 +113,3 @@ SELECT
         ELSE 'Unknown'
     END AS primary_driver
 FROM final_scores
-ORDER BY city_id, date
