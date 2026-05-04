@@ -1,0 +1,44 @@
+version: 2
+
+models:
+  - name: mart_city_score_history
+    description: >
+      The core tipping score computation engine. Calculates the daily anomaly and velocity 
+      scores for 5 factors (Heat, Wind, Rain, Air, River) and takes the maximum to determine
+      the global tipping score and primary driver for each city.
+    columns:
+      - name: city_id
+        tests:
+          - not_null
+      - name: date
+        tests:
+          - not_null
+      - name: global_tipping_score
+        description: "The maximum of the 5 factor scores (0-100)."
+        tests:
+          - not_null
+      - name: primary_driver
+        description: "The factor driving the highest score."
+
+  - name: mart_city_score_current
+    description: >
+      Operational dashboard view filtering the history table to only today and tomorrow. 
+      Identifies the current tipping score and ranks the cities from most tense (1) to least.
+    columns:
+      - name: city_id
+        tests:
+          - not_null
+          - unique
+      - name: current_tipping_score
+        tests:
+          - not_null
+
+  - name: mart_city_zone_current
+    description: >
+      Aggregates the current city scores into 4 operational zones: Stable, Monitoring, Tipping, Critical.
+      Provides a high-level executive summary of tension across the network.
+    columns:
+      - name: zone_name
+        tests:
+          - not_null
+          - unique

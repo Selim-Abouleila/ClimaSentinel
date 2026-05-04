@@ -175,3 +175,4 @@ flowchart LR
 | [1. Bootstrap Initialization](docs/1-bootstrap-initialization.md) | How to clone this project in GCP Cloud Shell and initialize the Terraform remote state backend |
 | [2. Ingestion Pipeline](docs/2-ingestion-pipeline.md) | Details on the Cloud Run and BigQuery pipeline architecture and the 5 Open-Meteo APIs fetched |
 | [3. Staging Layer](docs/3-staging-layer.md) | Silver layer: dbt deduplication, daily aggregation, and the unified `city_signal_input` view |
+| [4. Mart Layer](docs/4-mart-layer.md) | Gold layer: Tipping Score mathematical logic, velocity math, and ranking views in the `mart` dataset |
