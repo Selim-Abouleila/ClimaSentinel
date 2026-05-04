@@ -2,6 +2,19 @@
 
 ClimaSentinel is an automated climate data pipeline running on Google Cloud Platform. It ingests real-time weather, air quality, river discharge, historical ERA5 reanalysis, and long-term CMIP6 climate projections for 10 major European cities — every day, at zero marginal cost.
 
+---
+
+## Team
+
+| Role | Members | Main Mission | Tools |
+|---|---|---|---|
+| **DE1 / Lead** | Selim Abouleila | Terraform, deployments, integration, unblocking issues | GitHub, Terraform, Cloud Run, BigQuery |
+| **DE2** | Anaïs Robert | Ingestion code and raw data modelling | Python, Cloud Run, BigQuery |
+| **DA1** | Begum Sozer, Rhita Moum, Nathan Germany | Scoring logic and datamart tables (business layer) | BigQuery SQL |
+| **DA2** | Nathan Germany, Xan Doyhenart | Data validation, quality checks, Monday docs & deliverables | BigQuery SQL, docs, spreadsheets |
+
+---
+
 ## Quick Start
 
 ```bash
