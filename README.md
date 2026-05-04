@@ -176,3 +176,4 @@ flowchart LR
 | [2. Ingestion Pipeline](docs/2-ingestion-pipeline.md) | Details on the Cloud Run and BigQuery pipeline architecture and the 5 Open-Meteo APIs fetched |
 | [3. Staging Layer](docs/3-staging-layer.md) | Silver layer: dbt deduplication, daily aggregation, and the unified `city_signal_input` view |
 | [4. Mart Layer](docs/4-mart-layer.md) | Gold layer: Tipping Score mathematical logic, velocity math, and ranking views in the `mart` dataset |
+| [5. Guide Power BI](docs/5-guide-powerbi.md) | Guide en français pour connecter Power BI Desktop aux tables `mart` et configurer le rafraîchissement automatique |
