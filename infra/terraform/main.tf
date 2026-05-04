@@ -126,6 +126,13 @@ resource "google_project_iam_member" "powerbi_bq_job_user" {
   member  = "serviceAccount:${google_service_account.powerbi_sa.email}"
 }
 
+# Allow Power BI to use BigQuery Storage API (required for fast reads)
+resource "google_project_iam_member" "powerbi_bq_read_session_user" {
+  project = var.project_id
+  role    = "roles/bigquery.readSessionUser"
+  member  = "serviceAccount:${google_service_account.powerbi_sa.email}"
+}
+
 # ─── Cloud Scheduler — daily trigger at 06:00 UTC ────────────────────────────
 resource "google_cloud_scheduler_job" "ingest_daily" {
   name             = "clima-sentinel-ingest-daily"

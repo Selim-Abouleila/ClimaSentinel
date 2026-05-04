@@ -42,8 +42,24 @@ Le compte de service Power BI a été créé et géré via Terraform dans le pro
 Dans la fenêtre qui s'ouvre :
 
 1. Sélectionnez le mode **Compte de service (Service Account)**
-2. Cliquez sur **Parcourir** et choisissez le fichier `.json` que le DE1 vous a envoyé
-3. Cliquez sur **Se connecter**
+2. Remplissez le champ **Service Account Email** :
+   ```
+   powerbi-sa@clima-sentinel.iam.gserviceaccount.com
+   ```
+3. Remplissez le champ **Service Account JSON key file contents**
+
+> ⚠️ **Important — Le JSON doit être sur une seule ligne sans espaces ni sauts de ligne.**  
+> Copier-coller le fichier `.json` directement ne fonctionne pas dans Power BI.  
+> Utilisez la commande PowerShell suivante pour le minifier et le copier automatiquement dans votre presse-papiers :
+
+```powershell
+Get-Content "C:\chemin\vers\votre-cle.json" -Raw | ConvertFrom-Json | ConvertTo-Json -Compress -Depth 10 | Set-Clipboard
+```
+
+Remplacez `C:\chemin\vers\votre-cle.json` par le chemin réel de votre fichier JSON.  
+Une fois la commande exécutée, faites **Ctrl+V** directement dans le champ Power BI.
+
+4. Cliquez sur **Connect**
 
 Power BI va maintenant se connecter à votre projet GCP en lecture seule.
 
