@@ -1,6 +1,7 @@
 """
 main.py — ClimaSentinel ingest job entrypoint
 Reads cities from config/cities.csv, fetches Open-Meteo data, loads into BigQuery raw tables.
+After ingestion, automatically triggers `dbt run` to refresh Silver and Gold layers.
 Designed to run as a Cloud Run Job triggered by Cloud Scheduler (daily at 06:00 UTC).
 
 Sources fetched per run:
@@ -12,11 +13,16 @@ Sources fetched per run:
     - Flood/River       → raw.flood_daily                (7 rows/city, daily, 7 days)
   All cities, 1st of month only:
     - Climate (CMIP6)   → raw.climate_projections_daily  (~3650 rows/city, 10-year window)
+
+Post-ingestion:
+  - dbt run            → refreshes stg views + mart tables (Silver + Gold)
 """
 
 import csv
 import logging
 import os
+import subprocess
+import sys
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -122,6 +128,40 @@ def run():
 
     if status == "failure":
         raise SystemExit(1)
+
+    # ── dbt transform (Silver + Gold) ─────────────────────────────────────────
+    run_dbt()
+
+
+def run_dbt() -> None:
+    """Invoke `dbt run` from the /app/transform directory.
+
+    Uses the profiles.yml embedded in the image (/app/transform/profiles.yml).
+    GCP authentication is handled automatically by the Cloud Run Job's service
+    account — no explicit key file required.
+
+    A dbt failure is logged as an error but does NOT raise SystemExit so that
+    raw data is always preserved even if a model has a bug.
+    """
+    dbt_dir = Path(__file__).parent.parent / "transform"
+    log.info("── dbt run starting ────────────────────────────────────────────")
+    try:
+        result = subprocess.run(
+            [
+                sys.executable, "-m", "dbt", "run",
+                "--project-dir", str(dbt_dir),
+                "--profiles-dir", str(dbt_dir),
+                "--no-use-colors",
+            ],
+            capture_output=False,   # stream stdout/stderr directly to Cloud Run logs
+            check=True,             # raises CalledProcessError on non-zero exit
+        )
+        log.info("── dbt run complete ✓ ──────────────────────────────────────────")
+    except subprocess.CalledProcessError as exc:
+        log.error(
+            f"── dbt run FAILED (exit {exc.returncode}) — "
+            "mart tables may be stale. Check logs above for details."
+        )
 
 
 if __name__ == "__main__":
