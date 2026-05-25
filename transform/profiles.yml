@@ -20,3 +20,12 @@ clima_sentinel:
       threads: 4
       timeout_seconds: 300
       priority: interactive
+    prod:
+      type: bigquery
+      method: default
+      project: "{{ env_var('GCP_PROJECT_ID') }}"
+      dataset: stg
+      location: "{{ env_var('GCP_REGION', 'europe-west9') }}"
+      threads: 4
+      timeout_seconds: 300
+      priority: interactive

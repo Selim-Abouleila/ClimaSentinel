@@ -134,29 +134,54 @@ def run():
 
 
 def run_dbt() -> None:
-    """Invoke `dbt run` from the /app/transform directory.
+    """Invoke `dbt seed` + `dbt run` from the /app/transform directory.
 
-    Uses the profiles.yml embedded in the image (/app/transform/profiles.yml).
-    GCP authentication is handled automatically by the Cloud Run Job's service
-    account — no explicit key file required.
+    Uses the profiles.yml embedded in the image (/app/transform/profiles.yml)
+    with --target prod so that dbt authenticates via Application Default
+    Credentials (the Cloud Run Job's service account), not interactive OAuth.
+
+    Runs `dbt seed` first to ensure static reference tables (e.g.
+    city_monthly_normals) exist before the mart models reference them.
 
     A dbt failure is logged as an error but does NOT raise SystemExit so that
     raw data is always preserved even if a model has a bug.
     """
     dbt_dir = Path(__file__).parent.parent / "transform"
-    log.info("── dbt run starting ────────────────────────────────────────────")
+    dbt_base_args = [
+        sys.executable, "-m", "dbt",
+        "--no-use-colors",
+    ]
+    dbt_common_flags = [
+        "--project-dir", str(dbt_dir),
+        "--profiles-dir", str(dbt_dir),
+        "--target", "prod",
+    ]
+
+    # ── dbt seed ──────────────────────────────────────────────────────────
+    log.info("── dbt seed starting ──────────────────────────────────────────")
     try:
-        result = subprocess.run(
-            [
-                sys.executable, "-m", "dbt", "run",
-                "--project-dir", str(dbt_dir),
-                "--profiles-dir", str(dbt_dir),
-                "--no-use-colors",
-            ],
-            capture_output=False,   # stream stdout/stderr directly to Cloud Run logs
-            check=True,             # raises CalledProcessError on non-zero exit
+        subprocess.run(
+            dbt_base_args + ["seed"] + dbt_common_flags,
+            capture_output=False,
+            check=True,
         )
-        log.info("── dbt run complete ✓ ──────────────────────────────────────────")
+        log.info("── dbt seed complete ✓ ────────────────────────────────────────")
+    except subprocess.CalledProcessError as exc:
+        log.error(
+            f"── dbt seed FAILED (exit {exc.returncode}) — "
+            "seed tables may be missing. Check logs above for details."
+        )
+        return  # No point running models if seeds failed
+
+    # ── dbt run ───────────────────────────────────────────────────────────
+    log.info("── dbt run starting ───────────────────────────────────────────")
+    try:
+        subprocess.run(
+            dbt_base_args + ["run"] + dbt_common_flags,
+            capture_output=False,
+            check=True,
+        )
+        log.info("── dbt run complete ✓ ─────────────────────────────────────────")
     except subprocess.CalledProcessError as exc:
         log.error(
             f"── dbt run FAILED (exit {exc.returncode}) — "
