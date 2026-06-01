@@ -106,7 +106,7 @@ def run():
         totals["weather"]    += _fetch_and_insert("weather",    fetch_weather_forecast,   insert_weather_rows,            city, client, run_id, started_at, errors)
         totals["air_quality"]+= _fetch_and_insert("air_quality",fetch_air_quality,        insert_air_quality_rows,        city, client, run_id, started_at, errors)
         totals["historical"] += _fetch_and_insert("historical", fetch_historical_weather, insert_historical_weather_rows, city, client, run_id, started_at, errors)
-        totals["climate"]    += _fetch_and_insert("climate",    fetch_climate_projection, insert_climate_projection_rows, city, client, run_id, started_at, errors)
+        # totals["climate"]    += _fetch_and_insert("climate",    fetch_climate_projection, insert_climate_projection_rows, city, client, run_id, started_at, errors)
 
         # Flood only for river-enabled cities
         if city.get("river_enabled", "false").lower() == "true":
