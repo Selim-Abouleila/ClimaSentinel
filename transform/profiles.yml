@@ -22,7 +22,7 @@ clima_sentinel:
       priority: interactive
     prod:
       type: bigquery
-      method: default
+      method: oauth
       project: "{{ env_var('GCP_PROJECT_ID') }}"
       dataset: stg
       location: "{{ env_var('GCP_REGION', 'europe-west9') }}"
