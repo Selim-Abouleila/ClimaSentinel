@@ -36,10 +36,12 @@ resource "google_service_account" "ingest_sa" {
   description  = "Used by the Cloud Run ingest job to write to BigQuery"
 }
 
-# Allow ingest SA to write data to BigQuery
-resource "google_project_iam_member" "ingest_bq_editor" {
+# Allow ingest SA to manage BigQuery datasets and tables (dbt needs to
+# create datasets like `mart` and `stg`, not just write to existing ones).
+# dataOwner = dataEditor + datasets.create/update/delete.
+resource "google_project_iam_member" "ingest_bq_data_owner" {
   project = var.project_id
-  role    = "roles/bigquery.dataEditor"
+  role    = "roles/bigquery.dataOwner"
   member  = "serviceAccount:${google_service_account.ingest_sa.email}"
 }
 
