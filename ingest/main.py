@@ -22,7 +22,6 @@ import csv
 import logging
 import os
 import subprocess
-import sys
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -148,7 +147,7 @@ def run_dbt() -> None:
     """
     dbt_dir = Path(__file__).parent.parent / "transform"
     dbt_base_args = [
-        sys.executable, "-m", "dbt",
+        "dbt",
         "--no-use-colors",
     ]
     dbt_common_flags = [
