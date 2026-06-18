@@ -24,7 +24,7 @@ def train_model():
     print("Loading data snapshot...")
     df = pd.read_csv("model/data/training_snapshot.csv")
     
-    features = ['temp_max', 'temp_min', 'precip_sum', 'wind_max', 'aqi_max', 'river_discharge_m3s']
+    features = ['temperature_2m_max', 'temperature_2m_min', 'precipitation_sum_mm', 'wind_speed_10m_max', 'european_aqi_max', 'river_discharge_m3s']
     target = 'future_tipping_score_7d'
     
     X = df[features]

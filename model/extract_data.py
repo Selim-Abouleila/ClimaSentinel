@@ -15,11 +15,11 @@ def extract_data():
         SELECT 
             f.city_id,
             f.date,
-            f.temp_max,
-            f.temp_min,
-            f.precip_sum,
-            f.wind_max,
-            f.aqi_max,
+            f.temperature_2m_max,
+            f.temperature_2m_min,
+            f.precipitation_sum_mm,
+            f.wind_speed_10m_max,
+            f.european_aqi_max,
             f.river_discharge_m3s,
             LEAD(s.global_tipping_score, 7) OVER (PARTITION BY f.city_id ORDER BY f.date) as future_tipping_score_7d
         FROM `{project_id}.{staging_dataset}.stg_city_signal_input` f
