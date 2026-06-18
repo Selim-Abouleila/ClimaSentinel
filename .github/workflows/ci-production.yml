@@ -1,0 +1,47 @@
+# ─────────────────────────────────────────────────────────────────────────
+# CI Pipeline: staging → main (Production)
+#
+# Triggered when code is pushed to 'main' (i.e., PR merged from staging).
+# Requires passing model promotion gates before deploying to production.
+# ─────────────────────────────────────────────────────────────────────────
+
+name: CI — Deploy to Production
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  promotion-gates:
+    name: Model Promotion Gates
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # TODO: Implement actual quality gates
+      # Examples: accuracy threshold, latency limit, schema compatibility
+      - name: Run quality gates (placeholder)
+        run: echo "🔒 Running model promotion quality gates..."
+
+      - name: Verify model meets production criteria (placeholder)
+        run: echo "✅ Model promotion gates passed"
+
+  deploy-production:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    needs: promotion-gates
+    environment: production
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # TODO: Add actual production deployment steps
+      - name: Deploy to production (placeholder)
+        run: echo "🚀 Deploy to production environment — configure deployment target"
+
+      # TODO: Promote model to Production stage in MLflow registry
+      - name: Promote model in registry (placeholder)
+        run: echo "🏆 Promote model to Production stage in MLflow registry"
