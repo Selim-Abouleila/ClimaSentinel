@@ -18,7 +18,8 @@ class Settings(BaseSettings):
     # GCP / BigQuery
     GCP_PROJECT_ID: str = "clima-sentinel"
     GCP_CREDENTIALS_JSON: Optional[str] = None
-    BQ_DATASET: str = "dbt_marts"  # adjust if your dataset name is different
+    BQ_DATASET: str = "dbt_marts"
+    BQ_LOCATION: str = "EU"  # Default to EU if not US
 
     model_config = {"env_file": ".env"}
 
