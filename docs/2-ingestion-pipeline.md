@@ -115,3 +115,55 @@ These fields enable deduplication in the staging layer and full audit trail of w
 ## Table Auto-Creation
 
 You do not need to manage BigQuery table schemas manually or via Terraform. The Python script (`loader.py`) uses `client.create_table(exists_ok=True)` to dynamically spin up all five raw tables on its very first run, saving you from writing extensive and verbose DDL files.
+
+---
+
+## Post-Ingestion: Automated dbt Run
+
+After all raw data has been successfully loaded into BigQuery, the Cloud Run Job **automatically triggers `dbt run`** to rebuild the Silver (staging views) and Gold (mart tables) layers in the same execution.
+
+### How it works
+
+```
+Cloud Scheduler (06:00 UTC)
+    → Cloud Run Job starts
+        → [1] Ingest: fetch 5 APIs × 10 cities → raw.* tables   ✅
+        → [2] Transform: dbt run → stg.* views + mart.* tables   ✅
+    → Job exits
+```
+
+The `run_dbt()` function in `main.py` invokes dbt as a subprocess using the `transform/` directory bundled inside the Docker image:
+
+```python
+subprocess.run([sys.executable, "-m", "dbt", "run",
+    "--project-dir", "/app/transform",
+    "--profiles-dir", "/app/transform",
+    "--no-use-colors"])
+```
+
+Authentication is handled automatically via the Cloud Run Job's service account — no JSON key file is required (`method: oauth` in `profiles.yml`).
+
+### Failure behaviour
+
+| Scenario | Outcome |
+|---|---|
+| Ingestion fails entirely (0 rows inserted) | Job exits with code 1 — dbt is **not** triggered |
+| Ingestion partial success (some rows inserted) | dbt **is** triggered — mart tables are refreshed with available data |
+| dbt fails (model error, schema change, etc.) | Logged as `ERROR` — job exits **0** so raw data is always preserved |
+
+### Verifying in logs
+
+In GCP Console → **Cloud Run** → **Jobs** → `clima-sentinel-ingest` → select an execution → **Logs**, you will see:
+
+```
+── dbt run starting ──────────────────────────────────────────────
+Running with dbt=1.x.x
+...
+Completed successfully
+── dbt run complete ✓ ──────────────────────────────────────────
+```
+
+If dbt fails, the log will show:
+```
+── dbt run FAILED (exit 1) — mart tables may be stale. Check logs above for details.
+```
