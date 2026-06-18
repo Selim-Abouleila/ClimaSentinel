@@ -89,7 +89,7 @@ def get_current_scores(limit: int = 10):
         client = get_bq_client()
         # Querying the current scores mart as an example
         query = f"""
-            SELECT city_id, current_tipping_score
+            SELECT city_id, current_tipping_score, current_primary_driver
             FROM `{settings.GCP_PROJECT_ID}.{settings.BQ_DATASET}.mart_city_score_current`
             ORDER BY current_tipping_score DESC
             LIMIT @limit
