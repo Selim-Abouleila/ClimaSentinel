@@ -58,9 +58,15 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # TODO: Add actual deployment steps (e.g., Railway, Render, etc.)
-      - name: Deploy to staging (placeholder)
-        run: echo "🚀 Deploy to staging environment — configure deployment target"
+      - name: Install Railway CLI
+        run: npm install -g @railway/cli
+
+      - name: Deploy to Railway
+        run: railway up --detach
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          RAILWAY_PROJECT_ID: ${{ secrets.RAILWAY_PROJECT_ID }}
+          RAILWAY_SERVICE_ID: ${{ secrets.RAILWAY_SERVICE_ID }}
 
       # TODO: Deploy candidate model from MLflow registry
       - name: Deploy candidate model (placeholder)

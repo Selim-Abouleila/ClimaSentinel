@@ -38,9 +38,15 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # TODO: Add actual production deployment steps
-      - name: Deploy to production (placeholder)
-        run: echo "🚀 Deploy to production environment — configure deployment target"
+      - name: Install Railway CLI
+        run: npm install -g @railway/cli
+
+      - name: Deploy to Railway
+        run: railway up --detach
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          RAILWAY_PROJECT_ID: ${{ secrets.RAILWAY_PROJECT_ID }}
+          RAILWAY_SERVICE_ID: ${{ secrets.RAILWAY_SERVICE_ID }}
 
       # TODO: Promote model to Production stage in MLflow registry
       - name: Promote model in registry (placeholder)
