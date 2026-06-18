@@ -39,7 +39,7 @@ jobs:
 
       - name: Extract Raw Data Snapshot from BigQuery
         env:
-          GCP_PROJECT_ID: climasentinel
+          GCP_PROJECT_ID: clima-sentinel
           BQ_DATASET: mart
         run: python model/extract_data.py
         
