@@ -20,8 +20,7 @@ class Settings(BaseSettings):
     GCP_CREDENTIALS_JSON: Optional[str] = None
     BQ_DATASET: str = "dbt_marts"  # adjust if your dataset name is different
 
-    class Config:
-        env_file = ".env"
+    model_config = {"env_file": ".env"}
 
 
 @lru_cache()
