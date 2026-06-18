@@ -1,0 +1,5 @@
+outs:
+- md5: bcac4ab6aa6ac77bc14f6b0f7c7f158c
+  size: 32256
+  hash: md5
+  path: training_snapshot.csv
