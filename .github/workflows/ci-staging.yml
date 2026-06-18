@@ -62,14 +62,16 @@ jobs:
         run: npm install -g @railway/cli
 
       - name: Deploy Backend to Railway
-        run: railway up --environment staging --detach
+        working-directory: backend
+        run: railway up --environment staging --service ${{ secrets.RAILWAY_SERVICE_ID }} --detach
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
           RAILWAY_PROJECT_ID: ${{ secrets.RAILWAY_PROJECT_ID }}
           RAILWAY_SERVICE_ID: ${{ secrets.RAILWAY_SERVICE_ID }}
 
       - name: Deploy Frontend to Railway
-        run: railway up --environment staging --detach
+        working-directory: frontend
+        run: railway up --environment staging --service ${{ secrets.RAILWAY_FRONTEND_SERVICE_ID }} --detach
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
           RAILWAY_PROJECT_ID: ${{ secrets.RAILWAY_PROJECT_ID }}
