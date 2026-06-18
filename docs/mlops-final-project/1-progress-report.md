@@ -21,8 +21,8 @@ This document tracks our progress against the MLOps Final Project requirements.
 
 ### 3. Cloud Deployment
 - **Status:** Done
-- **Implementation:** The application is configured to deploy to **Railway**. 
-- *Important Note:* We explicitly use the Railway CLI in GitHub Actions rather than Railway's built-in "auto-deploy". This ensures that deployments only happen *after* our quality gates pass, satisfying the requirement that "if a gate fails, production must not change".
+- **Implementation:** The application is configured to deploy to **Railway** using separate **Environments**. 
+- *Important Note:* We explicitly use the Railway CLI (`railway up --environment staging|production`) in GitHub Actions rather than Railway's built-in "auto-deploy". This ensures that deployments only happen *after* our quality gates pass, satisfying the requirement that "if a gate fails, production must not change".
 
 ### 4. Testing Requirements (Partial)
 - **Status:** Partially Done
@@ -32,8 +32,12 @@ This document tracks our progress against the MLOps Final Project requirements.
   - *Pending:* 1 End-to-End test (will be added once the frontend is built).
 
 ### 5. Web App Backend
-- **Status:** Partially Done
-- **Implementation:** A bare-minimum Python FastAPI backend is implemented, containerized using Docker, and ready to serve the ML model.
+- **Status:** Partially Done (Data integration complete, ML integration pending)
+- **Implementation:** A Python FastAPI backend is implemented, containerized using Docker, and fully connected to Google Cloud BigQuery. We added endpoints to serve the final `dbt` marts (current scores, historical scores, and current zones).
+
+### 6. 12-Factor App (Environment Variables)
+- **Status:** Done
+- **Implementation:** The backend is fully 12-factor compliant. All configurations (like `GCP_PROJECT_ID`, `BQ_DATASET`, and `BQ_LOCATION`) are injected via environment variables. These are generated from GitHub Secrets in the CI pipeline and configured natively within the different Railway Environments.
 
 ---
 
@@ -46,4 +50,3 @@ The following tasks are next on the roadmap to complete the project:
 3. **Model Promotion Pipeline:** Train candidate models, deploy automatically to staging, and implement the automated quality gates (e.g., accuracy threshold) in GitHub Actions.
 4. **Monitoring (Prometheus & Grafana):** Expose `/metrics` on the backend, configure Prometheus scraping, and create a Grafana dashboard for live production monitoring.
 5. **Frontend Application:** Build a NodeJS framework frontend (ReactJS/NextJS) and write the remaining 1 End-to-End test.
-6. **12-Factor App:** Ensure all environments have unique environment variables generated from GitHub secrets.
