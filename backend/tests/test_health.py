@@ -21,7 +21,7 @@ def test_root_returns_service_info():
     body = resp.json()
     assert "service" in body
     assert "version" in body
-    assert body["service"] == "ClimaSentinel API"
+    assert body["service"] == "ClimaSentinel Backend"
 
 
 def test_health_returns_healthy():
