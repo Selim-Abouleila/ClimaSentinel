@@ -90,7 +90,7 @@ def get_current_scores(limit: int = 10):
         # Querying the current scores mart as an example
         query = f"""
             SELECT city_id, current_tipping_score
-            FROM `{settings.GCP_PROJECT_ID}.dbt_marts.mart_city_score_current`
+            FROM `{settings.GCP_PROJECT_ID}.{settings.BQ_DATASET}.mart_city_score_current`
             ORDER BY current_tipping_score DESC
             LIMIT @limit
         """
@@ -117,7 +117,7 @@ def get_history_scores(city_id: str = None, limit: int = 50):
     """
     try:
         client = get_bq_client()
-        query = f"SELECT * FROM `{settings.GCP_PROJECT_ID}.dbt_marts.mart_city_score_history`"
+        query = f"SELECT * FROM `{settings.GCP_PROJECT_ID}.{settings.BQ_DATASET}.mart_city_score_history`"
         query_parameters = [bigquery.ScalarQueryParameter("limit", "INT64", limit)]
         if city_id:
             query += " WHERE city_id = @city_id"
@@ -139,7 +139,7 @@ def get_current_zones(limit: int = 20):
     """
     try:
         client = get_bq_client()
-        query = f"SELECT * FROM `{settings.GCP_PROJECT_ID}.dbt_marts.mart_city_zone_current` LIMIT @limit"
+        query = f"SELECT * FROM `{settings.GCP_PROJECT_ID}.{settings.BQ_DATASET}.mart_city_zone_current` LIMIT @limit"
         job_config = bigquery.QueryJobConfig(query_parameters=[bigquery.ScalarQueryParameter("limit", "INT64", limit)])
         query_job = client.query(query, job_config=job_config)
         results = query_job.result()
