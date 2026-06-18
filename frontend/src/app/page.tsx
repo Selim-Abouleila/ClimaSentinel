@@ -1,19 +1,7 @@
-import { fetchCurrentScores, fetchCurrentZones } from '@/lib/api';
+import { fetchCurrentScores } from '@/lib/api';
 
 export default async function Dashboard() {
-  const [scores, zones] = await Promise.all([
-    fetchCurrentScores(),
-    fetchCurrentZones()
-  ]);
-
-  // Merge the two arrays based on city_id for a clean display
-  const cityData = scores.map(score => {
-    const zoneInfo = zones.find(z => z.city_id === score.city_id);
-    return {
-      ...score,
-      current_zone: zoneInfo?.current_zone || 'Unknown'
-    };
-  });
+  const cityData = await fetchCurrentScores();
 
   return (
     <main className="min-h-screen p-8 md:p-16 lg:p-24">
@@ -46,8 +34,8 @@ export default async function Dashboard() {
                     <h3 className="text-xl font-bold uppercase tracking-wider text-slate-100 mb-1">
                       {city.city_id.replace('_', ', ')}
                     </h3>
-                    <div className="inline-block px-3 py-1 rounded-full bg-slate-800/50 border border-slate-700/50 text-xs font-medium text-slate-300 mb-4">
-                      Zone: {city.current_zone}
+                    <div className="inline-block px-3 py-1 rounded-full bg-slate-800/50 border border-slate-700/50 text-xs font-medium text-sky-300 mb-4">
+                      Driver: {city.current_primary_driver || 'Unknown'}
                     </div>
                   </div>
                   
