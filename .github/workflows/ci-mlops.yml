@@ -1,0 +1,65 @@
+name: MLOps Training Pipeline
+
+on:
+  push:
+    branches:
+      - main
+      - staging
+      - feature/add-backend
+  workflow_dispatch:
+
+jobs:
+  train-and-register:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+          
+      - name: Install ML Dependencies
+        run: pip install dvc scikit-learn mlflow pandas pyarrow db-dtypes google-cloud-bigquery pyyaml
+        
+      - name: Authenticate with Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+          
+      - name: DVC Remote Authentication
+        run: |
+          dvc remote modify origin --local auth basic
+          dvc remote modify origin --local user ${{ secrets.DAGSHUB_USERNAME }}
+          dvc remote modify origin --local password ${{ secrets.DAGSHUB_TOKEN }}
+
+      - name: Extract Raw Data Snapshot from BigQuery
+        env:
+          GCP_PROJECT_ID: clima-sentinel
+          BQ_DATASET: mart
+        run: python model/extract_data.py
+        
+      - name: Track with DVC & Push to DagsHub
+        run: |
+          dvc add model/data/training_snapshot.csv
+          dvc push
+          
+      - name: Commit DVC Version to Git
+        run: |
+          git config --global user.name 'github-actions'
+          git config --global user.email 'github-actions@github.com'
+          git add model/data/training_snapshot.csv.dvc model/data/.gitignore
+          git commit -m "chore: auto-update DVC training data snapshot [skip ci]" || echo "No data changes"
+          git push
+
+      - name: Train Model & Log to MLflow
+        env:
+          MLFLOW_TRACKING_URI: ${{ secrets.MLFLOW_TRACKING_URI }}
+          MLFLOW_TRACKING_USERNAME: ${{ secrets.DAGSHUB_USERNAME }}
+          MLFLOW_TRACKING_PASSWORD: ${{ secrets.DAGSHUB_TOKEN }}
+        run: python model/train.py

@@ -147,3 +147,53 @@ def get_current_zones(limit: int = 20):
     except Exception as e:
         log.error(f"Error querying BigQuery zones: {e}")
         raise HTTPException(status_code=500, detail="Failed to retrieve zones data")
+
+
+@app.get("/data/city/{city_id}/scores", tags=["Data"])
+def get_city_scores(city_id: str):
+    """
+    Returns the individual tipping sub-scores (heat, wind, rain, air, river)
+    for a single city within the current 48-hour operational window.
+
+    Source table : mart_city_score_detail  (new mart — does NOT touch
+                   mart_city_score_current or mart_city_score_history).
+
+    Returns 404 if the city_id is not found in the mart.
+    """
+    try:
+        client = get_bq_client()
+        query = f"""
+            SELECT
+                city_id,
+                current_tipping_score,
+                current_primary_driver,
+                heat_score,
+                wind_score,
+                rain_score,
+                air_score,
+                river_score
+            FROM `{settings.GCP_PROJECT_ID}.{settings.BQ_DATASET}.mart_city_score_detail`
+            WHERE city_id = @city_id
+            LIMIT 1
+        """
+        job_config = bigquery.QueryJobConfig(
+            query_parameters=[
+                bigquery.ScalarQueryParameter("city_id", "STRING", city_id)
+            ]
+        )
+        query_job = client.query(query, job_config=job_config)
+        rows = list(query_job.result())
+
+        if not rows:
+            raise HTTPException(
+                status_code=404,
+                detail=f"City '{city_id}' not found in mart_city_score_detail"
+            )
+
+        return dict(rows[0])
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        log.error(f"Error querying city scores for '{city_id}': {e}")
+        raise HTTPException(status_code=500, detail="Failed to retrieve city scores")
