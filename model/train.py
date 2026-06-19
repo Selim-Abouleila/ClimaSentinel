@@ -33,7 +33,13 @@ def train_model():
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
     
     # Setup MLflow
-    mlflow.set_tracking_uri(os.environ.get("MLFLOW_TRACKING_URI"))
+    tracking_uri = os.environ.get("MLFLOW_TRACKING_URI")
+    if not tracking_uri:
+        raise RuntimeError(
+            "MLFLOW_TRACKING_URI is not set. "
+            "Set it to your DagsHub MLflow URI (e.g. https://dagshub.com/<user>/<repo>.mlflow)."
+        )
+    mlflow.set_tracking_uri(tracking_uri)
     mlflow.set_experiment("ClimaSentinel_Forecasting")
     
     with mlflow.start_run():
