@@ -1,6 +1,7 @@
 import os
 import subprocess
 import pandas as pd
+import dagshub
 import mlflow
 import mlflow.sklearn
 from sklearn.ensemble import RandomForestRegressor
@@ -32,22 +33,13 @@ def train_model():
     
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
     
-    # Setup MLflow — embed credentials into URI for reliable DagsHub auth
-    tracking_uri = os.environ.get("MLFLOW_TRACKING_URI")
-    username     = os.environ.get("MLFLOW_TRACKING_USERNAME")
-    password     = os.environ.get("MLFLOW_TRACKING_PASSWORD")
-
-    if not tracking_uri:
-        raise RuntimeError("MLFLOW_TRACKING_URI secret is not set.")
-    if not username:
-        raise RuntimeError("MLFLOW_TRACKING_USERNAME secret is not set (should be your DagsHub username).")
-    if not password:
-        raise RuntimeError("MLFLOW_TRACKING_PASSWORD secret is not set (should be your DagsHub token).")
-
-    # Embed credentials directly into the URI — DagsHub requires this
-    tracking_uri = tracking_uri.replace("https://", f"https://{username}:{password}@")
-
-    mlflow.set_tracking_uri(tracking_uri)
+    # Setup MLflow via DagsHub client — handles auth automatically using
+    # DAGSHUB_USERNAME + DAGSHUB_TOKEN (or MLFLOW_TRACKING_USERNAME/PASSWORD)
+    dagshub.init(
+        repo_owner=os.environ.get("DAGSHUB_USERNAME", "Selim-Abouleila"),
+        repo_name="ClimaSentinel",
+        mlflow=True
+    )
     mlflow.set_experiment("ClimaSentinel_Forecasting")
     
     with mlflow.start_run():
