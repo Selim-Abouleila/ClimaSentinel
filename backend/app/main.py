@@ -171,12 +171,7 @@ def get_city_scores(city_id: str):
                 wind_score,
                 rain_score,
                 air_score,
-                river_score,
-                temperature_2m_max,
-                wind_gusts_10m_max,
-                precipitation_sum_mm,
-                european_aqi_max,
-                river_discharge_m3s
+                river_score
             FROM `{settings.GCP_PROJECT_ID}.{settings.BQ_DATASET}.mart_city_score_detail`
             WHERE city_id = @city_id
             LIMIT 1

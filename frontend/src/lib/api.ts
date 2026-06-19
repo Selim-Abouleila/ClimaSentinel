@@ -16,12 +16,6 @@ export interface CityDetail {
   rain_score: number;
   air_score: number;
   river_score: number;
-  // Raw signal context
-  temperature_2m_max: number | null;
-  wind_gusts_10m_max: number | null;
-  precipitation_sum_mm: number | null;
-  european_aqi_max: number | null;
-  river_discharge_m3s: number | null;
 }
 
 export async function fetchCurrentScores(): Promise<CityScore[]> {
