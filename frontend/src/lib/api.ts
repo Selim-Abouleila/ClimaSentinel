@@ -6,6 +6,24 @@ export interface CityScore {
   current_primary_driver: string;
 }
 
+export interface CityDetail {
+  city_id: string;
+  current_tipping_score: number;
+  current_primary_driver: string;
+  // Individual sub-scores (0–100)
+  heat_score: number;
+  wind_score: number;
+  rain_score: number;
+  air_score: number;
+  river_score: number;
+  // Raw signal context
+  temperature_2m_max: number | null;
+  wind_gusts_10m_max: number | null;
+  precipitation_sum_mm: number | null;
+  european_aqi_max: number | null;
+  river_discharge_m3s: number | null;
+}
+
 export async function fetchCurrentScores(): Promise<CityScore[]> {
   try {
     const res = await fetch(`${API_BASE_URL}/data/current-scores?limit=10`, { cache: 'no-store' });
@@ -14,5 +32,19 @@ export async function fetchCurrentScores(): Promise<CityScore[]> {
   } catch (error) {
     console.error(error);
     return [];
+  }
+}
+
+export async function fetchCityScores(city_id: string): Promise<CityDetail | null> {
+  try {
+    const res = await fetch(`${API_BASE_URL}/data/city/${encodeURIComponent(city_id)}/scores`, {
+      cache: 'no-store',
+    });
+    if (res.status === 404) return null;
+    if (!res.ok) throw new Error(`Failed to fetch scores for ${city_id}`);
+    return res.json();
+  } catch (error) {
+    console.error(error);
+    return null;
   }
 }

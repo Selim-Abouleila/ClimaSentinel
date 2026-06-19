@@ -1,3 +1,4 @@
+import Link from 'next/link';
 import { fetchCurrentScores } from '@/lib/api';
 
 export default async function Dashboard() {
@@ -29,7 +30,11 @@ export default async function Dashboard() {
               else if (city.current_tipping_score > 40) riskClass = 'score-medium';
 
               return (
-                <div key={city.city_id} className="glass-card rounded-2xl p-6 flex flex-col justify-between h-48">
+                <Link
+                  key={city.city_id}
+                  href={`/city/${city.city_id}`}
+                  className="glass-card rounded-2xl p-6 flex flex-col justify-between h-48 cursor-pointer city-card-link"
+                >
                   <div>
                     <h3 className="text-xl font-bold uppercase tracking-wider text-slate-100 mb-1">
                       {city.city_id.replace('_', ', ')}
@@ -38,7 +43,7 @@ export default async function Dashboard() {
                       Driver: {city.current_primary_driver || 'Unknown'}
                     </div>
                   </div>
-                  
+
                   <div className="flex items-end justify-between">
                     <span className="text-sm font-medium text-slate-400 uppercase tracking-widest">
                       Risk Score
@@ -47,7 +52,7 @@ export default async function Dashboard() {
                       {city.current_tipping_score.toFixed(1)}
                     </span>
                   </div>
-                </div>
+                </Link>
               );
             })}
           </div>
