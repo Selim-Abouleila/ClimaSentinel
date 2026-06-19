@@ -33,10 +33,18 @@ def train_model():
     
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
     
-    # Setup MLflow via DagsHub client — handles auth automatically using
-    # DAGSHUB_USERNAME + DAGSHUB_TOKEN (or MLFLOW_TRACKING_USERNAME/PASSWORD)
+    # Clean up any accidental newlines from GitHub Secrets
+    dagshub_username = os.environ.get("DAGSHUB_USERNAME", "Selim-Abouleila").strip()
+    dagshub_token = os.environ.get("DAGSHUB_USER_TOKEN", "").strip()
+    
+    # Update env vars so dagshub.init picks up the clean token/username internally
+    if dagshub_token:
+        os.environ["DAGSHUB_USER_TOKEN"] = dagshub_token
+    os.environ["DAGSHUB_USERNAME"] = dagshub_username
+
+    # Setup MLflow via DagsHub client
     dagshub.init(
-        repo_owner=os.environ.get("DAGSHUB_USERNAME", "Selim-Abouleila"),
+        repo_owner=dagshub_username,
         repo_name="ClimaSentinel",
         mlflow=True
     )
