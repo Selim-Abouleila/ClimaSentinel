@@ -8,7 +8,6 @@ interface ScoreFactor {
   label: string;
   emoji: string;
   score: number;
-  rawValue: string | null;
   colorClass: string;
   barColor: string;
 }
@@ -22,9 +21,9 @@ function getScoreColorClass(score: number): string {
 }
 
 function getBarColor(score: number): string {
-  if (score > 70) return '#f87171';   // red
-  if (score > 40) return '#fbbf24';   // amber
-  return '#4ade80';                    // green
+  if (score > 70) return '#f87171';  // red
+  if (score > 40) return '#fbbf24';  // amber
+  return '#4ade80';                   // green
 }
 
 function formatCity(city_id: string): string {
@@ -33,46 +32,11 @@ function formatCity(city_id: string): string {
 
 function buildFactors(city: CityDetail): ScoreFactor[] {
   return [
-    {
-      label: 'Heat',
-      emoji: '🌡️',
-      score: city.heat_score,
-      rawValue: city.temperature_2m_max != null ? `${city.temperature_2m_max.toFixed(1)} °C max` : null,
-      colorClass: getScoreColorClass(city.heat_score),
-      barColor: getBarColor(city.heat_score),
-    },
-    {
-      label: 'Wind',
-      emoji: '💨',
-      score: city.wind_score,
-      rawValue: city.wind_gusts_10m_max != null ? `${city.wind_gusts_10m_max.toFixed(1)} km/h gusts` : null,
-      colorClass: getScoreColorClass(city.wind_score),
-      barColor: getBarColor(city.wind_score),
-    },
-    {
-      label: 'Rain',
-      emoji: '🌧️',
-      score: city.rain_score,
-      rawValue: city.precipitation_sum_mm != null ? `${city.precipitation_sum_mm.toFixed(1)} mm` : null,
-      colorClass: getScoreColorClass(city.rain_score),
-      barColor: getBarColor(city.rain_score),
-    },
-    {
-      label: 'Air Quality',
-      emoji: '🌫️',
-      score: city.air_score,
-      rawValue: city.european_aqi_max != null ? `AQI ${city.european_aqi_max.toFixed(0)}` : null,
-      colorClass: getScoreColorClass(city.air_score),
-      barColor: getBarColor(city.air_score),
-    },
-    {
-      label: 'River / Flood',
-      emoji: '🌊',
-      score: city.river_score,
-      rawValue: city.river_discharge_m3s != null ? `${city.river_discharge_m3s.toFixed(1)} m³/s` : 'N/A (no river data)',
-      colorClass: getScoreColorClass(city.river_score),
-      barColor: getBarColor(city.river_score),
-    },
+    { label: 'Heat',          emoji: '🌡️', score: city.heat_score,  colorClass: getScoreColorClass(city.heat_score),  barColor: getBarColor(city.heat_score)  },
+    { label: 'Wind',          emoji: '💨', score: city.wind_score,  colorClass: getScoreColorClass(city.wind_score),  barColor: getBarColor(city.wind_score)  },
+    { label: 'Rain',          emoji: '🌧️', score: city.rain_score,  colorClass: getScoreColorClass(city.rain_score),  barColor: getBarColor(city.rain_score)  },
+    { label: 'Air Quality',   emoji: '🌫️', score: city.air_score,   colorClass: getScoreColorClass(city.air_score),   barColor: getBarColor(city.air_score)   },
+    { label: 'River / Flood', emoji: '🌊', score: city.river_score, colorClass: getScoreColorClass(city.river_score), barColor: getBarColor(city.river_score) },
   ];
 }
 
@@ -146,9 +110,6 @@ export default async function CityDetailPage({
                   <div className="flex items-center gap-2">
                     <span className="text-lg leading-none">{f.emoji}</span>
                     <span className="text-sm font-semibold text-slate-200">{f.label}</span>
-                    {f.rawValue && (
-                      <span className="text-xs text-slate-500 ml-1">({f.rawValue})</span>
-                    )}
                   </div>
                   <span className={`text-xl font-black tabular-nums ${f.colorClass}`}>
                     {f.score.toFixed(1)}
