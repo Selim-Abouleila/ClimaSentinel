@@ -32,13 +32,21 @@ def train_model():
     
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
     
-    # Setup MLflow
+    # Setup MLflow — embed credentials into URI for reliable DagsHub auth
     tracking_uri = os.environ.get("MLFLOW_TRACKING_URI")
     if not tracking_uri:
         raise RuntimeError(
             "MLFLOW_TRACKING_URI is not set. "
             "Set it to your DagsHub MLflow URI (e.g. https://dagshub.com/<user>/<repo>.mlflow)."
         )
+
+    username = os.environ.get("MLFLOW_TRACKING_USERNAME", "")
+    password = os.environ.get("MLFLOW_TRACKING_PASSWORD", "")
+
+    # DagsHub requires credentials embedded in the URI — env var auth is unreliable
+    if username and password and "dagshub.com" in tracking_uri:
+        tracking_uri = tracking_uri.replace("https://", f"https://{username}:{password}@")
+
     mlflow.set_tracking_uri(tracking_uri)
     mlflow.set_experiment("ClimaSentinel_Forecasting")
     
