@@ -29,15 +29,10 @@ export default function RootLayout({
     >
       <body className="min-h-full flex flex-col">
         {/* Sticky Global Navigation */}
-        <header className="sticky top-0 z-50 glass-panel border-b border-white/10 px-6 py-4">
-          <div className="max-w-7xl mx-auto flex items-center">
-            <a href="/" className="flex items-center gap-3 group transition-opacity hover:opacity-80">
-              <img 
-                src="/logo.png" 
-                alt="ClimaSentinel Logo" 
-                className="w-8 h-8 object-contain transition-transform group-hover:scale-105"
-              />
-              <span className="font-black text-xl tracking-wide text-slate-100">
+        <header className="sticky top-0 z-50 glass-panel border-b border-white/5 px-6 py-3">
+          <div className="max-w-7xl mx-auto flex items-center justify-between">
+            <a href="/" className="flex items-center gap-2 group transition-opacity hover:opacity-80">
+              <span className="font-black text-xl tracking-wider text-transparent bg-clip-text bg-gradient-to-r from-slate-100 to-slate-400">
                 ClimaSentinel
               </span>
             </a>
