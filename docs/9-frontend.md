@@ -1,5 +1,7 @@
 # 9. Frontend Architecture
 
+**🌍 Live Dashboard:** [climasentinel.up.railway.app](https://climasentinel.up.railway.app/)
+
 The ClimaSentinel frontend is a modern web application designed to visualize the tipping risk scores of cities around the world in a stunning and responsive dashboard.
 
 ## Technology Stack

@@ -4,6 +4,8 @@
   <img src="docs/images/ClimaSentinel_Theme_Picture.png" alt="ClimaSentinel Theme" width="600">
 </div>
 
+**🌍 Live Dashboard:** [climasentinel.up.railway.app](https://climasentinel.up.railway.app/)
+
 ClimaSentinel is an automated climate data pipeline running on Google Cloud Platform. It ingests real-time weather, air quality, river discharge, historical ERA5 reanalysis, and long-term CMIP6 climate projections for 10 major European cities — every day, at zero marginal cost.
 
 
