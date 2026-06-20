@@ -6,7 +6,6 @@ import { notFound } from 'next/navigation';
 
 interface ScoreFactor {
   label: string;
-  emoji: string;
   score: number;
   colorClass: string;
   barColor: string;
@@ -32,11 +31,11 @@ function formatCity(city_id: string): string {
 
 function buildFactors(city: CityDetail): ScoreFactor[] {
   return [
-    { label: 'Heat',          emoji: '🌡️', score: city.heat_score,  colorClass: getScoreColorClass(city.heat_score),  barColor: getBarColor(city.heat_score)  },
-    { label: 'Wind',          emoji: '💨', score: city.wind_score,  colorClass: getScoreColorClass(city.wind_score),  barColor: getBarColor(city.wind_score)  },
-    { label: 'Rain',          emoji: '🌧️', score: city.rain_score,  colorClass: getScoreColorClass(city.rain_score),  barColor: getBarColor(city.rain_score)  },
-    { label: 'Air Quality',   emoji: '🌫️', score: city.air_score,   colorClass: getScoreColorClass(city.air_score),   barColor: getBarColor(city.air_score)   },
-    { label: 'River / Flood', emoji: '🌊', score: city.river_score, colorClass: getScoreColorClass(city.river_score), barColor: getBarColor(city.river_score) },
+    { label: 'Heat',          score: city.heat_score,  colorClass: getScoreColorClass(city.heat_score),  barColor: getBarColor(city.heat_score)  },
+    { label: 'Wind',          score: city.wind_score,  colorClass: getScoreColorClass(city.wind_score),  barColor: getBarColor(city.wind_score)  },
+    { label: 'Rain',          score: city.rain_score,  colorClass: getScoreColorClass(city.rain_score),  barColor: getBarColor(city.rain_score)  },
+    { label: 'Air Quality',   score: city.air_score,   colorClass: getScoreColorClass(city.air_score),   barColor: getBarColor(city.air_score)   },
+    { label: 'River / Flood', score: city.river_score, colorClass: getScoreColorClass(city.river_score), barColor: getBarColor(city.river_score) },
   ];
 }
 
@@ -62,9 +61,11 @@ export default async function CityDetailPage({
         {/* ── Back link ──────────────────────────────────────────────── */}
         <Link
           href="/"
-          className="inline-flex items-center gap-2 text-sm text-sky-400 hover:text-sky-300 transition-colors mb-10 group"
+          className="inline-flex items-center gap-2 text-sm font-medium text-slate-300 hover:text-white glass-panel px-5 py-2.5 rounded-full transition-all hover:border-sky-400/50 mb-10 group"
         >
-          <span className="group-hover:-translate-x-1 transition-transform">←</span>
+          <svg className="w-4 h-4 transition-transform group-hover:-translate-x-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
+          </svg>
           Back to Dashboard
         </Link>
 
@@ -108,8 +109,7 @@ export default async function CityDetailPage({
                 {/* Label row */}
                 <div className="flex items-center justify-between mb-2">
                   <div className="flex items-center gap-2">
-                    <span className="text-lg leading-none">{f.emoji}</span>
-                    <span className="text-sm font-semibold text-slate-200">{f.label}</span>
+                    <span className="text-sm font-semibold tracking-wide text-slate-200">{f.label}</span>
                   </div>
                   <span className={`text-xl font-black tabular-nums ${f.colorClass}`}>
                     {f.score.toFixed(1)}
