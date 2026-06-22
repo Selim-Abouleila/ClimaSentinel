@@ -1,5 +1,5 @@
 global:
-  scrape_interval: 24h  # Serverless loophole interval
+  scrape_interval: 15s  # Standard scrape interval for active monitoring/demo
 
 scrape_configs:
   - job_name: 'climasentinel-backend'
