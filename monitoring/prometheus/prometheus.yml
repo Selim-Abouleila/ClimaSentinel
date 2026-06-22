@@ -1,0 +1,11 @@
+global:
+  scrape_interval: 24h  # Serverless loophole interval
+
+scrape_configs:
+  - job_name: 'climasentinel-backend'
+    # By default, prometheus will look at the /metrics path
+    metrics_path: '/metrics'
+    scheme: 'https'
+    static_configs:
+      # Replace this with the actual Railway backend production URL when deploying
+      - targets: ['climasentinel-backend.up.railway.app']

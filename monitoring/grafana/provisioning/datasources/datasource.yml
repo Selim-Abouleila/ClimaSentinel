@@ -1,0 +1,10 @@
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    type: prometheus
+    # Since they are running in the same docker-compose network, Grafana can reach Prometheus here
+    url: http://prometheus:9090
+    access: proxy
+    isDefault: true
+    editable: false
