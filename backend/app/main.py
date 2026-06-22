@@ -13,6 +13,8 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from prometheus_fastapi_instrumentator import Instrumentator
+
 from .config import get_settings
 
 log = logging.getLogger(__name__)
@@ -52,6 +54,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# ── Prometheus Monitoring ────────────────────────────────────────────────
+# Auto-instruments all routes and exposes GET /metrics
+Instrumentator().instrument(app).expose(app)
 
 
 # ── Routes ───────────────────────────────────────────────────────────────

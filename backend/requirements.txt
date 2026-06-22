@@ -9,3 +9,6 @@ google-cloud-bigquery==3.25.0
 # ── Testing & CI ─────────────────────────────────────────────────────────
 pytest==8.2.2
 httpx==0.27.0
+
+# ── Monitoring ───────────────────────────────────────────────────────────
+prometheus-fastapi-instrumentator==7.0.0
