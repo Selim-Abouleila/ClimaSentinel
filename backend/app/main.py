@@ -10,8 +10,11 @@ import time
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from google.cloud import bigquery
+
+from prometheus_fastapi_instrumentator import Instrumentator
 
 from .config import get_settings
 
@@ -53,6 +56,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# ── Prometheus Monitoring ────────────────────────────────────────────────
+# Auto-instruments all routes and exposes GET /metrics
+Instrumentator().instrument(app).expose(app)
+
 
 # ── Routes ───────────────────────────────────────────────────────────────
 
@@ -74,10 +81,8 @@ def health():
     }
 
 
-# ── BigQuery Example ─────────────────────────────────────────────────────
+# ── BigQuery Data Endpoints ──────────────────────────────────────────────
 from .db import get_bq_client
-from fastapi import HTTPException
-from google.cloud import bigquery
 
 @app.get("/data/current-scores", tags=["Data"])
 def get_current_scores(limit: int = 10):
