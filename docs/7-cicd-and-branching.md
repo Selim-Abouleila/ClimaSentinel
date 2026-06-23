@@ -32,5 +32,9 @@ When `staging` is approved and merged into `main`:
 - The pipeline checks that all model promotion gates have passed.
 - Automatically deploys the exact code to the **Production Environment** on Railway.
 
+## Testing Strategy
+Our testing suite focuses on meaningful logic validation through Mocking external dependencies:
+- **Unit Tests**: Includes edge case testing such as returning a clean `404 Not Found` when BigQuery returns empty records, and gracefully catching exceptions as `500 Internal Server Errors` rather than failing outright. Trivial tests are avoided to ensure testing robustness.
+
 ## Environment Variables
 Following the 12-Factor App methodology, all secrets (like Railway tokens, GCP credentials) are completely decoupled from the codebase and injected dynamically during the GitHub Actions runs via **GitHub Secrets**.

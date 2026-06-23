@@ -86,3 +86,35 @@ def test_get_current_scores_mocked(mock_bq_client):
         assert len(data) == 2
         assert data[0]["city_id"] == "Paris"
         assert data[0]["current_tipping_score"] == 85.5
+
+@patch("app.db.bigquery.Client")
+def test_get_city_scores_not_found(mock_bq_client):
+    """
+    Test that /data/city/{city_id}/scores returns 404 when the city is not found in BigQuery.
+    """
+    mock_query_job = MagicMock()
+    mock_query_job.result.return_value = []
+    
+    mock_client_instance = MagicMock()
+    mock_client_instance.query.return_value = mock_query_job
+    
+    with patch("app.main.get_bq_client", return_value=mock_client_instance):
+        response = client.get("/data/city/UnknownCity/scores")
+        
+        assert response.status_code == 404
+        assert "not found" in response.json()["detail"].lower()
+
+
+@patch("app.db.bigquery.Client")
+def test_get_history_scores_db_error(mock_bq_client):
+    """
+    Test that /data/history-scores cleanly returns a 500 error if BigQuery fails.
+    """
+    mock_client_instance = MagicMock()
+    mock_client_instance.query.side_effect = Exception("BigQuery connection timeout")
+    
+    with patch("app.main.get_bq_client", return_value=mock_client_instance):
+        response = client.get("/data/history-scores")
+        
+        assert response.status_code == 500
+        assert response.json()["detail"] == "Failed to retrieve history data"
