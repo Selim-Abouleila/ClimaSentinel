@@ -59,6 +59,32 @@ def test_openapi_schema_generation():
     assert "info" in schema
     assert schema["info"]["title"] == "ClimaSentinel Backend"
 
+@pytest.mark.integration
+def test_integration_metrics_endpoint():
+    """
+    Test the integration of Prometheus Instrumentator.
+    This ensures that the FastAPI middleware correctly exposes the /metrics endpoint.
+    """
+    resp = client.get("/metrics")
+    assert resp.status_code == 200
+    # Prometheus metrics are plain text, ensure it contains standard metrics
+    assert "python_gc_" in resp.text or "http_requests" in resp.text
+
+
+@pytest.mark.integration
+def test_integration_bq_auth_failure_handling():
+    """
+    Test that when the application attempts to connect to BigQuery without valid
+    credentials (like in the CI environment without secrets), the exception is caught
+    and cleanly returns a 500 error instead of completely crashing the server.
+    """
+    # We do NOT mock get_bq_client here. We let it run the real integration code.
+    # It will hit an authentication error, which should be safely caught by our endpoint.
+    resp = client.get("/data/current-scores?limit=1")
+    
+    assert resp.status_code == 500
+    assert "Failed to retrieve data" in resp.json()["detail"]
+
 # ── Mock Data Tests ──────────────────────────────────────────────────────
 
 @patch("app.db.bigquery.Client")

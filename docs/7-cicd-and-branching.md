@@ -35,6 +35,7 @@ When `staging` is approved and merged into `main`:
 ## Testing Strategy
 Our testing suite focuses on meaningful logic validation through Mocking external dependencies:
 - **Unit Tests**: Includes edge case testing such as returning a clean `404 Not Found` when BigQuery returns empty records, and gracefully catching exceptions as `500 Internal Server Errors` rather than failing outright. Trivial tests are avoided to ensure testing robustness.
+- **Integration Tests**: Includes testing the integration of the Prometheus metrics middleware without mocks, and verifying that the real BigQuery integration layer properly catches authentication/credential failures (such as running in a CI environment without secrets) and returns safe 500 errors.
 
 ## Environment Variables
 Following the 12-Factor App methodology, all secrets (like Railway tokens, GCP credentials) are completely decoupled from the codebase and injected dynamically during the GitHub Actions runs via **GitHub Secrets**.
