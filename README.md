@@ -4,6 +4,8 @@
   <img src="docs/images/ClimaSentinel_Theme_Picture.png" alt="ClimaSentinel Theme" width="600">
 </div>
 
+**🌍 Live Dashboard:** [climasentinel.up.railway.app](https://climasentinel.up.railway.app/)
+
 ClimaSentinel is an automated climate data pipeline running on Google Cloud Platform. It ingests real-time weather, air quality, river discharge, historical ERA5 reanalysis, and long-term CMIP6 climate projections for 10 major European cities — every day, at zero marginal cost.
 
 
@@ -196,3 +198,6 @@ flowchart LR
 | [4. Mart Layer](docs/4-mart-layer.md) | Gold layer: Tipping Score mathematical logic, velocity math, and ranking views in the `mart` dataset |
 | [5. Guide Power BI](docs/5-guide-powerbi.md) | Guide en français pour connecter Power BI Desktop aux tables `mart` et configurer le rafraîchissement automatique |
 | [6. Guide Streamlit](docs/6-guide-streamlit.md) | Guide en français pour créer un dashboard Python Streamlit connecté à BigQuery avec le même compte de service |
+| [7. CI/CD and Branching Strategy](docs/7-cicd-and-branching.md) | Explanation of the strict Git branching model and the GitHub Actions deployment pipelines |
+| [8. Backend Architecture](docs/8-backend.md) | Details on the Python FastAPI architecture, BigQuery connection, and Dockerization |
+| [9. Frontend Architecture](docs/9-frontend.md) | Overview of the Next.js Glassmorphism dashboard and data fetching mechanism |

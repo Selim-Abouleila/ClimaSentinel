@@ -42,3 +42,43 @@ models:
         tests:
           - not_null
           - unique
+
+  - name: mart_city_score_detail
+    description: >
+      Exposes the five individual tipping sub-scores (Heat, Wind, Rain, Air Quality, River)
+      plus raw signal values for every city within the current 48-hour operational window.
+      One row per city — the day with the highest global tipping score is selected so all
+      sub-scores are internally consistent. Does NOT modify mart_city_score_current.
+      Consumed by GET /data/city/{city_id}/scores to power the city detail page.
+    columns:
+      - name: city_id
+        description: "Unique city identifier (e.g. paris_fr)."
+        tests:
+          - not_null
+          - unique
+      - name: current_tipping_score
+        description: "Global tipping score (0-100): maximum of the 5 sub-scores on the worst day."
+        tests:
+          - not_null
+      - name: current_primary_driver
+        description: "The factor responsible for the highest score (Heat / Wind / Rain / Air Quality / River / Flood / Stable)."
+      - name: heat_score
+        description: "Heat sub-score (0-100): based on temperature anomaly and positive velocity."
+      - name: wind_score
+        description: "Wind sub-score (0-100): based on gust speed above 40 km/h threshold."
+      - name: rain_score
+        description: "Rain sub-score (0-100): based on daily precipitation sum."
+      - name: air_score
+        description: "Air Quality sub-score (0-100): direct mapping of European AQI max."
+      - name: river_score
+        description: "River/Flood sub-score (0-100): based on positive river discharge velocity."
+      - name: temperature_2m_max
+        description: "Raw max temperature (°C) on the worst day — displayed as context in the UI."
+      - name: wind_gusts_10m_max
+        description: "Raw max wind gust speed (km/h) on the worst day."
+      - name: precipitation_sum_mm
+        description: "Raw daily precipitation sum (mm) on the worst day."
+      - name: european_aqi_max
+        description: "Raw European AQI max on the worst day."
+      - name: river_discharge_m3s
+        description: "Raw river discharge (m³/s) on the worst day — nullable for non-river cities."

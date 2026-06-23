@@ -1,0 +1,6 @@
+[core]
+    remote = origin
+['remote "origin"']
+    url = https://dagshub.com/Selim-Abouleila/ClimaSentinel.dvc
+    auth = basic
+    user = Selim-Abouleila

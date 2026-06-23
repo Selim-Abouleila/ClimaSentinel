@@ -3,29 +3,26 @@ Application settings — loaded from environment variables (12-Factor).
 """
 
 from pydantic_settings import BaseSettings
-from pydantic import ConfigDict
 from functools import lru_cache
+from typing import Optional
 
 
 class Settings(BaseSettings):
     """
-    All config comes from env vars.  Deployment platforms inject these
-    per environment (dev / staging / production).
+    All config comes from env vars. Defaults are for local development.
     """
-
-    model_config = ConfigDict(env_file=".env", case_sensitive=True)
-
-    # ── App ──────────────────────────────────────────────────────────────
-    APP_NAME: str = "ClimaSentinel API"
-    APP_VERSION: str = "0.1.0"
-    ENVIRONMENT: str = "development"          # development | staging | production
-    DEBUG: bool = False
-
-    # ── Server ───────────────────────────────────────────────────────────
-    HOST: str = "0.0.0.0"
-    PORT: int = 8000
+    APP_NAME: str = "ClimaSentinel Backend"
+    APP_VERSION: str = "1.0.0"
+    ENVIRONMENT: str = "development"
+    
+    # GCP / BigQuery
+    GCP_PROJECT_ID: str = "clima-sentinel"
+    GCP_CREDENTIALS_JSON: Optional[str] = None
+    BQ_DATASET: str = "mart"
+    BQ_LOCATION: str = "europe-west9" 
+    model_config = {"env_file": ".env"}
 
 
 @lru_cache()
-def get_settings() -> Settings:
+def get_settings():
     return Settings()
