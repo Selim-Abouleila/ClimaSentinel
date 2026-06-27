@@ -8,4 +8,4 @@ scrape_configs:
     scheme: 'https'
     static_configs:
       # Replace this with the actual Railway backend production URL when deploying
-      - targets: ['climasentinel-backend.up.railway.app']
+      - targets: ['climasentinel-production.up.railway.app']
