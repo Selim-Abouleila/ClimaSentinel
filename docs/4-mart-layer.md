@@ -41,6 +41,12 @@ Instead of averaging (which hides risk), the `global_tipping_score` is the **MAX
 
 > **Note on Auto-calibration (The Join):** 
 > To calculate the Heat anomaly, this model performs a `LEFT JOIN` against `stg.city_monthly_normals` (the 10-year baseline table built via `dbt seed`). The join uses `city_id` and the extracted `MONTH(date)` to ensure geographically accurate comparisons.
+> 
+> **Example (Relative Geography):** If the forecast is 35°C in both Paris and Madrid in the summer:
+> - In **Madrid**, the historical normal might be 33°C. The anomaly is small (+2°C), resulting in a **low** heat score.
+> - In **Paris**, the historical normal might be 25°C. The anomaly is massive (+10°C), resulting in a **critical** heat score.
+> 
+> This ensures hot climates aren't constantly flagged with false alarms while identifying dangerous anomalies in historically cooler regions.
 
 ---
 

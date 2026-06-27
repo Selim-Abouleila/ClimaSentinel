@@ -59,6 +59,32 @@ def test_openapi_schema_generation():
     assert "info" in schema
     assert schema["info"]["title"] == "ClimaSentinel Backend"
 
+@pytest.mark.integration
+def test_integration_metrics_endpoint():
+    """
+    Test the integration of Prometheus Instrumentator.
+    This ensures that the FastAPI middleware correctly exposes the /metrics endpoint.
+    """
+    resp = client.get("/metrics")
+    assert resp.status_code == 200
+    # Prometheus metrics are plain text, ensure it contains standard metrics
+    assert "python_gc_" in resp.text or "http_requests" in resp.text
+
+
+@pytest.mark.integration
+def test_integration_bq_auth_failure_handling():
+    """
+    Test that when the application attempts to connect to BigQuery without valid
+    credentials (like in the CI environment without secrets), the exception is caught
+    and cleanly returns a 500 error instead of completely crashing the server.
+    """
+    # We do NOT mock get_bq_client here. We let it run the real integration code.
+    # It will hit an authentication error, which should be safely caught by our endpoint.
+    resp = client.get("/data/current-scores?limit=1")
+    
+    assert resp.status_code == 500
+    assert "Failed to retrieve data" in resp.json()["detail"]
+
 # ── Mock Data Tests ──────────────────────────────────────────────────────
 
 @patch("app.db.bigquery.Client")
@@ -86,3 +112,35 @@ def test_get_current_scores_mocked(mock_bq_client):
         assert len(data) == 2
         assert data[0]["city_id"] == "Paris"
         assert data[0]["current_tipping_score"] == 85.5
+
+@patch("app.db.bigquery.Client")
+def test_get_city_scores_not_found(mock_bq_client):
+    """
+    Test that /data/city/{city_id}/scores returns 404 when the city is not found in BigQuery.
+    """
+    mock_query_job = MagicMock()
+    mock_query_job.result.return_value = []
+    
+    mock_client_instance = MagicMock()
+    mock_client_instance.query.return_value = mock_query_job
+    
+    with patch("app.main.get_bq_client", return_value=mock_client_instance):
+        response = client.get("/data/city/UnknownCity/scores")
+        
+        assert response.status_code == 404
+        assert "not found" in response.json()["detail"].lower()
+
+
+@patch("app.db.bigquery.Client")
+def test_get_history_scores_db_error(mock_bq_client):
+    """
+    Test that /data/history-scores cleanly returns a 500 error if BigQuery fails.
+    """
+    mock_client_instance = MagicMock()
+    mock_client_instance.query.side_effect = Exception("BigQuery connection timeout")
+    
+    with patch("app.main.get_bq_client", return_value=mock_client_instance):
+        response = client.get("/data/history-scores")
+        
+        assert response.status_code == 500
+        assert response.json()["detail"] == "Failed to retrieve history data"
