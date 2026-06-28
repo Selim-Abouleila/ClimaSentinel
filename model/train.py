@@ -35,11 +35,17 @@ def train_model():
         'wind_forecast_plus_1d', 'wind_forecast_plus_2d', 'wind_forecast_plus_3d',
         'city_id'
     ]
-    target = 'future_tipping_score_3d'
+    targets = [
+        'future_heat_score_3d', 
+        'future_wind_score_3d', 
+        'future_rain_score_3d', 
+        'future_air_score_3d', 
+        'future_river_score_3d'
+    ]
     
     df_features = df[feature_cols].copy()
     X = pd.get_dummies(df_features, columns=['city_id'], drop_first=True)
-    y = df[target]
+    y = df[targets]
     
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
     
@@ -81,13 +87,21 @@ def train_model():
         # Metrics
         mse = mean_squared_error(y_test, predictions)
         mae = mean_absolute_error(y_test, predictions)
-        r2 = r2_score(y_test, predictions)
+        r2_avg = r2_score(y_test, predictions) # Uniform average across all 5 targets
+        
+        # Calculate individual R2 scores for each sub-score
+        r2_raw = r2_score(y_test, predictions, multioutput='raw_values')
         
         mlflow.log_metric("mse", mse)
         mlflow.log_metric("mae", mae)
-        mlflow.log_metric("r2", r2)
+        mlflow.log_metric("r2", r2_avg)
         
-        print(f"Model trained! MSE: {mse:.2f}, R2: {r2:.2f}")
+        for name, r2_val in zip(targets, r2_raw):
+            mlflow.log_metric(f"r2_{name.replace('future_', '').replace('_3d', '')}", r2_val)
+        
+        print(f"Model trained! MSE: {mse:.2f}, R2 Average: {r2_avg:.2f}")
+        for name, r2_val in zip(targets, r2_raw):
+            print(f"  R2 {name}: {r2_val:.2f}")
         
         # Register Model to DagsHub MLflow Registry
         mlflow.sklearn.log_model(

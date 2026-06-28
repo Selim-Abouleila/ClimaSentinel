@@ -23,7 +23,7 @@ def extract_data():
     # Drop rows where the future target or future forecast is null
     # Also handle missing river discharge (replace with 0)
     df['river_discharge_m3s'] = df['river_discharge_m3s'].fillna(0)
-    df = df.dropna(subset=['current_tipping_score', 'future_tipping_score_3d', 'temp_forecast_plus_3d'])
+    df = df.dropna(subset=['current_tipping_score', 'future_tipping_score_3d', 'future_heat_score_3d', 'temp_forecast_plus_3d'])
     
     output_path = "model/data/training_snapshot.csv"
     os.makedirs("model/data", exist_ok=True)
