@@ -287,40 +287,45 @@ def get_city_forecast(city_id: str):
                 log.warning(f"Failed to load MLflow registered model: {e}")
         
         if model and hasattr(model, "estimators_"):
-            # Multi-Output Random Forest Inference with Tree-Level Uncertainty
-            preds = model.predict(X)[0] # array of 5 sub-scores
-            
-            # Extract predictions across all trees in the forest to compute 95% Confidence Intervals
-            tree_preds = np.array([tree.predict(X.values)[0] for tree in model.estimators_])
-            stds = np.std(tree_preds, axis=0)
-            
-            for idx, name in enumerate(sub_score_names):
-                mean_val = preds[idx]
-                std_val = stds[idx]
-                margin = 1.96 * std_val
-                conf_intervals[name] = {
-                    "estimated_score": round(float(mean_val), 1),
-                    "ci_lower": round(float(max(0.0, mean_val - margin)), 1),
-                    "ci_upper": round(float(min(100.0, mean_val + margin)), 1),
-                    "confidence_margin": round(float(margin), 1)
-                }
-            
-            total_estimated = round(float(max(preds)), 1)
-            driver_idx = np.argmax(preds)
-            total_margin = round(float(1.96 * stds[driver_idx]), 1)
-            
-        else:
+            try:
+                # Multi-Output Random Forest Inference with Tree-Level Uncertainty
+                preds = model.predict(X)[0] # array of 5 sub-scores
+                
+                # Extract predictions across all trees in the forest to compute 95% Confidence Intervals
+                tree_preds = np.array([tree.predict(X.values)[0] for tree in model.estimators_])
+                stds = np.std(tree_preds, axis=0)
+                
+                for idx, name in enumerate(sub_score_names):
+                    mean_val = preds[idx]
+                    std_val = stds[idx]
+                    margin = 1.96 * std_val
+                    conf_intervals[name] = {
+                        "estimated_score": round(float(mean_val), 1),
+                        "ci_lower": round(float(max(0.0, mean_val - margin)), 1),
+                        "ci_upper": round(float(min(100.0, mean_val + margin)), 1),
+                        "confidence_margin": round(float(margin), 1)
+                    }
+                
+                total_estimated = round(float(max(preds)), 1)
+                driver_idx = np.argmax(preds)
+                total_margin = round(float(1.96 * stds[driver_idx]), 1)
+            except Exception as e:
+                log.warning(f"Model prediction failed, falling back to simulation: {e}")
+                model = None # trigger fallback below
+                
+        if not model or not conf_intervals:
             # Robust fallback simulation calibrated to exact mart_ml_feature_store weather trajectories
-            base = float(row.get('current_tipping_score', 50.0))
-            t_max = float(row.get('temp_forecast_plus_3d', 25.0))
-            p_sum = float(row.get('precip_forecast_plus_3d', 0.0))
-            w_max = float(row.get('wind_forecast_plus_3d', 20.0))
+            base = float(row.get('current_tipping_score') or 50.0)
+            t_max = float(row.get('temp_forecast_plus_3d') or 25.0)
+            p_sum = float(row.get('precip_forecast_plus_3d') or 0.0)
+            w_max = float(row.get('wind_forecast_plus_3d') or 20.0)
+            river_disc = float(row.get('river_discharge_m3s') or 0.0)
             
             est_heat = min(100.0, max(0.0, base * 0.4 + (t_max - 20.0) * 2.5))
             est_wind = min(100.0, max(0.0, (w_max - 30.0) * 2.0 if w_max > 30 else base * 0.2))
             est_rain = min(100.0, max(0.0, p_sum * 5.0 if p_sum > 0 else base * 0.2))
             est_air = min(100.0, max(0.0, base * 0.8))
-            est_river = min(100.0, max(0.0, base * 0.5 if row.get('river_discharge_m3s', 0) > 0 else 0.0))
+            est_river = min(100.0, max(0.0, base * 0.5 if river_disc > 0 else 0.0))
             
             scores_map = [est_heat, est_wind, est_rain, est_air, est_river]
             
@@ -345,7 +350,7 @@ def get_city_forecast(city_id: str):
         return {
             "city_id": city_id,
             "prediction_date": str(row['date']),
-            "current_tipping_score": round(float(row.get('current_tipping_score', 0)), 1),
+            "current_tipping_score": round(float(row.get('current_tipping_score') or 0.0), 1),
             "estimated_total_tipping_score": total_estimated,
             "total_confidence_margin": total_margin,
             "total_ci_lower": round(float(max(0.0, total_estimated - total_margin)), 1),
@@ -353,11 +358,11 @@ def get_city_forecast(city_id: str):
             "forecast_primary_driver": best_driver,
             "sub_scores_forecast": conf_intervals,
             "weather_trajectory_3d": {
-                "temp_max_plus_1d": float(row.get('temp_forecast_plus_1d', 0)),
-                "temp_max_plus_2d": float(row.get('temp_forecast_plus_2d', 0)),
-                "temp_max_plus_3d": float(row.get('temp_forecast_plus_3d', 0)),
-                "precip_plus_3d": float(row.get('precip_forecast_plus_3d', 0)),
-                "wind_plus_3d": float(row.get('wind_forecast_plus_3d', 0)),
+                "temp_max_plus_1d": float(row.get('temp_forecast_plus_1d') or 0.0),
+                "temp_max_plus_2d": float(row.get('temp_forecast_plus_2d') or 0.0),
+                "temp_max_plus_3d": float(row.get('temp_forecast_plus_3d') or 0.0),
+                "precip_plus_3d": float(row.get('precip_forecast_plus_3d') or 0.0),
+                "wind_plus_3d": float(row.get('wind_forecast_plus_3d') or 0.0),
             }
         }
 
