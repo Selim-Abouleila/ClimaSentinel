@@ -26,8 +26,15 @@ def train_model():
     df = pd.read_csv("model/data/training_snapshot.csv")
     
     # One-hot encode city_id so the model learns city-specific behavior
-    # We include current_tipping_score as a core baseline feature
-    feature_cols = ['current_tipping_score', 'temperature_2m_max', 'temperature_2m_min', 'precipitation_sum_mm', 'wind_speed_10m_max', 'european_aqi_max', 'river_discharge_m3s', 'city_id']
+    # We include current_tipping_score and the full 3-day weather forecast trajectory
+    feature_cols = [
+        'current_tipping_score', 
+        'temperature_2m_max', 'temperature_2m_min', 'precipitation_sum_mm', 'wind_speed_10m_max', 'european_aqi_max', 'river_discharge_m3s',
+        'temp_forecast_plus_1d', 'temp_forecast_plus_2d', 'temp_forecast_plus_3d',
+        'precip_forecast_plus_1d', 'precip_forecast_plus_2d', 'precip_forecast_plus_3d',
+        'wind_forecast_plus_1d', 'wind_forecast_plus_2d', 'wind_forecast_plus_3d',
+        'city_id'
+    ]
     target = 'future_tipping_score_3d'
     
     df_features = df[feature_cols].copy()

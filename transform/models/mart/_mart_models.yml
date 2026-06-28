@@ -82,3 +82,16 @@ models:
         description: "Raw European AQI max on the worst day."
       - name: river_discharge_m3s
         description: "Raw river discharge (m³/s) on the worst day — nullable for non-river cities."
+
+  - name: mart_ml_feature_store
+    description: >
+      Single source of truth Feature Store for MLOps training and serving. Pre-computes 
+      3-day future weather forecast trajectories (temperature, precipitation, wind speed) 
+      and aligns them with the current tipping score baseline and the 3-day future target variable.
+    columns:
+      - name: city_id
+        tests:
+          - not_null
+      - name: date
+        tests:
+          - not_null
