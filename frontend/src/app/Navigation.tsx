@@ -2,11 +2,26 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useEffect, useState } from "react";
 
 export default function Navigation() {
   const pathname = usePathname();
   const isForecast = pathname?.startsWith("/forecast");
   const isDashboard = !isForecast;
+  const [envBadge, setEnvBadge] = useState<string>("STAGING");
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const hostname = window.location.hostname;
+      if (hostname.includes("staging")) {
+        setEnvBadge("STAGING");
+      } else if (hostname.includes("localhost") || hostname.includes("127.0.0.1")) {
+        setEnvBadge("LOCAL");
+      } else {
+        setEnvBadge("PRODUCTION");
+      }
+    }
+  }, []);
 
   return (
     <header className="sticky top-0 z-50 glass-panel border-b border-white/5 px-6 py-3.5 shadow-lg backdrop-blur-md bg-slate-950/80">
@@ -16,8 +31,14 @@ export default function Navigation() {
           <span className="font-black text-2xl md:text-3xl tracking-wider text-transparent bg-clip-text bg-gradient-to-r from-slate-100 via-slate-200 to-slate-400">
             ClimaSentinel
           </span>
-          <span className="text-[10px] font-bold tracking-widest text-cyan-400 uppercase px-2 py-0.5 rounded bg-cyan-500/10 border border-cyan-500/20">
-            Staging
+          <span className={`text-[10px] font-bold tracking-widest uppercase px-2 py-0.5 rounded border ${
+            envBadge === 'PRODUCTION' 
+              ? 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20' 
+              : envBadge === 'STAGING'
+              ? 'text-cyan-400 bg-cyan-500/10 border-cyan-500/20'
+              : 'text-amber-400 bg-amber-500/10 border-amber-500/20'
+          }`}>
+            {envBadge}
           </span>
         </Link>
 
