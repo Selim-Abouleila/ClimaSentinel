@@ -24,6 +24,41 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s  %(levelname)-8s  %(
 # ── Track uptime ─────────────────────────────────────────────────────────
 _start_time: float = 0.0
 
+# ── Cached ML Model (loaded once at first request) ──────────────────────
+_cached_model = None
+
+def _get_ml_model():
+    """Load and cache the ML model. Downloads once, reuses forever."""
+    global _cached_model
+    if _cached_model is not None:
+        return _cached_model
+    
+    import os
+    import joblib
+    
+    # Try local pickle first
+    model_path = os.path.join(os.path.dirname(__file__), "risk_forecaster.pkl")
+    if os.path.exists(model_path):
+        try:
+            _cached_model = joblib.load(model_path)
+            log.info("ML model loaded from local pickle artifact.")
+            return _cached_model
+        except Exception as e:
+            log.info(f"Local pickle not loaded: {e}")
+    
+    # Try MLflow/DagsHub registry
+    try:
+        if os.environ.get("DAGSHUB_USER_TOKEN"):
+            import dagshub
+            dagshub.init(repo_owner=os.environ.get("DAGSHUB_USERNAME", "Selim-Abouleila"), repo_name="ClimaSentinel", mlflow=True)
+        import mlflow.sklearn
+        _cached_model = mlflow.sklearn.load_model("models:/ClimaSentinel_RiskForecaster/latest")
+        log.info("ML model loaded from MLflow registry and cached.")
+        return _cached_model
+    except Exception as e:
+        log.info("MLflow model not available; will use calibrated simulation fallback.")
+        return None
+
 
 # ── Lifespan (startup / shutdown) ────────────────────────────────────────
 @asynccontextmanager
@@ -246,9 +281,6 @@ def get_city_forecast(city_id: str):
         # ── ML Model Inference & Confidence Intervals ──
         import numpy as np
         import pandas as pd
-        import joblib
-        import os
-        import mlflow.sklearn
         
         # Prepare feature vector matching train.py
         feature_cols = [
@@ -274,24 +306,8 @@ def get_city_forecast(city_id: str):
         preds = None
         conf_intervals = {}
         
-        # Try loading local pickle artifact first
-        model_path = os.path.join(os.path.dirname(__file__), "risk_forecaster.pkl")
-        model = None
-        if os.path.exists(model_path):
-            try:
-                model = joblib.load(model_path)
-            except Exception as e:
-                log.info(f"Local pickle model not loaded: {e}")
-        
-        # Try loading from MLflow registry if pickle not available
-        if not model:
-            try:
-                if os.environ.get("DAGSHUB_USER_TOKEN"):
-                    import dagshub
-                    dagshub.init(repo_owner=os.environ.get("DAGSHUB_USERNAME", "Selim-Abouleila"), repo_name="ClimaSentinel", mlflow=True)
-                model = mlflow.sklearn.load_model("models:/ClimaSentinel_RiskForecaster/latest")
-            except Exception as e:
-                log.info("MLflow model not found in staging registry; utilizing calibrated simulation fallback.")
+        # Use cached model (loaded once, reused forever)
+        model = _get_ml_model()
         
         if model and hasattr(model, "estimators_"):
             try:
