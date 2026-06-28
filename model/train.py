@@ -25,10 +25,13 @@ def train_model():
     print("Loading data snapshot...")
     df = pd.read_csv("model/data/training_snapshot.csv")
     
-    features = ['temperature_2m_max', 'temperature_2m_min', 'precipitation_sum_mm', 'wind_speed_10m_max', 'european_aqi_max', 'river_discharge_m3s']
-    target = 'future_tipping_score_7d'
+    # One-hot encode city_id so the model learns city-specific behavior
+    # We include current_tipping_score as a core baseline feature
+    feature_cols = ['current_tipping_score', 'temperature_2m_max', 'temperature_2m_min', 'precipitation_sum_mm', 'wind_speed_10m_max', 'european_aqi_max', 'river_discharge_m3s', 'city_id']
+    target = 'future_tipping_score_3d'
     
-    X = df[features]
+    df_features = df[feature_cols].copy()
+    X = pd.get_dummies(df_features, columns=['city_id'], drop_first=True)
     y = df[target]
     
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
