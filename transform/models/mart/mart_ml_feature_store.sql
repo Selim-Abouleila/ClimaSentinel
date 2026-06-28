@@ -34,7 +34,12 @@ WITH feature_base AS (
         LEAD(f.wind_speed_10m_max, 2) OVER (PARTITION BY f.city_id ORDER BY f.date) AS wind_forecast_plus_2d,
         LEAD(f.wind_speed_10m_max, 3) OVER (PARTITION BY f.city_id ORDER BY f.date) AS wind_forecast_plus_3d,
         
-        -- Target Variable (t+3)
+        -- Target Variables (t+3) - Multi-Output Regression
+        LEAD(s.heat_score, 3) OVER (PARTITION BY f.city_id ORDER BY f.date) AS future_heat_score_3d,
+        LEAD(s.wind_score, 3) OVER (PARTITION BY f.city_id ORDER BY f.date) AS future_wind_score_3d,
+        LEAD(s.rain_score, 3) OVER (PARTITION BY f.city_id ORDER BY f.date) AS future_rain_score_3d,
+        LEAD(s.air_score, 3) OVER (PARTITION BY f.city_id ORDER BY f.date) AS future_air_score_3d,
+        LEAD(s.river_score, 3) OVER (PARTITION BY f.city_id ORDER BY f.date) AS future_river_score_3d,
         LEAD(s.global_tipping_score, 3) OVER (PARTITION BY f.city_id ORDER BY f.date) AS future_tipping_score_3d
 
     FROM {{ ref('stg_city_signal_input') }} f
