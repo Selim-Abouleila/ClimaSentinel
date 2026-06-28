@@ -37,6 +37,15 @@ export default function RootLayout({
                 ClimaSentinel
               </span>
             </Link>
+            <nav className="flex items-center gap-6">
+              <Link href="/" className="text-sm font-medium text-slate-300 hover:text-white transition-colors">
+                Live Dashboard
+              </Link>
+              <Link href="/forecast" className="relative px-4 py-1.5 rounded-full text-sm font-semibold text-cyan-400 bg-cyan-950/50 border border-cyan-500/30 hover:bg-cyan-900/50 hover:border-cyan-500/50 transition-all flex items-center gap-1.5 shadow-[0_0_15px_rgba(6,182,212,0.15)]">
+                <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse"></span>
+                AI Tipping Forecast
+              </Link>
+            </nav>
           </div>
         </header>
 
