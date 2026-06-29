@@ -1,0 +1,189 @@
+# 🤖 Module 11: Machine Learning & MLOps Pipeline (`ClimaSentinel_RiskForecaster`)
+
+This document details the complete end-to-end architecture, mathematics, data engineering, model training, tracking, and serving infrastructure for the **ClimaSentinel Multi-Output Random Forest Risk Forecaster**. 
+
+---
+
+## 📐 1. Architectural Overview & Objectives
+
+While the primary ClimaSentinel dashboard provides real-time situational awareness ($t_0$) based on factual, validated environmental signals, the **AI Tipping Forecast** module serves as an advanced predictive extension ($t_{+3\text{ days}}$). 
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                           1. FEATURE INGESTION                          │
+│   BigQuery Feature Store (`mart_ml_feature_store`) via dbt Materialization│
+└────────────────────────────────────┬────────────────────────────────────┘
+                                     ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                      2. EXTRACTION & DVC VERSIONING                     │
+│    `model/extract_data.py` ──► `training_snapshot.csv` (DVC Hashed)     │
+└────────────────────────────────────┬────────────────────────────────────┘
+                                     ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                     3. TRAINING & MLFLOW TRACKING                       │
+│    `model/train.py` ──► MultiOutputRegressor(RandomForestRegressor)     │
+│    Logs metrics (MAE, MSE, R2), DVC Hash, & Artifacts to DagsHub        │
+└────────────────────────────────────┬────────────────────────────────────┘
+                                     ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                    4. IN-MEMORY CACHED MODEL SERVING                    │
+│    FastAPI (`main.py`) loads once from DagsHub Registry / Pickle Fallback│
+│    Computes 95% Confidence Intervals using Tree Estimator Variance       │
+└────────────────────────────────────┬────────────────────────────────────┘
+                                     ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                    5. ON-DEMAND CLIENT INFERENCE UI                     │
+│    Next.js (`/forecast`) triggers real-time calculation with loading UX  │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+### Key Design Principles:
+1. **Predictive Granularity**: Predicting a single global tipping score obscures the specific operational threats. The model utilizes a `MultiOutputRegressor` to simultaneously forecast 5 distinct sub-scores: `heat_score`, `wind_score`, `rain_score`, `air_score`, and `river_score`.
+2. **True MLflow MLOps Integration**: Full experiment tracking, DVC data versioning, hyperparameter logging, and model registry via **DagsHub**.
+3. **Uncertainty Quantification**: Decision makers need to know when a model is confident vs. uncertain. Instead of point estimates, the backend inspects all $N=100$ individual tree estimators in the Random Forest to dynamically compute 95% Confidence Intervals (CI).
+4. **Serverless & Sleeping Optimization**: To prevent high latency and high cloud costs in ephemeral/sleeping environments (Railway/Cloud Run), the model artifact is downloaded exactly once on app startup and cached globally in memory.
+
+---
+
+## 💾 2. BigQuery Feature Store & Data Extraction
+
+### 2.1 The dbt Materialized Feature Store (`mart_ml_feature_store`)
+To prevent data leakage and ensure training-serving skew elimination, all features are pre-joined and materialized daily in BigQuery via dbt. The table combines:
+* **Historical Baselines**: `current_tipping_score` ($t_0$).
+* **Observed Realities**: `temperature_2m_max`, `temperature_2m_min`, `precipitation_sum_mm`, `wind_speed_10m_max`, `european_aqi_max`, `river_discharge_m3s`.
+* **Meteorological Forecast Horizon**: 3-day trajectory projections (`temp_forecast_plus_1d`, `temp_forecast_plus_2d`, `temp_forecast_plus_3d`, `precip_forecast_plus_1d`, `wind_forecast_plus_1d`, etc.).
+* **Entity Identifiers**: `city_id` (one-hot encoded during training).
+
+### 2.2 Extraction Logic (`model/extract_data.py`)
+The extraction script connects to BigQuery via Google Cloud Python SDK and runs rigorous validation checks before writing the training snapshot:
+
+```python
+# Handle missing river discharge gracefully (impute 0 for non-river cities)
+df['river_discharge_m3s'] = df['river_discharge_m3s'].fillna(0).infer_objects(copy=False)
+
+# Strict dropna across ALL target variables to prevent corrupting MultiOutput training
+df = df.dropna(subset=[
+    'current_tipping_score', 
+    'future_tipping_score_3d', 
+    'future_heat_score_3d', 
+    'future_wind_score_3d',
+    'future_rain_score_3d',
+    'future_air_score_3d',
+    'future_river_score_3d',
+    'temp_forecast_plus_3d'
+])
+```
+
+The resulting `model/data/training_snapshot.csv` is tracked by **DVC** (`.dvc` file committed to Git), ensuring that every model run can be traced back to the precise immutable data snapshot it was trained on.
+
+---
+
+## 🧠 3. Model Architecture & Training Pipeline (`model/train.py`)
+
+### 3.1 Multi-Output Random Forest Regressor
+Because the sub-scores represent distinct environmental dynamics (e.g., thermal velocity vs. hydrological flow), we wrap a Scikit-Learn `RandomForestRegressor` inside a `MultiOutputRegressor`.
+
+$$\mathbf{y} = \begin{bmatrix} y_{\text{heat}} \\ y_{\text{wind}} \\ y_{\text{rain}} \\ y_{\text{air}} \\ y_{\text{river}} \end{bmatrix} = \mathbf{f}(\mathbf{X})$$
+
+* **Hyperparameters**: `n_estimators=100`, `max_depth=10`, `random_state=42`.
+* **Categorical Encoding**: `city_id` is converted to categorical dummies (`pd.get_dummies(..., drop_first=True)`). A fixed list of the 10 monitored European cities ensures identical dummy dimensions between training and real-time inference.
+
+### 3.2 MLflow & DagsHub Experiment Tracking
+During execution, `train.py` initializes a connection to DagsHub (`https://dagshub.com/Selim-Abouleila/ClimaSentinel.mlflow`). It logs:
+* **Parameters**: `n_estimators`, `max_depth`, `random_state`, `dvc_data_hash`, `git_commit`.
+* **Global Metrics**: Overall Mean Absolute Error (`mae`), Mean Squared Error (`mse`), and Global R² (`r2`).
+* **Granular Sub-Score Metrics**: `r2_heat_score`, `r2_wind_score`, `r2_rain_score`, `r2_air_score`, `r2_river_score`.
+* **Model Artifact**: The full Scikit-Learn model pipeline is logged to the MLflow artifact repository as `random_forest_model` and registered in the Model Registry under the name **`ClimaSentinel_RiskForecaster`**.
+
+---
+
+## ⚡ 4. FastAPI Model Serving & Uncertainty Mechanics
+
+### 4.1 In-Memory Module-Level Caching (`backend/app/main.py`)
+To maintain blazing-fast response times ($<50\text{ms}$) while supporting Railway's auto-sleeping container architecture, the backend avoids re-downloading the model from DagsHub on every incoming request.
+
+```python
+# ── Cached ML Model (loaded once at first request) ──────────────────────
+_cached_model = None
+
+def _get_ml_model():
+    """Load and cache the ML model. Downloads once, reuses forever."""
+    global _cached_model
+    if _cached_model is not None:
+        return _cached_model
+    
+    # 1. Try loading local fallback pickle artifact (`risk_forecaster.pkl`)
+    # 2. Try authenticating with DagsHub via DAGSHUB_USER_TOKEN and loading from Registry:
+    _cached_model = mlflow.sklearn.load_model("models:/ClimaSentinel_RiskForecaster/latest")
+    return _cached_model
+```
+
+### 4.2 Mathematical Derivation of Confidence Intervals (Tree Variance)
+A standard `.predict(X)` call on a Random Forest returns the mean prediction across all trees. However, ClimaSentinel provides true **Explainable AI** by extracting the individual predictions from all 100 decision trees to measure model variance and compute the 95% confidence interval ($1.96 \times \sigma$).
+
+```python
+# Extract individual estimator predictions across the MultiOutput structure
+all_tree_preds = []
+for est in model.estimators_: # 5 estimators (one for each sub-score)
+    # Each estimator is a RandomForestRegressor containing 100 DecisionTreeRegressors
+    sub_tree_preds = [tree.predict(X_array)[0] for tree in est.estimators_]
+    all_tree_preds.append(sub_tree_preds)
+
+# all_tree_preds is shape (5, 100)
+# For each sub-score, calculate mean, std, and 95% CI bounds:
+for i, name in enumerate(sub_score_names):
+    sub_preds = np.array(all_tree_preds[i])
+    mean_val = np.mean(sub_preds)
+    std_val = np.std(sub_preds)
+    margin = 1.96 * std_val
+    
+    ci_lower = max(0.0, round(mean_val - margin, 1))
+    ci_upper = min(100.0, round(mean_val + margin, 1))
+```
+
+* **Honest Uncertainty**: If the trees disagree heavily (e.g., high volatility in air quality or extreme storm outliers), the confidence margin expands accordingly (e.g., $\pm 36.4$). If the trees are completely aligned, the interval tightens.
+
+---
+
+## 🖥️ 5. Next.js Client-Side On-Demand UI (`/forecast`)
+
+### 5.1 On-Demand Calculation UX
+To prevent unnecessary API calls and server wake-ups, the Next.js forecast page (`frontend/src/app/forecast/page.tsx`) operates as an interactive `"use client"` component with three distinct visual states:
+
+1. **Empty State (Default)**: On initial page load, no city is selected. The user is presented with a sleek prompt ("Select a Region") and a map pin icon, ensuring zero backend load until explicitly requested.
+2. **Calculating State (Active Inference)**: When a city pill is clicked, the UI enters a loading state displaying an animated spinner and contextual engineering text:
+   > *"Calculating Forecast — Running real-time inference for **Paris, FR** across 100 decision tree estimators and computing 95% confidence intervals."*
+3. **Results State**: Displays the estimated total risk score, forecasted primary driver, baseline deltas, 3-day Open-Meteo weather trajectory, and the 5 granular sub-score cards complete with visual uncertainty progress bars.
+
+---
+
+## 🛠️ 6. Deployment & Operational Checklist
+
+To successfully deploy and run the ML forecast module in any environment (Local, Staging, or Production), ensure the following environment variables and configurations are set:
+
+### 6.1 Required Backend Environment Variables
+| Variable | Description | Example / Source |
+| :--- | :--- | :--- |
+| `DAGSHUB_USER_TOKEN` | Authentication token for DagsHub MLflow server | `***` (DagsHub Settings ➔ Tokens) |
+| `DAGSHUB_USERNAME` | Repository owner username | `Selim-Abouleila` |
+| `GCP_PROJECT_ID` | GCP Project ID for BigQuery Feature Store | `climasentinel` |
+| `BQ_DATASET` | Target BigQuery dataset containing mart tables | `mart` |
+
+### 6.2 Verification & Debugging Commands
+* **Run Feature Extraction**: `python -m model.extract_data`
+* **Retrain & Log Model to DagsHub**: `python -m model.train`
+* **Test FastAPI Inference Endpoint**: `curl http://127.0.0.1:8000/data/city/paris_fr/forecast`
+
+### 6.3 Audit Logs Example (Healthy Execution)
+```text
+2026-06-28 20:19:09,879  INFO      Accessing as Selim-Abouleila
+2026-06-28 20:19:10,638  INFO      Initialized MLflow to track repo "Selim-Abouleila/ClimaSentinel"
+2026-06-28 20:19:10,638  INFO      Repository Selim-Abouleila/ClimaSentinel initialized!
+2026-06-28 20:19:11,102  INFO      ML model loaded from MLflow registry and cached.
+INFO:     100.64.0.3:42690 - "GET /data/city/paris_fr/forecast HTTP/1.1" 200 OK
+```
+
+---
+*Document Version: 1.0.0*  
+*Primary Author: Selim Abouleila (Lead MLOps Engineer)*  
+*Module: ClimaSentinel AI Risk Forecaster*
