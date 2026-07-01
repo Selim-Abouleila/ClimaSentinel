@@ -115,6 +115,6 @@ body {
 
 /* Premium water-fill logo animation */
 @keyframes waterFill {
-  0% { background-position: 100% 50%; }
-  100% { background-position: -100% 50%; }
+  0% { background-position: -100% 50%; }
+  100% { background-position: 200% 50%; }
 }
