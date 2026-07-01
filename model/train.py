@@ -4,6 +4,7 @@ import pandas as pd
 import dagshub
 import mlflow
 import mlflow.sklearn
+import joblib
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
@@ -110,6 +111,11 @@ def train_model():
             registered_model_name="ClimaSentinel_RiskForecaster"
         )
         print("Model successfully registered to MLflow!")
+        
+        # Save a robust local model artifact for the FastAPI backend inference
+        os.makedirs("backend/app", exist_ok=True)
+        joblib.dump(model, "backend/app/risk_forecaster.pkl")
+        print("Model successfully saved to backend/app/risk_forecaster.pkl!")
 
 if __name__ == "__main__":
     train_model()

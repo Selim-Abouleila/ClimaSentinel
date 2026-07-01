@@ -18,21 +18,27 @@ const ALL_CITIES = [
   { id: "amsterdam_nl", name: "Amsterdam, NL" },
 ];
 
+const HORIZON_OPTIONS = [
+  { days: 1, label: "+1 Day", subtitle: "Tomorrow" },
+  { days: 2, label: "+2 Days", subtitle: "Day After" },
+  { days: 3, label: "+3 Days", subtitle: "3-Day Outlook" },
+];
+
 export default function ForecastPage() {
   const [selectedCity, setSelectedCity] = useState<string | null>(null);
   const [forecast, setForecast] = useState<CityForecast | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(false);
+  const [horizonDays, setHorizonDays] = useState(3);
 
-  const handleCityClick = async (cityId: string) => {
-    setSelectedCity(cityId);
+  const fetchForecast = async (cityId: string, horizon: number) => {
     setForecast(null);
     setError(false);
     setLoading(true);
 
     try {
       const res = await fetch(
-        `${API_BASE_URL}/data/city/${encodeURIComponent(cityId)}/forecast`,
+        `${API_BASE_URL}/data/city/${encodeURIComponent(cityId)}/forecast?horizon_days=${horizon}`,
         { cache: "no-store" }
       );
       if (!res.ok) throw new Error("Failed to fetch forecast");
@@ -42,6 +48,18 @@ export default function ForecastPage() {
       setError(true);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleCityClick = (cityId: string) => {
+    setSelectedCity(cityId);
+    fetchForecast(cityId, horizonDays);
+  };
+
+  const handleHorizonChange = (days: number) => {
+    setHorizonDays(days);
+    if (selectedCity) {
+      fetchForecast(selectedCity, days);
     }
   };
 
@@ -56,11 +74,18 @@ export default function ForecastPage() {
             <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse"></span>
             Multi-Output Random Forest Simulation
           </div>
-          <h1 className="text-5xl md:text-6xl font-extrabold tracking-tight text-slate-100">
+          <h1 className="text-5xl md:text-6xl font-extrabold tracking-tight text-slate-100 flex items-center gap-4 justify-center md:justify-start flex-wrap">
             AI Tipping Forecast
+            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-bold uppercase tracking-widest text-white bg-red-600 shadow-[0_0_15px_rgba(220,38,38,0.4)] border border-red-500 animate-pulse select-none"
+              style={{ fontSize: '0.7rem', lineHeight: '1rem', verticalAlign: 'middle' }}>
+              <svg xmlns="http://www.w3.org/2000/svg" className="w-3 h-3" viewBox="0 0 20 20" fill="currentColor">
+                <path fillRule="evenodd" d="M8.485 2.495c.673-1.167 2.357-1.167 3.03 0l6.28 10.875c.673 1.167-.17 2.625-1.516 2.625H3.72c-1.347 0-2.189-1.458-1.515-2.625L8.485 2.495zM10 6a.75.75 0 01.75.75v3.5a.75.75 0 01-1.5 0v-3.5A.75.75 0 0110 6zm0 9a1 1 0 100-2 1 1 0 000 2z" clipRule="evenodd" />
+              </svg>
+              Beta
+            </span>
           </h1>
           <p className="text-base md:text-lg text-slate-400 max-w-2xl font-normal">
-            Simulating 3-day future climate tipping risks with 95% confidence
+            Simulating {horizonDays}-day future climate tipping risks with 95% confidence
             intervals calibrated across decision tree estimators.
           </p>
         </header>
@@ -89,6 +114,39 @@ export default function ForecastPage() {
           })}
         </div>
 
+        {/* Forecast Horizon Selector */}
+        <div className="glass-panel rounded-xl p-3 flex flex-wrap gap-2 items-center justify-center md:justify-start border border-white/5 shadow-lg">
+          <span className="text-xs font-semibold uppercase tracking-wider text-slate-500 mr-2 ml-2">
+            Horizon:
+          </span>
+          {HORIZON_OPTIONS.map((opt) => {
+            const isActive = opt.days === horizonDays;
+            return (
+              <button
+                key={opt.days}
+                onClick={() => handleHorizonChange(opt.days)}
+                disabled={loading}
+                className={`relative px-5 py-2 rounded-lg text-sm transition-all duration-300 ${
+                  isActive
+                    ? "bg-gradient-to-r from-cyan-500 to-blue-500 text-white font-semibold shadow-[0_0_20px_rgba(6,182,212,0.35)]"
+                    : "bg-slate-900/50 text-slate-400 hover:bg-slate-800 hover:text-slate-200 border border-slate-800/80"
+                } ${loading ? "opacity-60 cursor-wait" : "cursor-pointer"}`}
+              >
+                <span className="block text-sm font-semibold">{opt.label}</span>
+                <span className={`block text-[10px] mt-0.5 ${
+                  isActive ? "text-white/70" : "text-slate-500"
+                }`}>{opt.subtitle}</span>
+              </button>
+            );
+          })}
+          <div className="ml-auto mr-2 hidden md:flex items-center gap-2">
+            <div className="h-3 w-px bg-slate-700"></div>
+            <span className="text-[10px] text-slate-500 font-medium">
+              Predicting risk at <span className="text-cyan-400 font-semibold">Day +{horizonDays}</span>
+            </span>
+          </div>
+        </div>
+
         {/* State: No City Selected */}
         {!selectedCity && (
           <div className="glass-panel rounded-xl p-16 text-center border border-white/5">
@@ -102,7 +160,7 @@ export default function ForecastPage() {
               Select a Region
             </h2>
             <p className="text-sm text-slate-500 max-w-md mx-auto">
-              Choose a European city above to generate a real-time 3-day
+              Choose a European city above to generate a real-time {horizonDays}-day
               tipping risk forecast using our Multi-Output Random Forest model.
             </p>
           </div>
@@ -155,7 +213,7 @@ export default function ForecastPage() {
               {/* Total Estimated Score */}
               <div className="glass-panel rounded-xl p-6 flex flex-col justify-between border border-white/5 relative overflow-hidden">
                 <span className="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-4">
-                  Est. Total Risk (Day +3)
+                  Est. Total Risk (Day +{horizonDays})
                 </span>
                 <div>
                   <div className="flex items-baseline gap-2">
@@ -237,43 +295,40 @@ export default function ForecastPage() {
                 </div>
               </div>
 
-              {/* 3-Day Weather Trajectory */}
+              {/* Weather Trajectory */}
               <div className="glass-panel rounded-xl p-6 flex flex-col justify-between bg-slate-900/60 border border-white/5">
                 <span className="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-3 flex items-center justify-between">
-                  <span>3-Day Weather Trajectory</span>
+                  <span>{horizonDays}-Day Weather Trajectory</span>
                   <span className="text-[10px] text-cyan-400 font-medium bg-cyan-500/10 px-2 py-0.5 rounded border border-cyan-500/20">
                     Open-Meteo
                   </span>
                 </span>
                 <div className="space-y-2 text-xs font-normal text-slate-400">
-                  <div className="flex justify-between items-center py-1 border-b border-white/5">
-                    <span>Tomorrow (Day +1):</span>
-                    <span className="font-medium text-slate-200">
-                      {forecast.weather_trajectory_3d.temp_max_plus_1d.toFixed(1)}
-                      °C
-                    </span>
-                  </div>
-                  <div className="flex justify-between items-center py-1 border-b border-white/5">
-                    <span>Day +2 Max Temp:</span>
-                    <span className="font-medium text-slate-200">
-                      {forecast.weather_trajectory_3d.temp_max_plus_2d.toFixed(1)}
-                      °C
-                    </span>
-                  </div>
-                  <div className="flex justify-between items-center py-1 border-b border-white/5">
-                    <span>Day +3 Max Temp:</span>
-                    <span className="font-medium text-slate-200">
-                      {forecast.weather_trajectory_3d.temp_max_plus_3d.toFixed(1)}
-                      °C
-                    </span>
-                  </div>
-                  <div className="flex justify-between items-center py-1">
-                    <span>Day +3 Storm Risk:</span>
-                    <span className="font-medium text-cyan-400">
-                      {forecast.weather_trajectory_3d.precip_plus_3d.toFixed(1)}{" "}
-                      mm
-                    </span>
-                  </div>
+                  {Array.from({ length: horizonDays }, (_, i) => i + 1).map((d) => {
+                    const tempKey = `temp_max_plus_${d}d`;
+                    const tempVal = forecast.weather_trajectory[tempKey];
+                    const dayLabels: Record<number, string> = { 1: "Tomorrow (Day +1)", 2: "Day +2 Max Temp", 3: "Day +3 Max Temp" };
+                    return (
+                      <div key={d} className="flex justify-between items-center py-1 border-b border-white/5">
+                        <span>{dayLabels[d]}:</span>
+                        <span className="font-medium text-slate-200">
+                          {tempVal != null ? tempVal.toFixed(1) : "—"} °C
+                        </span>
+                      </div>
+                    );
+                  })}
+                  {(() => {
+                    const precipKey = `precip_plus_${horizonDays}d`;
+                    const precipVal = forecast.weather_trajectory[precipKey];
+                    return (
+                      <div className="flex justify-between items-center py-1">
+                        <span>Day +{horizonDays} Storm Risk:</span>
+                        <span className="font-medium text-cyan-400">
+                          {precipVal != null ? precipVal.toFixed(1) : "—"} mm
+                        </span>
+                      </div>
+                    );
+                  })()}
                 </div>
               </div>
             </div>
