@@ -56,8 +56,15 @@ export default function ForecastPage() {
             <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse"></span>
             Multi-Output Random Forest Simulation
           </div>
-          <h1 className="text-5xl md:text-6xl font-extrabold tracking-tight text-slate-100">
+          <h1 className="text-5xl md:text-6xl font-extrabold tracking-tight text-slate-100 flex items-center gap-4 justify-center md:justify-start flex-wrap">
             AI Tipping Forecast
+            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-bold uppercase tracking-widest text-white bg-red-600 shadow-[0_0_15px_rgba(220,38,38,0.4)] border border-red-500 animate-pulse select-none"
+              style={{ fontSize: '0.7rem', lineHeight: '1rem', verticalAlign: 'middle' }}>
+              <svg xmlns="http://www.w3.org/2000/svg" className="w-3 h-3" viewBox="0 0 20 20" fill="currentColor">
+                <path fillRule="evenodd" d="M8.485 2.495c.673-1.167 2.357-1.167 3.03 0l6.28 10.875c.673 1.167-.17 2.625-1.516 2.625H3.72c-1.347 0-2.189-1.458-1.515-2.625L8.485 2.495zM10 6a.75.75 0 01.75.75v3.5a.75.75 0 01-1.5 0v-3.5A.75.75 0 0110 6zm0 9a1 1 0 100-2 1 1 0 000 2z" clipRule="evenodd" />
+              </svg>
+              Beta
+            </span>
           </h1>
           <p className="text-base md:text-lg text-slate-400 max-w-2xl font-normal">
             Simulating 3-day future climate tipping risks with 95% confidence
