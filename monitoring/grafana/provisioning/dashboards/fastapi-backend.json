@@ -65,7 +65,7 @@
       "id": 8,
       "options": { "colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": { "calcs": [ "lastNotNull" ], "fields": "", "values": false }, "textMode": "auto" },
       "pluginVersion": "10.4.1",
-      "targets": [ { "datasource": "Prometheus", "editorMode": "code", "expr": "process_uptime_seconds", "legendFormat": "Uptime (s)", "range": true, "refId": "A" } ],
+      "targets": [ { "datasource": "Prometheus", "editorMode": "code", "expr": "time() - process_start_time_seconds", "legendFormat": "Uptime (s)", "range": true, "refId": "A" } ],
       "title": "Backend Uptime / Health",
       "type": "stat"
     }

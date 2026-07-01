@@ -4,6 +4,7 @@ import pandas as pd
 import dagshub
 import mlflow
 import mlflow.sklearn
+import joblib
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
@@ -25,11 +26,27 @@ def train_model():
     print("Loading data snapshot...")
     df = pd.read_csv("model/data/training_snapshot.csv")
     
-    features = ['temperature_2m_max', 'temperature_2m_min', 'precipitation_sum_mm', 'wind_speed_10m_max', 'european_aqi_max', 'river_discharge_m3s']
-    target = 'future_tipping_score_7d'
+    # One-hot encode city_id so the model learns city-specific behavior
+    # We include current_tipping_score and the full 3-day weather forecast trajectory
+    feature_cols = [
+        'current_tipping_score', 
+        'temperature_2m_max', 'temperature_2m_min', 'precipitation_sum_mm', 'wind_speed_10m_max', 'european_aqi_max', 'river_discharge_m3s',
+        'temp_forecast_plus_1d', 'temp_forecast_plus_2d', 'temp_forecast_plus_3d',
+        'precip_forecast_plus_1d', 'precip_forecast_plus_2d', 'precip_forecast_plus_3d',
+        'wind_forecast_plus_1d', 'wind_forecast_plus_2d', 'wind_forecast_plus_3d',
+        'city_id'
+    ]
+    targets = [
+        'future_heat_score_3d', 
+        'future_wind_score_3d', 
+        'future_rain_score_3d', 
+        'future_air_score_3d', 
+        'future_river_score_3d'
+    ]
     
-    X = df[features]
-    y = df[target]
+    df_features = df[feature_cols].copy()
+    X = pd.get_dummies(df_features, columns=['city_id'], drop_first=True)
+    y = df[targets]
     
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
     
@@ -71,13 +88,21 @@ def train_model():
         # Metrics
         mse = mean_squared_error(y_test, predictions)
         mae = mean_absolute_error(y_test, predictions)
-        r2 = r2_score(y_test, predictions)
+        r2_avg = r2_score(y_test, predictions) # Uniform average across all 5 targets
+        
+        # Calculate individual R2 scores for each sub-score
+        r2_raw = r2_score(y_test, predictions, multioutput='raw_values')
         
         mlflow.log_metric("mse", mse)
         mlflow.log_metric("mae", mae)
-        mlflow.log_metric("r2", r2)
+        mlflow.log_metric("r2", r2_avg)
         
-        print(f"Model trained! MSE: {mse:.2f}, R2: {r2:.2f}")
+        for name, r2_val in zip(targets, r2_raw):
+            mlflow.log_metric(f"r2_{name.replace('future_', '').replace('_3d', '')}", r2_val)
+        
+        print(f"Model trained! MSE: {mse:.2f}, R2 Average: {r2_avg:.2f}")
+        for name, r2_val in zip(targets, r2_raw):
+            print(f"  R2 {name}: {r2_val:.2f}")
         
         # Register Model to DagsHub MLflow Registry
         mlflow.sklearn.log_model(
@@ -86,6 +111,11 @@ def train_model():
             registered_model_name="ClimaSentinel_RiskForecaster"
         )
         print("Model successfully registered to MLflow!")
+        
+        # Save a robust local model artifact for the FastAPI backend inference
+        os.makedirs("backend/app", exist_ok=True)
+        joblib.dump(model, "backend/app/risk_forecaster.pkl")
+        print("Model successfully saved to backend/app/risk_forecaster.pkl!")
 
 if __name__ == "__main__":
     train_model()
