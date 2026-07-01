@@ -10,7 +10,7 @@ import time
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from google.cloud import bigquery
 
@@ -240,10 +240,14 @@ def get_city_scores(city_id: str):
 
 
 @app.get("/data/city/{city_id}/forecast", tags=["Data"])
-def get_city_forecast(city_id: str):
+def get_city_forecast(
+    city_id: str,
+    horizon_days: int = Query(default=3, ge=1, le=3, description="Forecast horizon in days (1-3)")
+):
     """
-    Returns the 3-day future climate tipping forecast for a single city.
-    Fetches the pre-computed 3-day weather trajectory from `mart_ml_feature_store`,
+    Returns the N-day future climate tipping forecast for a single city.
+    Accepts horizon_days (1-3) to control how far ahead the model predicts.
+    Fetches the pre-computed weather trajectory from `mart_ml_feature_store`,
     runs inference via the Multi-Output Random Forest model, and calculates
     individual sub-scores, total tipping risk, and 95% confidence intervals.
     """
@@ -299,6 +303,18 @@ def get_city_forecast(city_id: str):
         df_input['river_discharge_m3s'] = df_input['river_discharge_m3s'].fillna(0).infer_objects(copy=False)
         df_input['current_tipping_score'] = df_input['real_current_tipping_score']
         df_features = df_input[feature_cols].copy()
+        
+        # ── Zero out forecast features beyond the requested horizon ──
+        # The model was trained with all 9 forecast features (plus_1d/2d/3d).
+        # For shorter horizons, we zero out columns beyond the target day so the
+        # model sees "no additional forecast info" for those days.
+        if horizon_days < 3:
+            for prefix in ['temp_forecast_plus_', 'precip_forecast_plus_', 'wind_forecast_plus_']:
+                for d in range(horizon_days + 1, 4):  # e.g. horizon=1 → zero 2d,3d
+                    col = f"{prefix}{d}d"
+                    if col in df_features.columns:
+                        df_features[col] = 0.0
+        
         df_features['city_id'] = pd.Categorical(df_features['city_id'], categories=all_cities)
         X = pd.get_dummies(df_features, columns=['city_id'], drop_first=True)
         
@@ -338,10 +354,11 @@ def get_city_forecast(city_id: str):
                 
         if not model or not conf_intervals:
             # Robust fallback simulation calibrated to exact mart_ml_feature_store weather trajectories
+            # Use the weather data for the target horizon day
             base = float(row.get('real_current_tipping_score') or row.get('current_tipping_score') or 50.0)
-            t_max = float(row.get('temp_forecast_plus_3d') or 25.0)
-            p_sum = float(row.get('precip_forecast_plus_3d') or 0.0)
-            w_max = float(row.get('wind_forecast_plus_3d') or 20.0)
+            t_max = float(row.get(f'temp_forecast_plus_{horizon_days}d') or 25.0)
+            p_sum = float(row.get(f'precip_forecast_plus_{horizon_days}d') or 0.0)
+            w_max = float(row.get(f'wind_forecast_plus_{horizon_days}d') or 20.0)
             river_disc = float(row.get('river_discharge_m3s') or 0.0)
             
             est_heat = min(100.0, max(0.0, base * 0.4 + (t_max - 20.0) * 2.5))
@@ -370,8 +387,17 @@ def get_city_forecast(city_id: str):
         driver_map = {0: 'Heat', 1: 'Wind', 2: 'Rain', 3: 'Air Quality', 4: 'River/Flood'}
         best_driver = driver_map[np.argmax([conf_intervals[n]["estimated_score"] for n in sub_score_names])]
 
+        # ── Build weather trajectory for the selected horizon ──
+        weather_trajectory = {}
+        for d in range(1, horizon_days + 1):
+            weather_trajectory[f"temp_max_plus_{d}d"] = float(row.get(f'temp_forecast_plus_{d}d') or 0.0)
+        # Include precip and wind for the target day
+        weather_trajectory[f"precip_plus_{horizon_days}d"] = float(row.get(f'precip_forecast_plus_{horizon_days}d') or 0.0)
+        weather_trajectory[f"wind_plus_{horizon_days}d"] = float(row.get(f'wind_forecast_plus_{horizon_days}d') or 0.0)
+
         return {
             "city_id": city_id,
+            "horizon_days": horizon_days,
             "prediction_date": str(row['date']),
             "current_tipping_score": round(float(row.get('real_current_tipping_score') or row.get('current_tipping_score') or 0.0), 1),
             "estimated_total_tipping_score": total_estimated,
@@ -380,13 +406,7 @@ def get_city_forecast(city_id: str):
             "total_ci_upper": round(float(min(100.0, total_estimated + total_margin)), 1),
             "forecast_primary_driver": best_driver,
             "sub_scores_forecast": conf_intervals,
-            "weather_trajectory_3d": {
-                "temp_max_plus_1d": float(row.get('temp_forecast_plus_1d') or 0.0),
-                "temp_max_plus_2d": float(row.get('temp_forecast_plus_2d') or 0.0),
-                "temp_max_plus_3d": float(row.get('temp_forecast_plus_3d') or 0.0),
-                "precip_plus_3d": float(row.get('precip_forecast_plus_3d') or 0.0),
-                "wind_plus_3d": float(row.get('wind_forecast_plus_3d') or 0.0),
-            }
+            "weather_trajectory": weather_trajectory
         }
 
     except HTTPException:

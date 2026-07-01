@@ -52,6 +52,7 @@ export interface SubScoreForecast {
 
 export interface CityForecast {
   city_id: string;
+  horizon_days: number;
   prediction_date: string;
   current_tipping_score: number;
   estimated_total_tipping_score: number;
@@ -66,18 +67,12 @@ export interface CityForecast {
     air_score: SubScoreForecast;
     river_score: SubScoreForecast;
   };
-  weather_trajectory_3d: {
-    temp_max_plus_1d: number;
-    temp_max_plus_2d: number;
-    temp_max_plus_3d: number;
-    precip_plus_3d: number;
-    wind_plus_3d: number;
-  };
+  weather_trajectory: Record<string, number>;
 }
 
-export async function fetchCityForecast(city_id: string): Promise<CityForecast | null> {
+export async function fetchCityForecast(city_id: string, horizonDays: number = 3): Promise<CityForecast | null> {
   try {
-    const res = await fetch(`${API_BASE_URL}/data/city/${encodeURIComponent(city_id)}/forecast`, {
+    const res = await fetch(`${API_BASE_URL}/data/city/${encodeURIComponent(city_id)}/forecast?horizon_days=${horizonDays}`, {
       cache: 'no-store',
     });
     if (res.status === 404) return null;
@@ -88,3 +83,4 @@ export async function fetchCityForecast(city_id: string): Promise<CityForecast |
     return null;
   }
 }
+
