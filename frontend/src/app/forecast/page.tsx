@@ -104,7 +104,7 @@ export default function ForecastPage() {
                 className={`px-4 py-1.5 rounded-lg text-sm transition-all ${
                   isSelected
                     ? "bg-cyan-500 text-slate-950 font-semibold shadow-[0_0_15px_rgba(6,182,212,0.3)]"
-                    : "bg-slate-900/50 text-slate-400 hover:bg-slate-800 hover:text-slate-200 border border-slate-800/80"
+                    : "bg-slate-900/50 text-slate-300 hover:bg-slate-800 hover:text-slate-100 border border-slate-800/80"
                 } ${loading ? "opacity-60 cursor-wait" : "cursor-pointer"}`}
               >
                 {c.name}
@@ -127,13 +127,13 @@ export default function ForecastPage() {
                 disabled={loading}
                 className={`relative px-5 py-2 rounded-lg text-sm transition-all duration-300 ${
                   isActive
-                    ? "bg-gradient-to-r from-cyan-500 to-blue-500 text-white font-semibold shadow-[0_0_20px_rgba(6,182,212,0.35)]"
-                    : "bg-slate-900/50 text-slate-400 hover:bg-slate-800 hover:text-slate-200 border border-slate-800/80"
+                    ? "bg-gradient-to-r from-cyan-500 to-blue-500 text-slate-950 font-bold shadow-[0_0_20px_rgba(6,182,212,0.35)]"
+                    : "bg-slate-900/50 text-slate-300 hover:bg-slate-800 hover:text-slate-100 border border-slate-800/80"
                 } ${loading ? "opacity-60 cursor-wait" : "cursor-pointer"}`}
               >
-                <span className="block text-sm font-semibold">{opt.label}</span>
+                <span className="block text-sm font-bold">{opt.label}</span>
                 <span className={`block text-[10px] mt-0.5 ${
-                  isActive ? "text-white/70" : "text-slate-500"
+                  isActive ? "text-slate-900/80 font-semibold" : "text-slate-400"
                 }`}>{opt.subtitle}</span>
               </button>
             );
@@ -210,7 +210,7 @@ export default function ForecastPage() {
             {/* Top Overview Cards */}
             <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
               {/* Total Estimated Score */}
-              <div className="glass-panel rounded-xl p-6 flex flex-col justify-between border border-white/5 relative overflow-hidden">
+              <div className="glass-panel rounded-xl p-8 flex flex-col justify-between border border-white/5 relative overflow-hidden">
                 <span className="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-4">
                   Est. Total Risk (Day +{horizonDays})
                 </span>
@@ -242,7 +242,7 @@ export default function ForecastPage() {
               </div>
 
               {/* Forecasted Primary Driver */}
-              <div className="glass-panel rounded-xl p-6 flex flex-col justify-between border border-white/5">
+              <div className="glass-panel rounded-xl p-8 flex flex-col justify-between border border-white/5">
                 <span className="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-4">
                   Forecasted Driver
                 </span>
@@ -258,7 +258,7 @@ export default function ForecastPage() {
               </div>
 
               {/* Baseline Tipping Score */}
-              <div className="glass-panel rounded-xl p-6 flex flex-col justify-between border border-white/5">
+              <div className="glass-panel rounded-xl p-8 flex flex-col justify-between border border-white/5">
                 <span className="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-4">
                   Today&apos;s Baseline (t0)
                 </span>
@@ -295,7 +295,7 @@ export default function ForecastPage() {
               </div>
 
               {/* Weather Trajectory */}
-              <div className="glass-panel rounded-xl p-6 flex flex-col justify-between bg-slate-900/60 border border-white/5">
+              <div className="glass-panel rounded-xl p-8 flex flex-col justify-between bg-slate-900/60 border border-white/5">
                 <span className="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-3 flex items-center justify-between">
                   <span>{horizonDays}-Day Weather Trajectory</span>
                   <span className="text-[10px] text-cyan-400 font-medium bg-cyan-500/10 px-2 py-0.5 rounded border border-cyan-500/20">
@@ -334,13 +334,10 @@ export default function ForecastPage() {
 
             {/* Sub-Scores Forecast Grid */}
             <section className="space-y-6">
-              <div className="flex items-center justify-between border-b border-white/5 pb-4">
+              <div className="border-b border-white/5 pb-4">
                 <h2 className="text-xl font-bold tracking-tight text-slate-200">
                   Granular Multi-Output Sub-Scores
                 </h2>
-                <span className="text-xs font-medium text-slate-500">
-                  95% Confidence Intervals derived from tree estimator variance
-                </span>
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -384,7 +381,7 @@ export default function ForecastPage() {
                   return (
                     <div
                       key={item.key}
-                      className="glass-card rounded-xl p-6 flex flex-col justify-between space-y-6 border border-white/5 relative overflow-hidden"
+                      className="glass-card rounded-xl p-8 flex flex-col justify-between space-y-6 border border-white/5 relative overflow-hidden"
                     >
                       <div>
                         <h3 className="text-base font-semibold text-slate-200">
@@ -393,7 +390,7 @@ export default function ForecastPage() {
                       </div>
 
                       <div className="space-y-4">
-                        <div className="flex items-end justify-between">
+                        <div className="flex flex-col items-start gap-1">
                           <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider">
                             Est. Score
                           </span>
@@ -432,13 +429,11 @@ export default function ForecastPage() {
                               }}
                             />
                           </div>
-                          <div className="flex justify-between text-[11px] font-medium text-slate-500">
-                            <span>0 (Stable)</span>
+                          <div className="flex justify-center text-[11px] font-medium text-slate-500 mt-1">
                             <span>
                               Uncertainty Margin: ±
                               {subData.confidence_margin.toFixed(1)}
                             </span>
-                            <span>100 (Severe)</span>
                           </div>
                         </div>
                       </div>
