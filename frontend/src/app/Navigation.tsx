@@ -20,7 +20,18 @@ export default function Navigation() {
     <header className="sticky top-0 z-50 glass-panel border-b border-white/5 px-6 py-3.5 shadow-lg backdrop-blur-md bg-slate-950/80">
       <div className="max-w-7xl mx-auto flex items-center justify-between">
         <Link href="/" className="flex items-center gap-2 group transition-opacity hover:opacity-80">
-          <span className="font-black text-2xl md:text-3xl tracking-wider text-transparent bg-clip-text bg-gradient-to-r from-slate-100 via-slate-200 to-slate-400">
+          <span
+            className="font-black tracking-wider select-none"
+            style={{
+              fontSize: 'clamp(1.45rem, 2.5vw, 1.8rem)',
+              background: 'linear-gradient(90deg, rgba(148,163,184,0.6) 0%, rgba(56,189,248,0.9) 25%, rgba(34,211,238,1) 50%, rgba(56,189,248,0.9) 75%, rgba(148,163,184,0.6) 100%)',
+              backgroundSize: '200% 100%',
+              WebkitBackgroundClip: 'text',
+              backgroundClip: 'text',
+              color: 'transparent',
+              animation: 'waterFill 6s ease-in-out infinite',
+            }}
+          >
             ClimaSentinel
           </span>
           {isStaging && (

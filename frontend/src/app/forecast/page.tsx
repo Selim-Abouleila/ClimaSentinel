@@ -349,27 +349,22 @@ export default function ForecastPage() {
                   {
                     title: "Heat Score Forecast",
                     key: "heat_score",
-                    desc: "Predicting severe maximum temperature anomalies and upward thermal velocity.",
                   },
                   {
                     title: "Wind Score Forecast",
                     key: "wind_score",
-                    desc: "Predicting severe wind gust velocity exceeding 40 km/h baseline thresholds.",
                   },
                   {
                     title: "Rain Score Forecast",
                     key: "rain_score",
-                    desc: "Predicting severe 24-hour accumulated precipitation totals.",
                   },
                   {
                     title: "Air Quality Forecast",
                     key: "air_score",
-                    desc: "Predicting European AQI spikes based on atmospheric stagnation.",
                   },
                   {
                     title: "River Flood Forecast",
                     key: "river_score",
-                    desc: "Predicting positive hydrological discharge velocity for monitored river basins.",
                   },
                 ].map((item) => {
                   const subData =
@@ -393,12 +388,9 @@ export default function ForecastPage() {
                       className="glass-card rounded-xl p-6 flex flex-col justify-between space-y-6 border border-white/5 relative overflow-hidden"
                     >
                       <div>
-                        <h3 className="text-base font-semibold text-slate-200 mb-1.5">
+                        <h3 className="text-base font-semibold text-slate-200">
                           {item.title}
                         </h3>
-                        <p className="text-xs text-slate-500 font-normal leading-relaxed">
-                          {item.desc}
-                        </p>
                       </div>
 
                       <div className="space-y-4">
@@ -414,7 +406,7 @@ export default function ForecastPage() {
                         </div>
 
                         {/* Confidence Interval Pill */}
-                        <div className="flex items-center justify-between p-2.5 rounded-lg bg-slate-900/60 border border-slate-800/80 text-xs">
+                        <div className="flex items-center justify-between p-3 rounded-lg bg-slate-900/60 border border-slate-800/80 text-sm">
                           <span className="text-slate-400 font-normal">
                             95% Confidence Interval
                           </span>
@@ -427,8 +419,8 @@ export default function ForecastPage() {
                         </div>
 
                         {/* Visual Uncertainty Progress Bar */}
-                        <div className="space-y-1.5">
-                          <div className="w-full h-1.5 bg-slate-900 rounded-full overflow-hidden relative">
+                        <div className="space-y-2">
+                          <div className="w-full h-2.5 bg-slate-900 rounded-full overflow-hidden relative">
                             <div
                               className={`h-full ${barColor} transition-all duration-500`}
                               style={{ width: `${score}%` }}
@@ -441,7 +433,7 @@ export default function ForecastPage() {
                               }}
                             />
                           </div>
-                          <div className="flex justify-between text-[10px] font-medium text-slate-500">
+                          <div className="flex justify-between text-[11px] font-medium text-slate-500">
                             <span>0 (Stable)</span>
                             <span>
                               Uncertainty Margin: ±
