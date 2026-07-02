@@ -106,7 +106,7 @@ flowchart LR
         CRJ -->|"Streaming inserts"| BQ_RAW
         BQ_RAW --> DBT
         DBT -->|"Views"| BQ_STG
-        DBT -->|"Tables"| BQ_MART
+        DBT -->|"Tables + Views"| BQ_MART
     end
 
     subgraph APIs["Open-Meteo APIs (Free · No API key)"]
@@ -211,8 +211,8 @@ flowchart LR
 | Layer | Dataset | Purpose | Key Tables | Status |
 |---|---|---|---|---|
 | 🥉 Bronze | `raw` | Raw API loads — append-only, partitioned by day | `weather_forecast_hourly`, `air_quality_hourly`, `flood_daily`, `historical_weather_daily`, `climate_projections_daily` | ✅ Live |
-| 🥈 Silver | `stg` | Static seeds and harmonized daily views (dbt) | `city_monthly_normals` (table), `stg_city_daily_weather`, `stg_city_signal_input` | ✅ Live |
-| 🥇 Gold | `mart` | Tipping scores, city ranking, driver attribution | `mart_city_score_current`, `mart_city_score_history`, `mart_city_zone_current` | ✅ Live |
+| 🥈 Silver | `stg` | Static seeds and harmonized daily views (dbt) | `city_monthly_normals` (seed/table), `stg_latest_*` (4 dedup views), `stg_city_daily_weather`, `stg_city_daily_air_quality`, `stg_city_signal_input` | ✅ Live |
+| 🥇 Gold | `mart` | Tipping scores, city ranking, driver attribution, ML features | `mart_city_score_history` (table), `mart_ml_feature_store` (table), `mart_city_score_current` (view), `mart_city_score_detail` (view), `mart_city_zone_current` (view) | ✅ Live |
 
 > **Bronze** tables are auto-created by the ingest job. **Silver** and **Gold** models are managed by dbt and deployed via `make deploy`.
 
