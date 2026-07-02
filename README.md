@@ -98,7 +98,9 @@ flowchart LR
         ─────────────
         mart.mart_city_score_current
         mart.mart_city_score_history
-        mart.mart_city_zone_current"]
+        mart.mart_city_zone_current
+        mart.mart_city_score_detail
+        mart.mart_ml_feature_store"]
 
         SCH -->|"HTTP POST (OAuth2)"| CRJ
         CRJ -->|"Streaming inserts"| BQ_RAW
@@ -130,9 +132,49 @@ flowchart LR
         10-year projection · monthly"]
     end
 
+    subgraph SERVING["Serving Layer (Railway)"]
+        direction TB
+        BACKEND["🚀 Backend API
+        ─────────────
+        FastAPI · Cloud Run
+        /data/current-scores
+        /data/city/·/scores
+        /data/city/·/forecast
+        GET /metrics (Prometheus)"]
+
+        FRONTEND["🖥️ Frontend Dashboard
+        ─────────────
+        Next.js · Glassmorphism UI
+        climasentinel.up.railway.app"]
+    end
+
+    subgraph MLOPS["MLOps Pipeline"]
+        direction TB
+        ML["🤖 ML Model
+        ─────────────
+        Multi-Output Random Forest
+        MLflow + DagsHub registry
+        model/train.py"]
+    end
+
+    subgraph MON["Monitoring"]
+        direction TB
+        PROM["📊 Prometheus
+        ─────────────
+        Scrapes /metrics
+        Port 9090"]
+
+        GRAF["📈 Grafana
+        ─────────────
+        Dashboards
+        Port 3000"]
+
+        PROM --> GRAF
+    end
+
     CITIES["📋 config/cities.csv
     10 European cities"]
-    
+
     NORMALS["🌱 transform/seeds/city_monthly_normals.csv
     10-year historical baselines"]
 
@@ -143,6 +185,11 @@ flowchart LR
     FL -->|"river_enabled cities only"| CRJ
     HW --> CRJ
     CP -->|"1st of month only"| CRJ
+    BQ_MART -->|"SQL queries"| BACKEND
+    BACKEND -->|"REST API (JSON)"| FRONTEND
+    BQ_MART -->|"Feature store"| ML
+    ML -->|"Pickle / MLflow"| BACKEND
+    PROM -->|"Scrapes /metrics"| BACKEND
 ```
 
 ---
@@ -201,3 +248,6 @@ flowchart LR
 | [7. CI/CD and Branching Strategy](docs/7-cicd-and-branching.md) | Explanation of the strict Git branching model and the GitHub Actions deployment pipelines |
 | [8. Backend Architecture](docs/8-backend.md) | Details on the Python FastAPI architecture, BigQuery connection, and Dockerization |
 | [9. Frontend Architecture](docs/9-frontend.md) | Overview of the Next.js Glassmorphism dashboard and data fetching mechanism |
+| [10. Monitoring Dashboard](docs/10-monitoring-dashboard.md) | Prometheus + Grafana observability stack: metrics scraping, dashboards, and Docker Compose setup |
+| [11. Machine Learning Model](docs/11-machine-learning-model.md) | Multi-Output Random Forest tipping-score forecaster: training pipeline, MLflow tracking, DagsHub registry |
+| [12. API Swagger Documentation](docs/12-api-swagger-documentation.md) | Interactive Swagger UI reference for all FastAPI endpoints, request/response schemas, and examples |
