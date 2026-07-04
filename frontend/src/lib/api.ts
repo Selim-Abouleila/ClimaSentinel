@@ -42,3 +42,45 @@ export async function fetchCityScores(city_id: string): Promise<CityDetail | nul
     return null;
   }
 }
+
+export interface SubScoreForecast {
+  estimated_score: number;
+  ci_lower: number;
+  ci_upper: number;
+  confidence_margin: number;
+}
+
+export interface CityForecast {
+  city_id: string;
+  horizon_days: number;
+  prediction_date: string;
+  current_tipping_score: number;
+  estimated_total_tipping_score: number;
+  total_confidence_margin: number;
+  total_ci_lower: number;
+  total_ci_upper: number;
+  forecast_primary_driver: string;
+  sub_scores_forecast: {
+    heat_score: SubScoreForecast;
+    wind_score: SubScoreForecast;
+    rain_score: SubScoreForecast;
+    air_score: SubScoreForecast;
+    river_score: SubScoreForecast;
+  };
+  weather_trajectory: Record<string, number>;
+}
+
+export async function fetchCityForecast(city_id: string, horizonDays: number = 3): Promise<CityForecast | null> {
+  try {
+    const res = await fetch(`${API_BASE_URL}/data/city/${encodeURIComponent(city_id)}/forecast?horizon_days=${horizonDays}`, {
+      cache: 'no-store',
+    });
+    if (res.status === 404) return null;
+    if (!res.ok) throw new Error(`Failed to fetch forecast for ${city_id}`);
+    return res.json();
+  } catch (error) {
+    console.error(error);
+    return null;
+  }
+}
+

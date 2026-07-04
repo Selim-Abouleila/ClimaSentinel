@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import Link from "next/link";
 import "./globals.css";
+import Navigation from "./Navigation";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -30,15 +31,7 @@ export default function RootLayout({
     >
       <body className="min-h-full flex flex-col">
         {/* Sticky Global Navigation */}
-        <header className="sticky top-0 z-50 glass-panel border-b border-white/5 px-6 py-3">
-          <div className="max-w-7xl mx-auto flex items-center justify-between">
-            <Link href="/" className="flex items-center gap-2 group transition-opacity hover:opacity-80">
-              <span className="font-black text-xl tracking-wider text-transparent bg-clip-text bg-gradient-to-r from-slate-100 to-slate-400">
-                ClimaSentinel
-              </span>
-            </Link>
-          </div>
-        </header>
+        <Navigation />
 
         {/* Main Content */}
         <div className="flex-1">
