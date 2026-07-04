@@ -20,13 +20,19 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # TODO: Implement actual quality gates
-      # Examples: accuracy threshold, latency limit, schema compatibility
-      - name: Run quality gates (placeholder)
-        run: echo "🔒 Running model promotion quality gates..."
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
 
-      - name: Verify model meets production criteria (placeholder)
-        run: echo "✅ Model promotion gates passed"
+      - name: Install dependencies
+        run: pip install mlflow dagshub
+
+      - name: Run quality gates and promote model
+        run: python model/promote.py
+        env:
+          DAGSHUB_USERNAME: ${{ secrets.DAGSHUB_USERNAME }}
+          DAGSHUB_USER_TOKEN: ${{ secrets.DAGSHUB_USER_TOKEN }}
 
   deploy-production:
     name: Deploy to Production
@@ -40,7 +46,3 @@ jobs:
 
       - name: Deploy to Railway (Disabled)
         run: echo "⚠️ Railway production deployment temporarily disabled"
-
-      # TODO: Promote model to Production stage in MLflow registry
-      - name: Promote model in registry (placeholder)
-        run: echo "🏆 Promote model to Production stage in MLflow registry"

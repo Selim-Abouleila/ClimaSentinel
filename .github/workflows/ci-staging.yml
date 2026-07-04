@@ -78,3 +78,33 @@ jobs:
       # TODO: Deploy candidate model from MLflow registry
       - name: Deploy candidate model (placeholder)
         run: echo "🤖 Deploy candidate model from MLflow registry to staging"
+
+  e2e-test:
+    name: E2E Playwright Test
+    runs-on: ubuntu-latest
+    needs: deploy-staging
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Install Playwright Browsers
+        run: npx playwright install --with-deps chromium
+
+      - name: Run E2E Test
+        env:
+          PLAYWRIGHT_TEST_BASE_URL: ${{ secrets.STAGING_FRONTEND_URL }}
+        run: npm run test:e2e
