@@ -6,7 +6,7 @@ test.describe('ClimaSentinel Forecast E2E', () => {
     await page.goto('/forecast');
 
     // 2. Verify the hero title loaded
-    await expect(page.locator('text=AI Tipping Forecast')).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'AI Tipping Forecast' })).toBeVisible();
 
     // 3. Verify there are no 500 errors
     const bodyText = await page.locator('body').textContent();
