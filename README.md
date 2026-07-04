@@ -251,3 +251,4 @@ flowchart LR
 | [10. Monitoring Dashboard](docs/10-monitoring-dashboard.md) | Prometheus + Grafana observability stack: metrics scraping, dashboards, and Docker Compose setup |
 | [11. Machine Learning Model](docs/11-machine-learning-model.md) | Multi-Output Random Forest tipping-score forecaster: training pipeline, MLflow tracking, DagsHub registry |
 | [12. API Swagger Documentation](docs/12-api-swagger-documentation.md) | Interactive Swagger UI reference for all FastAPI endpoints, request/response schemas, and examples |
+| [13. End-to-End Testing](docs/13-end-to-end-testing.md) | Details on Playwright E2E test suite running in staging CI pipeline |
