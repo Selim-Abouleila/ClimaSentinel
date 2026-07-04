@@ -8,8 +8,8 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(
 
 def promote_model():
     # 1. Authenticate with DagsHub MLflow Registry
-    dagshub_username = os.environ.get("DAGSHUB_USERNAME", "Selim-Abouleila")
-    dagshub_token = os.environ.get("DAGSHUB_USER_TOKEN")
+    dagshub_username = os.environ.get("DAGSHUB_USERNAME", "Selim-Abouleila").strip()
+    dagshub_token = os.environ.get("DAGSHUB_USER_TOKEN", "").strip()
     
     if not dagshub_token:
         logging.error("Missing DAGSHUB_USER_TOKEN environment variable.")
