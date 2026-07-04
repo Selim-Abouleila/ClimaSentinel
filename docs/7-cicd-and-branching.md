@@ -70,10 +70,9 @@ This is the final deployment gate. It runs model promotion quality gates before 
 
 | Step | Description |
 |---|---|
-| **Model promotion gates** | Automated quality checks that validate the candidate model meets production criteria (e.g., accuracy threshold, latency limits, schema compatibility) |
-| **Deploy backend to Railway** | `railway up --environment production` — only runs if gates pass |
-| **Deploy frontend to Railway** | `railway up --environment production` for the frontend service |
-| **Promote model in registry** | Transitions the validated model version to the `Production` stage in the MLflow Model Registry, making it the single source of truth for production serving |
+| **Model promotion gates** | Executes `model/promote.py` which connects to DagsHub MLflow, fetches the latest model metrics, and validates that **R2 >= 0.45** and **MAE <= 7.0**. If passed, the script automatically promotes the model to the `Production` stage in the registry. |
+| **Deploy backend to Railway** | `railway up --environment production` — only runs if the quality gates pass. |
+| **Deploy frontend to Railway** | `railway up --environment production` for the frontend service. |
 
 > **Guard gate behavior:** If any quality gate fails, the deployment is aborted and the production environment remains unchanged. The model stays in `Staging` stage in the registry.
 
