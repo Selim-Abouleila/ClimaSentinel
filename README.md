@@ -235,6 +235,29 @@ flowchart LR
 
 ---
 
+## CI/CD Pipeline & Model Promotion
+
+ClimaSentinel uses a strict 4-tier branching strategy (`feature/*` → `dev` → `staging` → `main`) enforced by GitHub Actions to ensure code quality and safe MLOps deployments:
+
+1. **Continuous Integration (`dev`):** Runs the full Python `pytest` suite (unit + integration tests) and verifies Docker builds.
+2. **Staging Environment (`staging`):** Deploys the application to Railway and executes our **End-to-End (E2E) Playwright tests** against the live UI to validate the candidate ML model.
+3. **Model Promotion & Production (`main`):** Executes our strict mathematical quality gate script (`model/promote.py`). The script connects to the DagsHub MLflow registry and verifies that the candidate model achieves **R² ≥ 0.45** and **MAE ≤ 7.0**. If passed, the model is automatically promoted to the `Production` stage, and the live application is deployed.
+
+*For full details on our pipelines and quality gates, please see [Doc 7: CI/CD and Branching Strategy](docs/7-cicd-and-branching.md).*
+
+---
+
+## Reproducibility
+
+This project is built to be 100% reproducible from end-to-end:
+- **Infrastructure:** All Google Cloud resources (BigQuery, Cloud Run, Scheduler) are defined in Infrastructure-as-Code using Terraform. Follow the [Quick Start](#quick-start) to recreate the environment.
+- **Data Transformations:** The entire Medallion Architecture (Bronze → Silver → Gold) is generated reproducibly using `dbt`.
+- **Machine Learning:** Data snapshots are versioned with **DVC**, and every model training run is tracked via **MLflow**, ensuring exact hyperparameter and metric reproducibility.
+
+*For details on reproducing the ML pipelines or testing, refer to [Doc 11: Machine Learning Model](docs/11-machine-learning-model.md) and [Doc 13: End-to-End Testing](docs/13-end-to-end-testing.md).*
+
+---
+
 ## Docs
 
 | Document | Description |

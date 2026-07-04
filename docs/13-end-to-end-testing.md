@@ -5,10 +5,10 @@ To ensure the highest quality of integration across the full stack (Frontend, Ba
 ## 1. What the E2E Test Evaluates
 
 Unlike unit tests that evaluate isolated functions, our E2E test validates the application from the exact perspective of a human user. The automated headless browser:
-1. **Navigates to the Dashboard:** It loads the root URL.
-2. **Validates UI Rendering:** It ensures the main "ClimaSentinel" brand title is visible.
-3. **Validates Backend Connection:** It ensures the page does not return a "500 Internal Server Error" when trying to fetch data from the FastAPI and BigQuery layer.
-4. **Validates Data Delivery:** It verifies that dynamic climate data (like a city card for "Paris" or the "Tipping Score" label) successfully renders on the screen.
+1. **Navigates to the Forecast Page:** It loads the `/forecast` route.
+2. **Validates UI Rendering:** It ensures the "AI Tipping Forecast" hero title is visible and that there are no "500 Internal Server Error" crashes.
+3. **Simulates User Interaction:** It clicks on a specific city button (e.g., "Paris, FR") and selects a forecast horizon (e.g., "+3 Days").
+4. **Validates ML Model & Database Delivery:** It waits for the BigQuery and ML Model to return the data, verifying that the granular sub-scores (e.g., "Heat Score Forecast") and "95% Confidence Interval" metrics successfully render on the screen.
 
 ## 2. CI/CD Integration Architecture
 
