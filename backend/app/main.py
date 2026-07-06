@@ -304,16 +304,17 @@ def get_city_forecast(
         df_input['current_tipping_score'] = df_input['real_current_tipping_score']
         df_features = df_input[feature_cols].copy()
         
-        # ── Zero out forecast features beyond the requested horizon ──
+        # ── Forward-fill forecast features beyond the requested horizon ──
         # The model was trained with all 9 forecast features (plus_1d/2d/3d).
-        # For shorter horizons, we zero out columns beyond the target day so the
-        # model sees "no additional forecast info" for those days.
+        # For shorter horizons, we forward-fill the weather from the target day 
+        # so the model doesn't interpret missing days as 0.0 (freezing/no wind).
         if horizon_days < 3:
             for prefix in ['temp_forecast_plus_', 'precip_forecast_plus_', 'wind_forecast_plus_']:
-                for d in range(horizon_days + 1, 4):  # e.g. horizon=1 → zero 2d,3d
+                for d in range(horizon_days + 1, 4):  # e.g. horizon=1 → fill 2d,3d with 1d
                     col = f"{prefix}{d}d"
-                    if col in df_features.columns:
-                        df_features[col] = 0.0
+                    prev_col = f"{prefix}{horizon_days}d"
+                    if col in df_features.columns and prev_col in df_features.columns:
+                        df_features[col] = df_features[prev_col]
         
         df_features['city_id'] = pd.Categorical(df_features['city_id'], categories=all_cities)
         X = pd.get_dummies(df_features, columns=['city_id'], drop_first=True)
