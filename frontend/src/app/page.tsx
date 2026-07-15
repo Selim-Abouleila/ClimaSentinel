@@ -1,107 +1,241 @@
 import Link from 'next/link';
 import { fetchCurrentScores } from '@/lib/api';
 
+type RiskTone = 'stable' | 'monitoring' | 'tipping' | 'critical';
+
+interface RiskBand {
+  label: string;
+  tone: RiskTone;
+  range: string;
+}
+
+const RISK_BANDS: RiskBand[] = [
+  { label: 'Stable', tone: 'stable', range: '0–30' },
+  { label: 'Monitoring', tone: 'monitoring', range: '31–60' },
+  { label: 'Tipping', tone: 'tipping', range: '61–80' },
+  { label: 'Critical', tone: 'critical', range: '81–100' },
+];
+
+function getRiskBand(score: number): RiskBand {
+  if (score >= 81) return RISK_BANDS[3];
+  if (score >= 61) return RISK_BANDS[2];
+  if (score >= 31) return RISK_BANDS[1];
+  return RISK_BANDS[0];
+}
+
+function formatCity(cityId: string) {
+  const [city = cityId, country = ''] = cityId.split('_');
+  const cityName = city.charAt(0).toUpperCase() + city.slice(1);
+  return {
+    cityName,
+    countryCode: country.toUpperCase(),
+    displayName: country ? `${cityName}, ${country.toUpperCase()}` : cityName,
+    shortCode: city.slice(0, 3).toUpperCase(),
+  };
+}
+
 export default async function Dashboard() {
   const cityData = await fetchCurrentScores();
 
-  // Calculate stats
-  const activeRegions = cityData.length;
-  const avgRisk = activeRegions > 0 
-    ? cityData.reduce((acc, curr) => acc + curr.current_tipping_score, 0) / activeRegions 
+  const monitoredCities = cityData.length;
+  const avgRisk = monitoredCities > 0
+    ? cityData.reduce((acc, curr) => acc + curr.current_tipping_score, 0) / monitoredCities
     : 0;
-  
-  const highestRiskCity = activeRegions > 0 
-    ? cityData.reduce((prev, current) => (prev.current_tipping_score > current.current_tipping_score) ? prev : current)
+
+  const highestRiskCity = monitoredCities > 0
+    ? cityData.reduce((prev, current) => (
+        prev.current_tipping_score >= current.current_tipping_score ? prev : current
+      ))
     : null;
+  const highestRiskCities = highestRiskCity
+    ? cityData.filter((city) => city.current_tipping_score === highestRiskCity.current_tipping_score)
+    : [];
+  const highestRiskLabel = highestRiskCities.length > 1
+    ? highestRiskCities.map((city) => formatCity(city.city_id).cityName).join(' & ')
+    : highestRiskCity
+      ? formatCity(highestRiskCity.city_id).displayName
+      : '—';
+  const averageBand = getRiskBand(avgRisk);
+  const highestBand = highestRiskCity ? getRiskBand(highestRiskCity.current_tipping_score) : null;
 
   return (
-    <main className="min-h-screen p-6 md:p-12 lg:p-20">
-      <div className="max-w-7xl mx-auto space-y-12">
-        
-        {/* Hero Section */}
-        <header className="flex flex-col items-center md:items-start text-center md:text-left space-y-6 mt-4">
-          <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-cyan-500/10 border border-cyan-500/20 text-xs font-semibold text-cyan-400 tracking-wide uppercase">
-            <span className="w-2 h-2 rounded-full bg-cyan-400 animate-pulse"></span>
-            Live Climate Intelligence
+    <main className="dashboard-shell">
+      <div className="dashboard-container">
+        <header className="dashboard-hero">
+          <div className="dashboard-eyebrow">
+            <span className="dashboard-eyebrow__dot" aria-hidden="true" />
+            Europe · {monitoredCities || 10} cities · 48-hour outlook
           </div>
-          <h1 className="text-5xl md:text-7xl font-black tracking-tight text-slate-100">
-            Global Tipping Risk
-          </h1>
-          <p className="text-lg md:text-xl text-slate-400 max-w-2xl font-medium">
-            Real-time monitoring of critical climate thresholds and driver factors across major European metropolises.
+          <h1>European climate risk monitor</h1>
+          <p>
+            Current climate stress signals and their dominant drivers across ten monitored metropolitan areas.
           </p>
         </header>
 
         {cityData.length === 0 ? (
-          <div className="glass-panel rounded-2xl p-12 text-center mt-12">
-            <h2 className="text-2xl font-semibold mb-4 text-slate-200">System Initialization</h2>
-            <p className="text-slate-400">Awaiting data stream from backend API...</p>
+          <div className="dashboard-empty-state" role="status">
+            <span className="dashboard-empty-state__indicator" aria-hidden="true" />
+            <h2>Climate signals unavailable</h2>
+            <p>The monitoring API has not returned a current 48-hour city outlook.</p>
           </div>
         ) : (
           <>
-            {/* Stats Summary Row */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-              <div className="glass-panel rounded-2xl p-6 flex flex-col justify-between">
-                <span className="text-xs font-semibold uppercase tracking-widest text-slate-500 mb-4">Active Regions</span>
-                <span className="text-4xl font-black text-slate-200">{activeRegions}</span>
-              </div>
-              <div className="glass-panel rounded-2xl p-6 flex flex-col justify-between">
-                <span className="text-xs font-semibold uppercase tracking-widest text-slate-500 mb-4">Avg Global Risk</span>
-                <span className={`text-4xl font-black ${avgRisk > 70 ? 'score-high' : avgRisk > 40 ? 'score-medium' : 'score-low'}`}>
-                  {avgRisk.toFixed(1)}
-                </span>
-              </div>
-              <div className="glass-panel rounded-2xl p-6 flex flex-col justify-between">
-                <span className="text-xs font-semibold uppercase tracking-widest text-slate-500 mb-4">Highest Risk Region</span>
-                <span className="text-3xl font-black text-slate-200 truncate">
-                  {highestRiskCity ? highestRiskCity.city_id.replace('_', ', ').toUpperCase() : '--'}
-                </span>
-              </div>
-            </div>
+            <section className="summary-grid" aria-label="Network summary">
+              <article className="summary-card">
+                <div className="summary-card__topline">
+                  <span className="summary-card__label">Cities monitored</span>
+                  <span className="summary-card__index">01</span>
+                </div>
+                <div className="summary-card__value">{monitoredCities}</div>
+                <p>European metropolitan areas</p>
+              </article>
 
-            {/* City Grid */}
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {cityData.map((city) => {
-                let riskClass = 'score-low';
-                let indicatorColor = 'bg-green-400';
-                if (city.current_tipping_score > 70) {
-                  riskClass = 'score-high';
-                  indicatorColor = 'bg-red-400';
-                } else if (city.current_tipping_score > 40) {
-                  riskClass = 'score-medium';
-                  indicatorColor = 'bg-amber-400';
-                }
+              <article className={`summary-card risk-${averageBand.tone}`}>
+                <div className="summary-card__topline">
+                  <span className="summary-card__label">Mean network score</span>
+                  <span className="summary-card__index">02</span>
+                </div>
+                <div className="summary-card__metric">
+                  <span className="summary-card__value">{avgRisk.toFixed(1)}</span>
+                  <span className="summary-card__unit">/ 100</span>
+                </div>
+                <div className="summary-card__status">
+                  <span className="risk-dot" aria-hidden="true" />
+                  {averageBand.label}
+                </div>
+              </article>
 
-                return (
-                  <Link
-                    key={city.city_id}
-                    href={`/city/${city.city_id}`}
-                    className="glass-card rounded-2xl p-6 flex flex-col justify-between h-48 cursor-pointer city-card-link relative overflow-hidden group"
-                  >
-                    {/* Top glow line for severity */}
-                    <div className={`absolute top-0 left-0 w-full h-1 ${indicatorColor} opacity-50 group-hover:opacity-100 transition-opacity`} />
-                    
-                    <div>
-                      <h3 className="text-xl font-bold tracking-wide text-slate-100 mb-3">
-                        {city.city_id.replace('_', ', ').toUpperCase()}
-                      </h3>
-                      <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-slate-800/40 border border-slate-700/50 text-[11px] font-semibold text-slate-300 uppercase tracking-wider">
-                        Driver: <span className="text-cyan-400">{city.current_primary_driver || 'Unknown'}</span>
+              <article className={`summary-card ${highestBand ? `risk-${highestBand.tone}` : ''}`}>
+                <div className="summary-card__topline">
+                  <span className="summary-card__label">
+                    Highest-risk {highestRiskCities.length > 1 ? 'cities' : 'city'}
+                  </span>
+                  <span className="summary-card__index">03</span>
+                </div>
+                <div className="summary-card__city">
+                  {highestRiskLabel}
+                </div>
+                <p>
+                  {highestRiskCity ? `${highestRiskCity.current_tipping_score.toFixed(1)} / 100 · ${highestBand?.label}` : 'No current score'}
+                </p>
+              </article>
+            </section>
+
+            <section className="risk-spectrum-panel" aria-labelledby="risk-spectrum-title">
+              <div className="risk-spectrum-panel__header">
+                <div>
+                  <span className="section-kicker">Network distribution</span>
+                  <h2 id="risk-spectrum-title">Risk spectrum</h2>
+                </div>
+                <p>Worst-case city score in the current 48-hour window</p>
+              </div>
+              <div className="risk-spectrum" aria-label="City scores distributed on a scale from zero to one hundred">
+                <div className="risk-spectrum__plot">
+                  <div className="risk-spectrum__bands" aria-hidden="true">
+                    <span className="risk-spectrum__band risk-stable" />
+                    <span className="risk-spectrum__band risk-monitoring" />
+                    <span className="risk-spectrum__band risk-tipping" />
+                    <span className="risk-spectrum__band risk-critical" />
+                  </div>
+                  {cityData.map((city, index) => {
+                    const cityName = formatCity(city.city_id);
+                    const band = getRiskBand(city.current_tipping_score);
+                    const safePosition = Math.min(98, Math.max(2, city.current_tipping_score));
+                    return (
+                      <Link
+                        key={city.city_id}
+                        href={`/city/${city.city_id}`}
+                        className={`risk-spectrum__marker risk-${band.tone} risk-spectrum__marker--lane-${index % 4}`}
+                        style={{ left: `${safePosition}%` }}
+                        title={`${cityName.displayName}: ${city.current_tipping_score.toFixed(1)} / 100`}
+                        aria-label={`View ${cityName.displayName}, score ${city.current_tipping_score.toFixed(1)} out of 100`}
+                      >
+                        <span>{cityName.shortCode}</span>
+                        <i aria-hidden="true" />
+                      </Link>
+                    );
+                  })}
+                </div>
+                <div className="risk-spectrum__axis" aria-hidden="true">
+                  <span>0</span>
+                  <span>31</span>
+                  <span>61</span>
+                  <span>81</span>
+                  <span>100</span>
+                </div>
+              </div>
+            </section>
+
+            <section className="city-profile" aria-labelledby="city-profile-title">
+              <div className="city-profile__header">
+                <div>
+                  <span className="section-kicker">Operational ranking</span>
+                  <h2 id="city-profile-title">City risk profile</h2>
+                  <p>Ranked by the highest signal in the current 48-hour window.</p>
+                </div>
+                <div className="risk-legend" aria-label="Risk thresholds">
+                  {RISK_BANDS.map((band) => (
+                    <span key={band.tone} className={`risk-legend__item risk-${band.tone}`}>
+                      <i className="risk-dot" aria-hidden="true" />
+                      <span>{band.label}</span>
+                      <small>{band.range}</small>
+                    </span>
+                  ))}
+                </div>
+              </div>
+
+              <div className="city-grid">
+                {cityData.map((city, index) => {
+                  const band = getRiskBand(city.current_tipping_score);
+                  const cityName = formatCity(city.city_id);
+                  const rank = city.rank ?? index + 1;
+
+                  return (
+                    <Link
+                      key={city.city_id}
+                      href={`/city/${city.city_id}`}
+                      className={`city-risk-card risk-${band.tone}`}
+                      aria-label={`View ${cityName.displayName} climate risk details`}
+                    >
+                      <div className="city-risk-card__header">
+                        <span className="city-risk-card__rank">#{String(rank).padStart(2, '0')}</span>
+                        <span className="city-risk-card__status">
+                          <i className="risk-dot" aria-hidden="true" />
+                          {band.label}
+                        </span>
                       </div>
-                    </div>
 
-                    <div className="flex items-end justify-between">
-                      <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">
-                        Tipping Score
-                      </span>
-                      <span className={`text-4xl font-black tracking-tight ${riskClass}`}>
-                        {city.current_tipping_score.toFixed(1)}
-                      </span>
-                    </div>
-                  </Link>
-                );
-              })}
-            </div>
+                      <div className="city-risk-card__title-row">
+                        <h3>{cityName.cityName}</h3>
+                        <span>{cityName.countryCode}</span>
+                      </div>
+
+                      <div className="city-risk-card__score-row">
+                        <strong>{city.current_tipping_score.toFixed(1)}</strong>
+                        <span>/ 100</span>
+                      </div>
+
+                      <div className="city-risk-card__meter" aria-hidden="true">
+                        <span style={{ width: `${Math.min(100, Math.max(0, city.current_tipping_score))}%` }} />
+                      </div>
+
+                      <div className="city-risk-card__footer">
+                        <span>Dominant driver</span>
+                        <strong>{city.current_primary_driver || 'Unknown'}</strong>
+                        <svg viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                          <path d="M3 8h9M8.5 4.5 12 8l-3.5 3.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+                        </svg>
+                      </div>
+                    </Link>
+                  );
+                })}
+              </div>
+
+              <footer className="dashboard-data-note">
+                <span>Signal inputs</span>
+                Heat · Wind · Rain · Air quality · River discharge
+              </footer>
+            </section>
           </>
         )}
       </div>

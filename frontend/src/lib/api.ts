@@ -4,6 +4,7 @@ export interface CityScore {
   city_id: string;
   current_tipping_score: number;
   current_primary_driver: string;
+  rank?: number;
 }
 
 export interface CityDetail {
@@ -83,4 +84,3 @@ export async function fetchCityForecast(city_id: string, horizonDays: number = 3
     return null;
   }
 }
-
