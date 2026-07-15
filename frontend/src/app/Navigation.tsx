@@ -22,13 +22,6 @@ export default function Navigation() {
     <header className="app-navigation">
       <div className="app-navigation__inner">
         <Link href="/" className="brand" aria-label="ClimaSentinel overview">
-          <span className="brand__mark" aria-hidden="true">
-            <svg viewBox="0 0 32 32" fill="none">
-              <circle cx="16" cy="16" r="13.5" stroke="currentColor" strokeWidth="1" opacity="0.35" />
-              <path d="M6.5 18.25h5l2.35-7 4.15 12 2.55-7h4.95" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-              <circle cx="16" cy="16" r="2" fill="currentColor" />
-            </svg>
-          </span>
           <span className="brand__name">
             <span>Clima</span><strong>Sentinel</strong>
           </span>
