@@ -5,6 +5,13 @@ import { CityForecast } from "@/lib/api";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
 
+type RiskTone = "stable" | "monitoring" | "tipping" | "critical";
+
+interface RiskBand {
+  label: string;
+  tone: RiskTone;
+}
+
 const ALL_CITIES = [
   { id: "stockholm_se", name: "Stockholm, SE" },
   { id: "warsaw_pl", name: "Warsaw, PL" },
@@ -20,9 +27,28 @@ const ALL_CITIES = [
 
 const HORIZON_OPTIONS = [
   { days: 1, label: "+1 Day", subtitle: "Tomorrow" },
-  { days: 2, label: "+2 Days", subtitle: "Day After" },
-  { days: 3, label: "+3 Days", subtitle: "3-Day Outlook" },
+  { days: 2, label: "+2 Days", subtitle: "48 hours" },
+  { days: 3, label: "+3 Days", subtitle: "72 hours" },
 ];
+
+const FORECAST_FACTORS = [
+  { title: "Heat Score Forecast", label: "Heat", key: "heat_score" },
+  { title: "Wind Score Forecast", label: "Wind", key: "wind_score" },
+  { title: "Rain Score Forecast", label: "Rain", key: "rain_score" },
+  { title: "Air Quality Forecast", label: "Air quality", key: "air_score" },
+  { title: "River Flood Forecast", label: "River / flood", key: "river_score" },
+] as const;
+
+function getRiskBand(score: number): RiskBand {
+  if (score >= 81) return { label: "Critical", tone: "critical" };
+  if (score >= 61) return { label: "Tipping", tone: "tipping" };
+  if (score >= 31) return { label: "Monitoring", tone: "monitoring" };
+  return { label: "Stable", tone: "stable" };
+}
+
+function clampScore(score: number) {
+  return Math.min(100, Math.max(0, score));
+}
 
 export default function ForecastPage() {
   const [selectedCity, setSelectedCity] = useState<string | null>(null);
@@ -58,390 +84,273 @@ export default function ForecastPage() {
 
   const handleHorizonChange = (days: number) => {
     setHorizonDays(days);
-    if (selectedCity) {
-      fetchForecast(selectedCity, days);
-    }
+    if (selectedCity) fetchForecast(selectedCity, days);
   };
 
-  const currentCityObj = ALL_CITIES.find((c) => c.id === selectedCity);
+  const currentCity = ALL_CITIES.find((city) => city.id === selectedCity);
+  const forecastBand = forecast
+    ? getRiskBand(forecast.estimated_total_tipping_score)
+    : null;
+  const baselineBand = forecast ? getRiskBand(forecast.current_tipping_score) : null;
+  const delta = forecast
+    ? forecast.estimated_total_tipping_score - forecast.current_tipping_score
+    : 0;
+  const targetPrecipitation = forecast
+    ? forecast.weather_trajectory[`precip_plus_${horizonDays}d`]
+    : null;
+  const targetWind = forecast
+    ? forecast.weather_trajectory[`wind_plus_${horizonDays}d`]
+    : null;
 
   return (
-    <main className="min-h-screen p-6 md:p-12 lg:p-20">
-      <div className="max-w-7xl mx-auto space-y-12">
-        {/* Hero Section */}
-        <header className="flex flex-col items-center md:items-start text-center md:text-left space-y-4 mt-4">
-          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-slate-900 border border-slate-800 text-xs font-medium text-slate-400 tracking-wider uppercase">
-            <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-md text-[10px] font-bold uppercase tracking-widest text-white bg-red-600 shadow-[0_0_12px_rgba(220,38,38,0.4)] border border-red-500 animate-pulse select-none">
-              <svg xmlns="http://www.w3.org/2000/svg" className="w-2.5 h-2.5" viewBox="0 0 20 20" fill="currentColor">
-                <path fillRule="evenodd" d="M8.485 2.495c.673-1.167 2.357-1.167 3.03 0l6.28 10.875c.673 1.167-.17 2.625-1.516 2.625H3.72c-1.347 0-2.189-1.458-1.515-2.625L8.485 2.495zM10 6a.75.75 0 01.75.75v3.5a.75.75 0 01-1.5 0v-3.5A.75.75 0 0110 6zm0 9a1 1 0 100-2 1 1 0 000 2z" clipRule="evenodd" />
-              </svg>
-              Beta
-            </span>
-            <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse"></span>
-            Multi-Output Random Forest Simulation
+    <main className="subpage-shell forecast-page">
+      <div className="subpage-container">
+        <header className="subpage-hero">
+          <div className="dashboard-eyebrow">
+            <span className="dashboard-eyebrow__dot" aria-hidden="true" />
+            Predictive outlook · 1–3 days · 95% intervals
           </div>
-          <h1 className="text-5xl md:text-6xl font-extrabold tracking-tight text-slate-100">
-            AI Tipping Forecast
-          </h1>
-          <p className="text-base md:text-lg text-slate-400 max-w-2xl font-normal">
-            Simulating {horizonDays}-day future climate tipping risks with 95% confidence
-            intervals calibrated across decision tree estimators.
+          <div className="subpage-hero__title-row">
+            <h1>AI Tipping Forecast</h1>
+            <span className="model-status">Beta model</span>
+          </div>
+          <p>
+            Explore projected climate stress across ten European cities using a multi-output random forest model.
           </p>
         </header>
 
-        {/* Interactive City Selector Bar */}
-        <div className="glass-panel rounded-xl p-3 flex flex-wrap gap-2 items-center justify-center md:justify-start border border-white/5 shadow-lg">
-          <span className="text-xs font-semibold uppercase tracking-wider text-slate-500 mr-2 ml-2">
-            Region:
-          </span>
-          {ALL_CITIES.map((c) => {
-            const isSelected = c.id === selectedCity;
-            return (
-              <button
-                key={c.id}
-                onClick={() => handleCityClick(c.id)}
-                disabled={loading}
-                className={`px-4 py-1.5 rounded-lg text-sm transition-all ${
-                  isSelected
-                    ? "bg-cyan-500 text-slate-950 font-semibold shadow-[0_0_15px_rgba(6,182,212,0.3)]"
-                    : "bg-slate-900/50 text-slate-300 hover:bg-slate-800 hover:text-slate-100 border border-slate-800/80"
-                } ${loading ? "opacity-60 cursor-wait" : "cursor-pointer"}`}
-              >
-                {c.name}
-              </button>
-            );
-          })}
-        </div>
-
-        {/* Forecast Horizon Selector */}
-        <div className="glass-panel rounded-xl p-3 flex flex-wrap gap-2 items-center justify-center md:justify-start border border-white/5 shadow-lg">
-          <span className="text-xs font-semibold uppercase tracking-wider text-slate-500 mr-2 ml-2">
-            Horizon:
-          </span>
-          {HORIZON_OPTIONS.map((opt) => {
-            const isActive = opt.days === horizonDays;
-            return (
-              <button
-                key={opt.days}
-                onClick={() => handleHorizonChange(opt.days)}
-                disabled={loading}
-                className={`relative px-5 py-2 rounded-lg text-sm transition-all duration-300 ${
-                  isActive
-                    ? "bg-gradient-to-r from-cyan-500 to-blue-500 text-slate-950 font-bold shadow-[0_0_20px_rgba(6,182,212,0.35)]"
-                    : "bg-slate-900/50 text-slate-300 hover:bg-slate-800 hover:text-slate-100 border border-slate-800/80"
-                } ${loading ? "opacity-60 cursor-wait" : "cursor-pointer"}`}
-              >
-                <span className="block text-sm font-bold">{opt.label}</span>
-                <span className={`block text-[10px] mt-0.5 ${
-                  isActive ? "text-slate-900/80 font-semibold" : "text-slate-400"
-                }`}>{opt.subtitle}</span>
-              </button>
-            );
-          })}
-          <div className="ml-auto mr-2 hidden md:flex items-center gap-2">
-            <div className="h-3 w-px bg-slate-700"></div>
-            <span className="text-[10px] text-slate-500 font-medium">
-              Predicting risk at <span className="text-cyan-400 font-semibold">Day +{horizonDays}</span>
-            </span>
-          </div>
-        </div>
-
-        {/* State: No City Selected */}
-        {!selectedCity && (
-          <div className="glass-panel rounded-xl p-16 text-center border border-white/5">
-            <div className="text-4xl mb-4 text-slate-600">
-              <svg xmlns="http://www.w3.org/2000/svg" className="w-12 h-12 mx-auto mb-4 text-slate-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M15 10.5a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
-                <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 10.5c0 7.142-7.5 11.25-7.5 11.25S4.5 17.642 4.5 10.5a7.5 7.5 0 1 1 15 0Z" />
-              </svg>
-            </div>
-            <h2 className="text-xl font-medium text-slate-300 mb-2">
-              Select a Region
-            </h2>
-            <p className="text-sm text-slate-500 max-w-md mx-auto">
-              Choose a European city above to generate a real-time {horizonDays}-day
-              tipping risk forecast using our Multi-Output Random Forest model.
-            </p>
-          </div>
-        )}
-
-        {/* State: Loading */}
-        {loading && selectedCity && (
-          <div className="glass-panel rounded-xl p-16 text-center border border-white/5">
-            <div className="flex flex-col items-center gap-6">
-              {/* Animated spinner */}
-              <div className="relative w-16 h-16">
-                <div className="absolute inset-0 rounded-full border-2 border-slate-800"></div>
-                <div className="absolute inset-0 rounded-full border-2 border-t-cyan-400 animate-spin"></div>
-              </div>
+        <section className="forecast-controls" aria-label="Forecast controls">
+          <div className="forecast-control-group">
+            <div className="forecast-control-group__header">
               <div>
-                <h2 className="text-xl font-medium text-slate-200 mb-2">
-                  Calculating Forecast
-                </h2>
-                <p className="text-sm text-slate-500 max-w-md mx-auto">
-                  Running real-time inference for{" "}
-                  <span className="text-cyan-400 font-medium">
-                    {currentCityObj?.name}
-                  </span>{" "}
-                  across 100 decision tree estimators and computing 95%
-                  confidence intervals.
-                </p>
+                <span className="section-kicker">Location</span>
+                <h2>Select a city</h2>
               </div>
+              <span>{selectedCity ? currentCity?.name : "No city selected"}</span>
+            </div>
+            <div className="forecast-city-grid">
+              {ALL_CITIES.map((city) => {
+                const isSelected = city.id === selectedCity;
+                return (
+                  <button
+                    key={city.id}
+                    type="button"
+                    onClick={() => handleCityClick(city.id)}
+                    disabled={loading}
+                    aria-pressed={isSelected}
+                    className={isSelected ? "is-selected" : ""}
+                  >
+                    {city.name}
+                  </button>
+                );
+              })}
             </div>
           </div>
-        )}
 
-        {/* State: Error */}
-        {error && !loading && selectedCity && (
-          <div className="glass-panel rounded-xl p-12 text-center border border-white/5">
-            <h2 className="text-xl font-medium mb-2 text-slate-300">
-              Forecast Unavailable
-            </h2>
-            <p className="text-sm text-slate-500">
-              Unable to retrieve ML model inference for{" "}
-              {currentCityObj?.name}. Verify backend connection.
-            </p>
+          <div className="forecast-control-divider" aria-hidden="true" />
+
+          <div className="forecast-control-group forecast-control-group--horizon">
+            <div className="forecast-control-group__header">
+              <div>
+                <span className="section-kicker">Horizon</span>
+                <h2>Projection window</h2>
+              </div>
+              <span>Target: Day +{horizonDays}</span>
+            </div>
+            <div className="forecast-horizon-grid">
+              {HORIZON_OPTIONS.map((option) => {
+                const isActive = option.days === horizonDays;
+                return (
+                  <button
+                    key={option.days}
+                    type="button"
+                    onClick={() => handleHorizonChange(option.days)}
+                    disabled={loading}
+                    aria-pressed={isActive}
+                    className={isActive ? "is-selected" : ""}
+                  >
+                    <strong>{option.label}</strong>
+                    <span>{option.subtitle}</span>
+                  </button>
+                );
+              })}
+            </div>
           </div>
+        </section>
+
+        {!selectedCity && (
+          <section className="forecast-state" aria-labelledby="forecast-empty-title">
+            <span className="forecast-state__symbol" aria-hidden="true">
+              <i />
+            </span>
+            <span className="section-kicker">Awaiting input</span>
+            <h2 id="forecast-empty-title">Select a Region</h2>
+            <p>
+              Choose a city to calculate its Day +{horizonDays} risk estimate, confidence interval, and factor-level outlook.
+            </p>
+          </section>
         )}
 
-        {/* State: Results */}
-        {forecast && !loading && (
-          <div className="space-y-12">
-            {/* Top Overview Cards */}
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-              {/* Total Estimated Score */}
-              <div className="glass-panel rounded-xl p-8 flex flex-col justify-between border border-white/5 relative overflow-hidden">
-                <span className="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-4">
-                  Est. Total Risk (Day +{horizonDays})
-                </span>
-                <div>
-                  <div className="flex items-baseline gap-2">
-                    <span
-                      className={`text-5xl font-black tracking-tight ${
-                        forecast.estimated_total_tipping_score > 70
-                          ? "score-high"
-                          : forecast.estimated_total_tipping_score > 40
-                          ? "score-medium"
-                          : "score-low"
-                      }`}
-                    >
-                      {forecast.estimated_total_tipping_score.toFixed(1)}
-                    </span>
-                    <span className="text-sm font-medium text-slate-500">
-                      / 100
-                    </span>
-                  </div>
-                  <div className="mt-3 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-slate-900 border border-slate-800 text-[11px] font-medium text-slate-400">
-                    95% CI:{" "}
-                    <span className="text-cyan-400 font-semibold">
-                      [{forecast.total_ci_lower} - {forecast.total_ci_upper}]
-                    </span>{" "}
-                    (±{forecast.total_confidence_margin})
-                  </div>
-                </div>
-              </div>
+        {loading && selectedCity && (
+          <section className="forecast-state" role="status" aria-live="polite">
+            <span className="forecast-loader" aria-hidden="true" />
+            <span className="section-kicker">Model inference</span>
+            <h2>Calculating Forecast</h2>
+            <p>
+              Evaluating {currentCity?.name} at Day +{horizonDays} and calculating 95% confidence intervals.
+            </p>
+          </section>
+        )}
 
-              {/* Forecasted Primary Driver */}
-              <div className="glass-panel rounded-xl p-8 flex flex-col justify-between border border-white/5">
-                <span className="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-4">
-                  Forecasted Driver
-                </span>
-                <div>
-                  <span className="text-3xl font-bold text-slate-100 tracking-wide block mb-2">
-                    {forecast.forecast_primary_driver}
-                  </span>
-                  <p className="text-xs text-slate-500 font-normal leading-relaxed">
-                    Meteorological factor projecting the highest severe tipping
-                    anomaly.
-                  </p>
-                </div>
-              </div>
+        {error && !loading && selectedCity && (
+          <section className="forecast-state forecast-state--error" role="alert">
+            <span className="forecast-state__symbol" aria-hidden="true">!</span>
+            <span className="section-kicker">Connection error</span>
+            <h2>Forecast Unavailable</h2>
+            <p>
+              The model output for {currentCity?.name} could not be retrieved. Check the backend connection and try again.
+            </p>
+            <button type="button" onClick={() => fetchForecast(selectedCity, horizonDays)}>
+              Retry forecast
+            </button>
+          </section>
+        )}
 
-              {/* Baseline Tipping Score */}
-              <div className="glass-panel rounded-xl p-8 flex flex-col justify-between border border-white/5">
-                <span className="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-4">
-                  Today&apos;s Baseline (t0)
-                </span>
-                <div>
-                  <div className="flex items-baseline gap-2 mb-2">
-                    <span className="text-4xl font-extrabold text-slate-200">
-                      {forecast.current_tipping_score.toFixed(1)}
-                    </span>
-                    <span className="text-sm font-medium text-slate-500">
-                      / 100
-                    </span>
-                  </div>
-                  <div className="text-xs font-medium text-slate-400 flex items-center gap-1">
-                    {forecast.estimated_total_tipping_score >
-                    forecast.current_tipping_score ? (
-                      <span className="text-amber-400">
-                        Projected increase of{" "}
-                        {(
-                          forecast.estimated_total_tipping_score -
-                          forecast.current_tipping_score
-                        ).toFixed(1)}
-                      </span>
-                    ) : (
-                      <span className="text-emerald-400">
-                        Projected decrease of{" "}
-                        {(
-                          forecast.current_tipping_score -
-                          forecast.estimated_total_tipping_score
-                        ).toFixed(1)}
-                      </span>
-                    )}
-                  </div>
-                </div>
+        {forecast && !loading && forecastBand && baselineBand && (
+          <div className="forecast-results" aria-live="polite">
+            <header className="forecast-results__header">
+              <div>
+                <span className="section-kicker">Forecast output</span>
+                <h2>{currentCity?.name} · Day +{horizonDays}</h2>
+                <p>Model input date {forecast.prediction_date}</p>
               </div>
+              <div className={`forecast-results__status risk-${forecastBand.tone}`}>
+                <i className="risk-dot" aria-hidden="true" />
+                {forecastBand.label} risk
+              </div>
+            </header>
 
-              {/* Weather Trajectory */}
-              <div className="glass-panel rounded-xl p-8 flex flex-col justify-between bg-slate-900/60 border border-white/5">
-                <span className="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-3 flex items-center justify-between">
-                  <span>{horizonDays}-Day Weather Trajectory</span>
-                  <span className="text-[10px] text-cyan-400 font-medium bg-cyan-500/10 px-2 py-0.5 rounded border border-cyan-500/20">
-                    Open-Meteo
-                  </span>
-                </span>
-                <div className="space-y-2 text-xs font-normal text-slate-400">
-                  {Array.from({ length: horizonDays }, (_, i) => i + 1).map((d) => {
-                    const tempKey = `temp_max_plus_${d}d`;
-                    const tempVal = forecast.weather_trajectory[tempKey];
-                    const dayLabels: Record<number, string> = { 1: "Tomorrow (Day +1)", 2: "Day +2 Max Temp", 3: "Day +3 Max Temp" };
+            <section className="forecast-summary-grid" aria-label="Forecast summary">
+              <article className={`forecast-summary-card risk-${forecastBand.tone}`}>
+                <div className="forecast-summary-card__topline">
+                  <span>Est. Total Risk (Day +{horizonDays})</span>
+                  <small>01</small>
+                </div>
+                <div className="forecast-summary-card__metric">
+                  <strong>{forecast.estimated_total_tipping_score.toFixed(1)}</strong>
+                  <span>/ 100</span>
+                </div>
+                <p>
+                  95% CI <b>{forecast.total_ci_lower.toFixed(1)}–{forecast.total_ci_upper.toFixed(1)}</b>
+                  <span>±{forecast.total_confidence_margin.toFixed(1)}</span>
+                </p>
+              </article>
+
+              <article className={`forecast-summary-card risk-${baselineBand.tone}`}>
+                <div className="forecast-summary-card__topline">
+                  <span>Current baseline</span>
+                  <small>02</small>
+                </div>
+                <div className="forecast-summary-card__metric">
+                  <strong>{forecast.current_tipping_score.toFixed(1)}</strong>
+                  <span>/ 100</span>
+                </div>
+                <p className={delta > 0 ? "delta-increase" : delta < 0 ? "delta-decrease" : ""}>
+                  {delta > 0 ? "+" : ""}{delta.toFixed(1)} projected change
+                </p>
+              </article>
+
+              <article className="forecast-summary-card">
+                <div className="forecast-summary-card__topline">
+                  <span>Forecast driver</span>
+                  <small>03</small>
+                </div>
+                <h3>{forecast.forecast_primary_driver}</h3>
+                <p>Highest projected factor at the selected horizon</p>
+              </article>
+
+              <article className="forecast-summary-card forecast-summary-card--weather">
+                <div className="forecast-summary-card__topline">
+                  <span>Weather trajectory</span>
+                  <small>04</small>
+                </div>
+                <div className="forecast-weather-list">
+                  {Array.from({ length: horizonDays }, (_, index) => index + 1).map((day) => {
+                    const temperature = forecast.weather_trajectory[`temp_max_plus_${day}d`];
                     return (
-                      <div key={d} className="flex justify-between items-center py-1 border-b border-white/5">
-                        <span>{dayLabels[d]}:</span>
-                        <span className="font-medium text-slate-200">
-                          {tempVal != null ? tempVal.toFixed(1) : "—"} °C
-                        </span>
-                      </div>
+                      <span key={day}>
+                        <small>D+{day} max</small>
+                        <strong>{temperature != null ? temperature.toFixed(1) : "—"}°</strong>
+                      </span>
                     );
                   })}
-                  {(() => {
-                    const precipKey = `precip_plus_${horizonDays}d`;
-                    const precipVal = forecast.weather_trajectory[precipKey];
-                    return (
-                      <div className="flex justify-between items-center py-1">
-                        <span>Day +{horizonDays} Storm Risk:</span>
-                        <span className="font-medium text-cyan-400">
-                          {precipVal != null ? precipVal.toFixed(1) : "—"} mm
-                        </span>
-                      </div>
-                    );
-                  })()}
+                  <span>
+                    <small>Rain D+{horizonDays}</small>
+                    <strong>{targetPrecipitation != null ? targetPrecipitation.toFixed(1) : "—"} mm</strong>
+                  </span>
+                  <span>
+                    <small>Wind D+{horizonDays}</small>
+                    <strong>{targetWind != null ? targetWind.toFixed(1) : "—"} km/h</strong>
+                  </span>
+                </div>
+              </article>
+            </section>
+
+            <section className="forecast-factors" aria-labelledby="forecast-factors-title">
+              <div className="forecast-factors__header">
+                <div>
+                  <span className="section-kicker">Model components</span>
+                  <h2 id="forecast-factors-title">Factor-level outlook</h2>
+                  <p>Projected score and uncertainty range for each climate signal.</p>
+                </div>
+                <div className="confidence-key">
+                  <span><i /> Point estimate</span>
+                  <span><i /> 95% Confidence Interval</span>
                 </div>
               </div>
-            </div>
 
-            {/* Sub-Scores Forecast Grid */}
-            <section className="space-y-6">
-              <div className="border-b border-white/5 pb-4">
-                <h2 className="text-xl font-bold tracking-tight text-slate-200">
-                  Granular Multi-Output Sub-Scores
-                </h2>
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                {[
-                  {
-                    title: "Heat Score Forecast",
-                    key: "heat_score",
-                  },
-                  {
-                    title: "Wind Score Forecast",
-                    key: "wind_score",
-                  },
-                  {
-                    title: "Rain Score Forecast",
-                    key: "rain_score",
-                  },
-                  {
-                    title: "Air Quality Forecast",
-                    key: "air_score",
-                  },
-                  {
-                    title: "River Flood Forecast",
-                    key: "river_score",
-                  },
-                ].map((item) => {
-                  const subData =
-                    forecast.sub_scores_forecast[
-                      item.key as keyof typeof forecast.sub_scores_forecast
-                    ];
-                  const score = subData.estimated_score;
-                  let colorClass = "score-low";
-                  let barColor = "bg-emerald-500";
-                  if (score > 70) {
-                    colorClass = "score-high";
-                    barColor = "bg-rose-500";
-                  } else if (score > 40) {
-                    colorClass = "score-medium";
-                    barColor = "bg-amber-500";
-                  }
+              <div className="forecast-factor-grid">
+                {FORECAST_FACTORS.map((factor, index) => {
+                  const factorData = forecast.sub_scores_forecast[factor.key];
+                  const factorBand = getRiskBand(factorData.estimated_score);
+                  const score = clampScore(factorData.estimated_score);
+                  const ciStart = clampScore(factorData.ci_lower);
+                  const ciEnd = clampScore(factorData.ci_upper);
 
                   return (
-                    <div
-                      key={item.key}
-                      className="glass-card rounded-xl p-8 flex flex-col justify-between space-y-6 border border-white/5 relative overflow-hidden"
-                    >
-                      <div>
-                        <h3 className="text-base font-semibold text-slate-200">
-                          {item.title}
-                        </h3>
+                    <article key={factor.key} className={`forecast-factor-card risk-${factorBand.tone}`}>
+                      <div className="forecast-factor-card__topline">
+                        <span>#{String(index + 1).padStart(2, "0")}</span>
+                        <strong><i className="risk-dot" aria-hidden="true" />{factorBand.label}</strong>
                       </div>
-
-                      <div className="space-y-4">
-                        <div className="flex flex-col items-start gap-1">
-                          <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider">
-                            Est. Score
-                          </span>
-                          <span
-                            className={`text-4xl font-bold tracking-tight ${colorClass}`}
-                          >
-                            {score.toFixed(1)}
-                          </span>
-                        </div>
-
-                        {/* Confidence Interval Pill */}
-                        <div className="flex items-center justify-between p-3 rounded-lg bg-slate-900/60 border border-slate-800/80 text-sm">
-                          <span className="text-slate-400 font-normal">
-                            95% Confidence Interval
-                          </span>
-                          <span className="font-semibold text-slate-200">
-                            [{subData.ci_lower} - {subData.ci_upper}]{" "}
-                            <span className="text-slate-500 font-normal">
-                              (±{subData.confidence_margin})
-                            </span>
-                          </span>
-                        </div>
-
-                        {/* Visual Uncertainty Progress Bar */}
-                        <div className="space-y-2">
-                          <div className="w-full h-2.5 bg-slate-900 rounded-full overflow-hidden relative">
-                            <div
-                              className={`h-full ${barColor} transition-all duration-500`}
-                              style={{ width: `${score}%` }}
-                            />
-                            <div
-                              className="absolute top-0 h-full bg-white/20 backdrop-blur-sm transition-all duration-500 border-x border-white/40"
-                              style={{
-                                left: `${subData.ci_lower}%`,
-                                width: `${subData.ci_upper - subData.ci_lower}%`,
-                              }}
-                            />
-                          </div>
-                          <div className="flex justify-center text-[11px] font-medium text-slate-500 mt-1">
-                            <span>
-                              Uncertainty Margin: ±
-                              {subData.confidence_margin.toFixed(1)}
-                            </span>
-                          </div>
-                        </div>
+                      <h3>{factor.title}</h3>
+                      <div className="forecast-factor-card__score">
+                        <strong>{factorData.estimated_score.toFixed(1)}</strong>
+                        <span>/ 100</span>
                       </div>
-                    </div>
+                      <div className="forecast-factor-card__meter" aria-hidden="true">
+                        <span className="forecast-factor-card__fill" style={{ width: `${score}%` }} />
+                        <span
+                          className="forecast-factor-card__interval"
+                          style={{ left: `${ciStart}%`, width: `${Math.max(0, ciEnd - ciStart)}%` }}
+                        />
+                        <i style={{ left: `${score}%` }} />
+                      </div>
+                      <div className="forecast-factor-card__ci">
+                        <span>95% Confidence Interval</span>
+                        <strong>{factorData.ci_lower.toFixed(1)}–{factorData.ci_upper.toFixed(1)}</strong>
+                      </div>
+                      <p>Uncertainty margin ±{factorData.confidence_margin.toFixed(1)}</p>
+                    </article>
                   );
                 })}
               </div>
             </section>
+
+            <footer className="dashboard-data-note">
+              <span>Forecast method</span>
+              Multi-output random forest · Tree-level uncertainty · 95% intervals
+            </footer>
           </div>
         )}
       </div>

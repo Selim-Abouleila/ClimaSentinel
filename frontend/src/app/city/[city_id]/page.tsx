@@ -1,45 +1,56 @@
-import Link from 'next/link';
-import { fetchCityScores, CityDetail } from '@/lib/api';
-import { notFound } from 'next/navigation';
+import Link from "next/link";
+import { notFound } from "next/navigation";
+import { fetchCityScores, CityDetail } from "@/lib/api";
 
-// ── Types ─────────────────────────────────────────────────────────────────
+type RiskTone = "stable" | "monitoring" | "tipping" | "critical";
+
+interface RiskBand {
+  label: string;
+  tone: RiskTone;
+  range: string;
+}
 
 interface ScoreFactor {
   label: string;
   score: number;
-  colorClass: string;
-  barColor: string;
+  band: RiskBand;
 }
 
-// ── Helpers ───────────────────────────────────────────────────────────────
+const RISK_BANDS: RiskBand[] = [
+  { label: "Stable", tone: "stable", range: "0–30" },
+  { label: "Monitoring", tone: "monitoring", range: "31–60" },
+  { label: "Tipping", tone: "tipping", range: "61–80" },
+  { label: "Critical", tone: "critical", range: "81–100" },
+];
 
-function getScoreColorClass(score: number): string {
-  if (score > 70) return 'score-high';
-  if (score > 40) return 'score-medium';
-  return 'score-low';
+function getRiskBand(score: number): RiskBand {
+  if (score >= 81) return RISK_BANDS[3];
+  if (score >= 61) return RISK_BANDS[2];
+  if (score >= 31) return RISK_BANDS[1];
+  return RISK_BANDS[0];
 }
 
-function getBarColor(score: number): string {
-  if (score > 70) return '#f87171';  // red
-  if (score > 40) return '#fbbf24';  // amber
-  return '#4ade80';                   // green
+function formatCity(cityId: string) {
+  const [city = cityId, country = ""] = cityId.split("_");
+  return {
+    cityName: city.charAt(0).toUpperCase() + city.slice(1),
+    countryCode: country.toUpperCase(),
+  };
 }
 
-function formatCity(city_id: string): string {
-  return city_id.replace('_', ', ').toUpperCase();
+function normalizeDriver(value: string) {
+  return value.toLowerCase().replace(/[^a-z]/g, "");
 }
 
 function buildFactors(city: CityDetail): ScoreFactor[] {
   return [
-    { label: 'Heat',          score: city.heat_score,  colorClass: getScoreColorClass(city.heat_score),  barColor: getBarColor(city.heat_score)  },
-    { label: 'Wind',          score: city.wind_score,  colorClass: getScoreColorClass(city.wind_score),  barColor: getBarColor(city.wind_score)  },
-    { label: 'Rain',          score: city.rain_score,  colorClass: getScoreColorClass(city.rain_score),  barColor: getBarColor(city.rain_score)  },
-    { label: 'Air Quality',   score: city.air_score,   colorClass: getScoreColorClass(city.air_score),   barColor: getBarColor(city.air_score)   },
-    { label: 'River / Flood', score: city.river_score, colorClass: getScoreColorClass(city.river_score), barColor: getBarColor(city.river_score) },
+    { label: "Heat", score: city.heat_score, band: getRiskBand(city.heat_score) },
+    { label: "Wind", score: city.wind_score, band: getRiskBand(city.wind_score) },
+    { label: "Rain", score: city.rain_score, band: getRiskBand(city.rain_score) },
+    { label: "Air Quality", score: city.air_score, band: getRiskBand(city.air_score) },
+    { label: "River / Flood", score: city.river_score, band: getRiskBand(city.river_score) },
   ];
 }
-
-// ── Page ──────────────────────────────────────────────────────────────────
 
 export default async function CityDetailPage({
   params,
@@ -51,92 +62,109 @@ export default async function CityDetailPage({
 
   if (!city) notFound();
 
+  const cityName = formatCity(city_id);
+  const globalBand = getRiskBand(city.current_tipping_score);
   const factors = buildFactors(city);
-  const globalColorClass = getScoreColorClass(city.current_tipping_score);
+  const primaryDriver = normalizeDriver(city.current_primary_driver);
 
   return (
-    <main className="min-h-screen p-6 md:p-12 lg:p-20">
-      <div className="max-w-4xl mx-auto">
-
-        {/* ── Back link ──────────────────────────────────────────────── */}
-        <Link
-          href="/"
-          className="inline-flex items-center gap-2 text-sm font-medium text-slate-400 hover:text-slate-100 transition-colors mb-10 group"
-        >
-          <svg className="w-4 h-4 transition-transform group-hover:-translate-x-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
+    <main className="subpage-shell city-detail-page">
+      <div className="subpage-container subpage-container--detail">
+        <Link href="/" className="subpage-back-link">
+          <svg viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <path d="M13 8H3m4-4L3 8l4 4" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
           </svg>
-          Back to Dashboard
+          Back to overview
         </Link>
 
-        {/* ── City header ────────────────────────────────────────────── */}
-        <header className="glass-panel rounded-2xl p-8 md:p-10 mb-8 border-t border-t-white/10 relative overflow-hidden">
-          <div className="absolute top-0 right-0 w-64 h-64 bg-cyan-500/5 rounded-full blur-3xl -translate-y-1/2 translate-x-1/3"></div>
-          <div className="flex flex-col md:flex-row md:items-end justify-between gap-8 relative z-10">
-            <div>
-              <p className="text-xs font-bold uppercase tracking-widest text-slate-500 mb-2">
-                Region Analytics
-              </p>
-              <h1 className="text-4xl md:text-5xl font-black tracking-tight text-slate-100 mb-4">
-                {formatCity(city_id)}
-              </h1>
-              <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-slate-800/60 border border-slate-700/50 text-xs font-bold text-slate-300 uppercase tracking-widest shadow-inner">
-                Primary Driver: <span className="text-cyan-400">{city.current_primary_driver}</span>
-              </div>
+        <header className={`city-detail-hero risk-${globalBand.tone}`}>
+          <div className="city-detail-hero__identity">
+            <div className="dashboard-eyebrow">
+              <span className="dashboard-eyebrow__dot" aria-hidden="true" />
+              City profile · Current 48-hour window
             </div>
-
-            <div className="text-left md:text-right">
-              <p className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-2">
-                Global Tipping Score
-              </p>
-              <span className={`text-6xl md:text-7xl font-black tracking-tighter ${globalColorClass}`}>
-                {city.current_tipping_score.toFixed(1)}
+            <div className="city-detail-hero__title">
+              <h1>{cityName.cityName}</h1>
+              <span>{cityName.countryCode}</span>
+            </div>
+            <p>Current climate stress composition across five monitored signals.</p>
+            <div className="city-detail-hero__metadata">
+              <span>
+                <small>Dominant driver</small>
+                <strong>{city.current_primary_driver}</strong>
+              </span>
+              <span className="city-detail-hero__band">
+                <i className="risk-dot" aria-hidden="true" />
+                <small>Risk band</small>
+                <strong>{globalBand.label}</strong>
               </span>
             </div>
           </div>
+
+          <div className="city-detail-hero__score">
+            <span>Current tipping score</span>
+            <div>
+              <strong>{city.current_tipping_score.toFixed(1)}</strong>
+              <small>/ 100</small>
+            </div>
+            <div className="city-detail-hero__meter" aria-hidden="true">
+              <span style={{ width: `${Math.min(100, Math.max(0, city.current_tipping_score))}%` }} />
+            </div>
+            <p>{globalBand.range} · {globalBand.label}</p>
+          </div>
         </header>
 
-        {/* ── Sub-score breakdown ────────────────────────────────────── */}
-        <section className="glass-panel rounded-2xl p-8 md:p-10">
-          <h2 className="text-xs font-bold uppercase tracking-widest text-slate-500 mb-8">
-            Factor Breakdown
-          </h2>
+        <section className="city-factor-panel" aria-labelledby="factor-breakdown-title">
+          <header className="city-factor-panel__header">
+            <div>
+              <span className="section-kicker">Factor Breakdown</span>
+              <h2 id="factor-breakdown-title">Current signal composition</h2>
+              <p>Each factor is scored independently on the same zero-to-one-hundred scale.</p>
+            </div>
+            <div className="risk-legend" aria-label="Risk thresholds">
+              {RISK_BANDS.map((band) => (
+                <span key={band.tone} className={`risk-legend__item risk-${band.tone}`}>
+                  <i className="risk-dot" aria-hidden="true" />
+                  <span>{band.label}</span>
+                  <small>{band.range}</small>
+                </span>
+              ))}
+            </div>
+          </header>
 
-          <div className="flex flex-col gap-8">
-            {factors.map((f) => (
-              <div key={f.label} className="group">
-                {/* Label row */}
-                <div className="flex items-center justify-between mb-3">
-                  <span className="text-sm font-semibold tracking-wide text-slate-400 group-hover:text-slate-100 transition-colors">
-                    {f.label}
-                  </span>
-                  <span className={`text-xl font-black tabular-nums tracking-tight ${f.colorClass}`}>
-                    {f.score.toFixed(1)}
-                  </span>
-                </div>
+          <div className="city-factor-list">
+            {factors.map((factor, index) => {
+              const isPrimary = normalizeDriver(factor.label) === primaryDriver;
+              const score = Math.min(100, Math.max(0, factor.score));
 
-                {/* Progress bar */}
-                <div className="score-bar-track">
-                  <div
-                    className="score-bar-fill"
-                    style={{
-                      width: `${f.score}%`,
-                      background: f.barColor,
-                      boxShadow: `0 0 12px ${f.barColor}80`,
-                    }}
-                  />
-                </div>
-              </div>
-            ))}
-          </div>
-
-          {/* ── Score legend ────────────────────────────────────────────── */}
-          <div className="flex items-center justify-between md:justify-start gap-8 mt-12 pt-8 border-t border-white/5 text-[10px] font-bold text-slate-500 uppercase tracking-widest">
-            <span className="flex items-center gap-2"><span className="w-2 h-2 rounded-full bg-green-400 shadow-[0_0_8px_rgba(74,222,128,0.5)]" /> Low &lt; 40</span>
-            <span className="flex items-center gap-2"><span className="w-2 h-2 rounded-full bg-amber-400 shadow-[0_0_8px_rgba(251,191,36,0.5)]" /> Med 40–70</span>
-            <span className="flex items-center gap-2"><span className="w-2 h-2 rounded-full bg-red-400 shadow-[0_0_8px_rgba(248,113,113,0.5)]" /> High &gt; 70</span>
+              return (
+                <article key={factor.label} className={`city-factor-row risk-${factor.band.tone}`}>
+                  <span className="city-factor-row__index">{String(index + 1).padStart(2, "0")}</span>
+                  <div className="city-factor-row__identity">
+                    <h3>{factor.label}</h3>
+                    {isPrimary && <span>Dominant driver</span>}
+                  </div>
+                  <div className="city-factor-row__status">
+                    <i className="risk-dot" aria-hidden="true" />
+                    {factor.band.label}
+                  </div>
+                  <div className="city-factor-row__score">
+                    <strong>{factor.score.toFixed(1)}</strong>
+                    <span>/ 100</span>
+                  </div>
+                  <div className="city-factor-row__meter" aria-label={`${factor.label}: ${factor.score.toFixed(1)} out of 100`}>
+                    <span style={{ width: `${score}%` }} />
+                  </div>
+                </article>
+              );
+            })}
           </div>
         </section>
+
+        <footer className="dashboard-data-note">
+          <span>Signal inputs</span>
+          Heat · Wind · Rain · Air quality · River discharge
+        </footer>
       </div>
     </main>
   );
