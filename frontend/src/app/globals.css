@@ -1,71 +1,82 @@
 @import "tailwindcss";
 
 @theme {
-  --color-bg-base: #030712;
-  --color-surface: rgba(15, 23, 42, 0.4);
-  --color-surface-hover: rgba(30, 41, 59, 0.6);
-  --color-border-subtle: rgba(255, 255, 255, 0.08);
-  --color-border-glow: rgba(56, 189, 248, 0.2);
-  --color-accent-cyan: #22d3ee;
+  --color-bg-base: #050b14;
+  --color-surface: #0a1422;
+  --color-surface-hover: #0d1929;
+  --color-border-subtle: #1c2a3b;
+  --color-border-glow: #28435a;
+  --color-accent-cyan: #32bfd2;
   --color-accent-violet: #818cf8;
-  --color-text-primary: #f8fafc;
-  --color-text-muted: #94a3b8;
+  --color-text-primary: #edf3f8;
+  --color-text-muted: #8d9daf;
 }
 
 :root {
   --background: var(--color-bg-base);
   --foreground: var(--color-text-primary);
+  --surface-raised: #0d1827;
+  --surface-soft: #08111e;
+  --border-strong: #26374a;
+  --risk-stable: #45c995;
+  --risk-monitoring: #dfb451;
+  --risk-tipping: #ed874d;
+  --risk-critical: #e86572;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  overflow-x: clip;
 }
 
 body {
   color: var(--foreground);
   background: var(--background);
-  background-image: 
-    radial-gradient(ellipse at top left, rgba(34, 211, 238, 0.07) 0%, transparent 40%),
-    radial-gradient(ellipse at bottom right, rgba(129, 140, 248, 0.07) 0%, transparent 40%);
-  background-attachment: fixed;
   font-family: var(--font-geist-sans), sans-serif;
   min-height: 100vh;
+  overflow-x: clip;
   -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
 
-/* Glassmorphism Utilities */
+::selection {
+  color: #041016;
+  background: var(--color-accent-cyan);
+}
+
 .glass-panel {
   background: var(--color-surface);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
   border: 1px solid var(--color-border-subtle);
-  box-shadow: 0 4px 30px rgba(0, 0, 0, 0.1);
+  box-shadow: none;
 }
 
 .glass-card {
   background: var(--color-surface);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
   border: 1px solid var(--color-border-subtle);
-  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+  transition: background 160ms ease, border-color 160ms ease, transform 160ms ease;
+  box-shadow: none;
 }
 
 .glass-card:hover {
-  transform: translateY(-4px);
+  transform: translateY(-2px);
   background: var(--color-surface-hover);
   border-color: var(--color-border-glow);
-  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.3), 0 0 15px 0 var(--color-border-glow);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.2);
 }
 
-/* Tipping Score Colors with glow */
 .score-high { 
   color: #f87171; 
-  text-shadow: 0 0 20px rgba(248, 113, 113, 0.4);
 } 
 .score-medium { 
   color: #fbbf24; 
-  text-shadow: 0 0 20px rgba(251, 191, 36, 0.4);
 } 
 .score-low { 
   color: #4ade80; 
-  text-shadow: 0 0 20px rgba(74, 222, 128, 0.4);
 }
 
 /* Thin, elegant progress bar track */
@@ -87,25 +98,11 @@ body {
   transform-origin: left;
 }
 
-/* Glowing head for the progress bar */
-.score-bar-fill::after {
-  content: '';
-  position: absolute;
-  top: -2px;
-  right: 0;
-  width: 8px;
-  height: 8px;
-  background: inherit;
-  border-radius: 50%;
-  box-shadow: 0 0 10px 2px inherit;
-}
-
 @keyframes slideInBar {
   0% { transform: scaleX(0); opacity: 0; }
   100% { transform: scaleX(1); opacity: 1; }
 }
 
-/* Clickable city cards */
 .city-card-link {
   text-decoration: none;
   display: flex;
@@ -113,8 +110,763 @@ body {
   justify-content: space-between;
 }
 
-/* Premium water-fill logo animation */
-@keyframes waterFill {
-  0% { background-position: -100% 50%; }
-  100% { background-position: 200% 50%; }
+/* Global navigation */
+.app-navigation {
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  width: 100%;
+  min-height: 72px;
+  background: rgba(5, 11, 20, 0.96);
+  border-bottom: 1px solid var(--color-border-subtle);
+  backdrop-filter: blur(12px);
+}
+
+.app-navigation__inner {
+  width: min(1600px, calc(100% - 48px));
+  min-height: 72px;
+  margin: 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 32px;
+}
+
+.brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--color-text-primary);
+  text-decoration: none;
+}
+
+.brand__mark {
+  width: 30px;
+  height: 30px;
+  color: var(--color-accent-cyan);
+}
+
+.brand__mark svg {
+  width: 100%;
+  height: 100%;
+}
+
+.brand__name {
+  font-size: 1.2rem;
+  font-weight: 590;
+  letter-spacing: -0.035em;
+}
+
+.brand__name span {
+  color: #a8b5c3;
+}
+
+.brand__name strong {
+  color: var(--color-accent-cyan);
+  font-weight: 680;
+}
+
+.brand__environment {
+  padding: 3px 6px;
+  color: var(--color-accent-cyan);
+  background: #0a202b;
+  border: 1px solid #164454;
+  border-radius: 4px;
+  font-size: 0.58rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+}
+
+.app-navigation__links {
+  align-self: stretch;
+  display: flex;
+  align-items: stretch;
+  gap: 30px;
+}
+
+.app-navigation__link {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  color: #7f8ea1;
+  font-size: 0.86rem;
+  font-weight: 560;
+  text-decoration: none;
+  transition: color 150ms ease;
+}
+
+.app-navigation__link::after {
+  content: '';
+  position: absolute;
+  right: 0;
+  bottom: -1px;
+  left: 0;
+  height: 2px;
+  background: var(--color-accent-cyan);
+  transform: scaleX(0);
+  transform-origin: center;
+  transition: transform 150ms ease;
+}
+
+.app-navigation__link:hover,
+.app-navigation__link.is-active {
+  color: #dce6ed;
+}
+
+.app-navigation__link.is-active::after {
+  transform: scaleX(1);
+}
+
+/* Dashboard */
+.dashboard-shell {
+  min-height: calc(100vh - 72px);
+  padding: 50px 24px 72px;
+}
+
+.dashboard-container {
+  width: min(1600px, 100%);
+  margin: 0 auto;
+}
+
+.dashboard-hero {
+  max-width: 1020px;
+  margin-bottom: 42px;
+}
+
+.dashboard-eyebrow,
+.section-kicker {
+  color: #71869d;
+  font-size: 0.7rem;
+  font-weight: 650;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.dashboard-eyebrow {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-bottom: 18px;
+}
+
+.dashboard-eyebrow__dot {
+  width: 6px;
+  height: 6px;
+  background: var(--color-accent-cyan);
+  border-radius: 50%;
+}
+
+.dashboard-hero h1 {
+  max-width: 980px;
+  color: #eef4f8;
+  font-size: clamp(3.15rem, 5vw, 4.65rem);
+  font-weight: 650;
+  line-height: 0.98;
+  letter-spacing: -0.055em;
+}
+
+.dashboard-hero p {
+  max-width: 760px;
+  margin-top: 20px;
+  color: #91a2b4;
+  font-size: clamp(1rem, 1.3vw, 1.15rem);
+  font-weight: 430;
+  line-height: 1.6;
+}
+
+.summary-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.summary-card,
+.risk-spectrum-panel {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 12px;
+}
+
+.summary-card {
+  min-height: 132px;
+  padding: 22px 24px 20px;
+}
+
+.summary-card__topline {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 17px;
+}
+
+.summary-card__label {
+  color: #73869b;
+  font-size: 0.68rem;
+  font-weight: 650;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+}
+
+.summary-card__index {
+  color: #3c4b5c;
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 0.65rem;
+}
+
+.summary-card__value,
+.summary-card__city {
+  color: #e8eff4;
+  font-size: 2.25rem;
+  font-weight: 630;
+  line-height: 1;
+  letter-spacing: -0.045em;
+}
+
+.summary-card__metric {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+}
+
+.summary-card__metric .summary-card__value {
+  color: var(--risk-color);
+  font-variant-numeric: tabular-nums;
+}
+
+.summary-card__unit {
+  color: #68798d;
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 0.72rem;
+}
+
+.summary-card__city {
+  overflow: hidden;
+  font-size: 1.75rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.summary-card p,
+.summary-card__status {
+  margin-top: 10px;
+  color: #6f8195;
+  font-size: 0.73rem;
+}
+
+.summary-card__status {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--risk-color);
+  font-weight: 570;
+}
+
+.risk-spectrum-panel {
+  padding: 22px 24px 18px;
+  margin-bottom: 42px;
+}
+
+.risk-spectrum-panel__header,
+.city-profile__header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 32px;
+}
+
+.risk-spectrum-panel__header h2,
+.city-profile__header h2 {
+  margin-top: 5px;
+  color: #dde7ee;
+  font-size: 1.15rem;
+  font-weight: 610;
+  letter-spacing: -0.025em;
+}
+
+.risk-spectrum-panel__header p,
+.city-profile__header p {
+  color: #708297;
+  font-size: 0.73rem;
+}
+
+.risk-spectrum {
+  padding: 22px 2px 0;
+}
+
+.risk-spectrum__plot {
+  position: relative;
+  height: 70px;
+}
+
+.risk-spectrum__bands {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 5px;
+  display: grid;
+  grid-template-columns: 31fr 30fr 20fr 19fr;
+  gap: 2px;
+}
+
+.risk-spectrum__band {
+  background: var(--risk-color);
+  opacity: 0.7;
+}
+
+.risk-spectrum__band:first-child {
+  border-radius: 3px 0 0 3px;
+}
+
+.risk-spectrum__band:last-child {
+  border-radius: 0 3px 3px 0;
+}
+
+.risk-spectrum__marker {
+  position: absolute;
+  bottom: 0;
+  width: 34px;
+  height: 46px;
+  color: var(--risk-color);
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 0.58rem;
+  font-weight: 650;
+  text-align: center;
+  text-decoration: none;
+  transform: translateX(-50%);
+}
+
+.risk-spectrum__marker span {
+  display: block;
+  transition: color 140ms ease, transform 140ms ease;
+}
+
+.risk-spectrum__marker i {
+  position: absolute;
+  bottom: -2px;
+  left: 50%;
+  width: 9px;
+  height: 9px;
+  background: var(--background);
+  border: 2px solid var(--risk-color);
+  border-radius: 50%;
+  transform: translateX(-50%);
+}
+
+.risk-spectrum__marker::after {
+  content: '';
+  position: absolute;
+  bottom: 5px;
+  left: 50%;
+  width: 1px;
+  height: 23px;
+  background: var(--risk-color);
+  opacity: 0.35;
+}
+
+.risk-spectrum__marker:hover span,
+.risk-spectrum__marker:focus-visible span {
+  color: #fff;
+  transform: translateY(-2px);
+}
+
+.risk-spectrum__marker--lane-1 {
+  height: 58px;
+}
+
+.risk-spectrum__marker--lane-2 {
+  height: 70px;
+}
+
+.risk-spectrum__marker--lane-3 {
+  height: 82px;
+}
+
+.risk-spectrum__axis {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 7px;
+  color: #4f6175;
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 0.58rem;
+}
+
+.city-profile__header {
+  margin-bottom: 18px;
+}
+
+.city-profile__header p {
+  margin-top: 5px;
+}
+
+.risk-legend {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+}
+
+.risk-legend__item {
+  display: grid;
+  grid-template-columns: auto auto;
+  align-items: center;
+  column-gap: 6px;
+  color: #8b9aab;
+  font-size: 0.66rem;
+  font-weight: 560;
+}
+
+.risk-legend__item small {
+  grid-column: 2;
+  color: #536477;
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 0.55rem;
+}
+
+.risk-dot {
+  width: 6px;
+  height: 6px;
+  display: inline-block;
+  background: var(--risk-color);
+  border-radius: 50%;
+}
+
+.city-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.city-risk-card {
+  min-width: 0;
+  padding: 18px;
+  color: inherit;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 12px;
+  text-decoration: none;
+  transition: background 150ms ease, border-color 150ms ease, transform 150ms ease;
+}
+
+.city-risk-card:hover,
+.city-risk-card:focus-visible {
+  background: var(--surface-raised);
+  border-color: var(--border-strong);
+  transform: translateY(-2px);
+}
+
+.city-risk-card:focus-visible,
+.risk-spectrum__marker:focus-visible,
+.app-navigation__link:focus-visible,
+.brand:focus-visible {
+  outline: 2px solid var(--color-accent-cyan);
+  outline-offset: 3px;
+}
+
+.city-risk-card__header,
+.city-risk-card__title-row,
+.city-risk-card__score-row,
+.city-risk-card__footer {
+  display: flex;
+  align-items: center;
+}
+
+.city-risk-card__header,
+.city-risk-card__title-row,
+.city-risk-card__score-row {
+  justify-content: space-between;
+}
+
+.city-risk-card__rank {
+  color: #5a6d82;
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 0.62rem;
+}
+
+.city-risk-card__status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--risk-color);
+  font-size: 0.62rem;
+  font-weight: 620;
+}
+
+.city-risk-card__title-row {
+  align-items: baseline;
+  margin-top: 15px;
+}
+
+.city-risk-card__title-row h3 {
+  min-width: 0;
+  overflow: hidden;
+  color: #e5edf3;
+  font-size: 1.12rem;
+  font-weight: 610;
+  letter-spacing: -0.025em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.city-risk-card__title-row > span {
+  color: #617388;
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 0.62rem;
+}
+
+.city-risk-card__score-row {
+  justify-content: flex-start;
+  align-items: baseline;
+  gap: 6px;
+  margin-top: 15px;
+}
+
+.city-risk-card__score-row strong {
+  color: var(--risk-color);
+  font-size: 2rem;
+  font-weight: 630;
+  line-height: 1;
+  letter-spacing: -0.045em;
+  font-variant-numeric: tabular-nums;
+}
+
+.city-risk-card__score-row span {
+  color: #5f7185;
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 0.58rem;
+}
+
+.city-risk-card__meter {
+  height: 3px;
+  margin-top: 13px;
+  overflow: hidden;
+  background: #172536;
+  border-radius: 2px;
+}
+
+.city-risk-card__meter span {
+  height: 100%;
+  display: block;
+  background: var(--risk-color);
+  border-radius: inherit;
+}
+
+.city-risk-card__footer {
+  margin-top: 16px;
+  padding-top: 13px;
+  border-top: 1px solid #162536;
+  gap: 6px;
+  font-size: 0.62rem;
+}
+
+.city-risk-card__footer > span {
+  color: #5f7186;
+}
+
+.city-risk-card__footer strong {
+  min-width: 0;
+  overflow: hidden;
+  color: #9fb0c0;
+  font-weight: 560;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.city-risk-card__footer svg {
+  width: 14px;
+  height: 14px;
+  margin-left: auto;
+  color: #566b80;
+  transition: color 150ms ease, transform 150ms ease;
+}
+
+.city-risk-card:hover .city-risk-card__footer svg {
+  color: var(--color-accent-cyan);
+  transform: translateX(2px);
+}
+
+.dashboard-data-note {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-top: 18px;
+  color: #607287;
+  font-size: 0.68rem;
+}
+
+.dashboard-data-note span {
+  color: #8c9bad;
+  font-weight: 620;
+}
+
+.dashboard-empty-state {
+  padding: 68px 24px;
+  text-align: center;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 12px;
+}
+
+.dashboard-empty-state__indicator {
+  width: 9px;
+  height: 9px;
+  display: inline-block;
+  margin-bottom: 18px;
+  background: var(--risk-monitoring);
+  border-radius: 50%;
+}
+
+.dashboard-empty-state h2 {
+  color: #dce6ed;
+  font-size: 1.3rem;
+  font-weight: 600;
+}
+
+.dashboard-empty-state p {
+  margin-top: 8px;
+  color: #718398;
+  font-size: 0.82rem;
+}
+
+.risk-stable {
+  --risk-color: var(--risk-stable);
+}
+
+.risk-monitoring {
+  --risk-color: var(--risk-monitoring);
+}
+
+.risk-tipping {
+  --risk-color: var(--risk-tipping);
+}
+
+.risk-critical {
+  --risk-color: var(--risk-critical);
+}
+
+@media (max-width: 1320px) {
+  .city-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 900px) {
+  .dashboard-shell {
+    padding-top: 38px;
+  }
+
+  .summary-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .summary-card {
+    min-height: 118px;
+  }
+
+  .risk-spectrum-panel__header,
+  .city-profile__header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .risk-legend {
+    width: 100%;
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+  }
+
+  .city-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 620px) {
+  .app-navigation__inner {
+    width: calc(100% - 32px);
+    min-height: 64px;
+    gap: 16px;
+  }
+
+  .brand__mark {
+    width: 26px;
+    height: 26px;
+  }
+
+  .brand__name {
+    font-size: 1rem;
+  }
+
+  .brand__environment {
+    display: none;
+  }
+
+  .app-navigation__links {
+    gap: 16px;
+  }
+
+  .app-navigation__link {
+    font-size: 0.72rem;
+  }
+
+  .dashboard-shell {
+    padding: 32px 16px 54px;
+  }
+
+  .dashboard-hero {
+    margin-bottom: 30px;
+  }
+
+  .dashboard-hero h1 {
+    font-size: clamp(2.55rem, 13vw, 3.4rem);
+  }
+
+  .dashboard-hero p {
+    margin-top: 16px;
+    font-size: 0.92rem;
+  }
+
+  .summary-card,
+  .risk-spectrum-panel,
+  .city-risk-card {
+    border-radius: 10px;
+  }
+
+  .risk-spectrum-panel {
+    padding-right: 16px;
+    padding-left: 16px;
+  }
+
+  .risk-spectrum__plot {
+    height: 82px;
+  }
+
+  .risk-spectrum__marker span {
+    display: none;
+  }
+
+  .risk-legend {
+    grid-template-columns: repeat(2, 1fr);
+    row-gap: 12px;
+  }
+
+  .city-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .dashboard-data-note {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 4px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
 }
