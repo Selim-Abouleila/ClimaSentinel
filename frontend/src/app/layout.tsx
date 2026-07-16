@@ -1,6 +1,5 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
-import Link from "next/link";
 import "./globals.css";
 import Navigation from "./Navigation";
 
@@ -15,8 +14,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "ClimaSentinel",
-  description: "Global Climate Tipping Point Tracker",
+  title: "ClimaSentinel | European Climate Risk Monitor",
+  description: "A 48-hour climate risk monitor for major European cities.",
 };
 
 export default function RootLayout({
