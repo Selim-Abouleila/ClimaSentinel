@@ -45,8 +45,17 @@ build:
 		.
 	@echo "Image built and pushed successfully: $(IMAGE_URI)"
 
+ensure-terraform:
+	@if ! terraform version 2>/dev/null | grep -q "Terraform v"; then \
+		echo "── Installing Terraform ────────────────────────────────────────"; \
+		wget -qO /tmp/terraform.zip https://releases.hashicorp.com/terraform/1.8.5/terraform_1.8.5_linux_amd64.zip; \
+		unzip -q /tmp/terraform.zip -d /tmp/; \
+		sudo mv -f /tmp/terraform /usr/local/bin/terraform; \
+		rm -f /tmp/terraform.zip; \
+	fi
+
 ## Full deploy: build image → terraform apply → dbt run (creates stg views)
-deploy: build
+deploy: build ensure-terraform
 	@terraform -chdir=$(TF_DIR) plan -out=tfplan \
 		-var="project_id=$(GCP_PROJECT_ID)" \
 		-var="region=$(GCP_REGION)" \
