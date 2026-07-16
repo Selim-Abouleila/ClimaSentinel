@@ -262,6 +262,7 @@ def get_city_forecast(
             INNER JOIN `{settings.GCP_PROJECT_ID}.{settings.BQ_DATASET}.mart_city_score_current` c
                 ON m.city_id = c.city_id
             WHERE m.city_id = @city_id
+              AND m.date = CURRENT_DATE('UTC')
               AND m.temp_forecast_plus_3d IS NOT NULL
             ORDER BY m.date DESC
             LIMIT 1

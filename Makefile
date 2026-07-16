@@ -26,7 +26,8 @@ endif
 
 GCP_PROJECT_ID ?= $(error GCP_PROJECT_ID is not set — copy .env.example to .env and fill it in)
 GCP_REGION     ?= europe-west9
-IMAGE_URI       = $(GCP_REGION)-docker.pkg.dev/$(GCP_PROJECT_ID)/clima-sentinel/ingest:latest
+GIT_SHA        := $(shell git rev-parse --short HEAD)
+IMAGE_URI       = $(GCP_REGION)-docker.pkg.dev/$(GCP_PROJECT_ID)/clima-sentinel/ingest:$(GIT_SHA)
 
 ## Initialise GCS state bucket and Terraform backend
 bootstrap:
