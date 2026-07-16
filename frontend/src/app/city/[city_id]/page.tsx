@@ -94,9 +94,11 @@ export default async function CityDetailPage({
                 <strong>{city.current_primary_driver}</strong>
               </span>
               <span className="city-detail-hero__band">
-                <i className="risk-dot" aria-hidden="true" />
                 <small>Risk band</small>
-                <strong>{globalBand.label}</strong>
+                <strong>
+                  <i className="risk-dot" aria-hidden="true" />
+                  {globalBand.label}
+                </strong>
               </span>
             </div>
           </div>
