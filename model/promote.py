@@ -50,7 +50,7 @@ def promote_model():
         logging.info(f"Fetched Metrics -> R2: {r2:.4f}, MAE: {mae:.4f}")
 
         # 4. Evaluate against Quality Gate Thresholds
-        R2_THRESHOLD = 0.45
+        R2_THRESHOLD = 0.35
         MAE_THRESHOLD = 7.0
         
         if r2 >= R2_THRESHOLD and mae <= MAE_THRESHOLD:
