@@ -160,18 +160,127 @@ def test_non_production_fallback_reports_provenance(synthetic_training_data):
     assert body["model_version"] is None
 
 
-def test_latest_registry_version_is_ready_and_numeric():
-    versions = [
-        SimpleNamespace(version="9", status="READY"),
-        SimpleNamespace(version="10", status="READY"),
-        SimpleNamespace(version="11", status="PENDING_REGISTRATION"),
-    ]
+def test_registry_alias_resolves_to_exact_version_without_latest_apis():
+    client = MagicMock()
+    client.get_model_version_by_alias.return_value = SimpleNamespace(
+        version="7",
+        status="READY",
+    )
 
-    with patch("mlflow.tracking.MlflowClient") as client_class:
-        client_class.return_value.search_model_versions.return_value = versions
-        resolved_version = main._latest_registered_model_version()
+    with (
+        patch.object(main.settings, "MLFLOW_MODEL_VERSION", None),
+        patch.object(main.settings, "MLFLOW_MODEL_ALIAS", "champion"),
+    ):
+        reference = main._resolve_registry_model_reference(client)
 
-    assert resolved_version == "10"
+    assert reference == main.ResolvedModelReference(
+        model_uri="models:/ClimaSentinel_RiskForecaster/7",
+        model_version="7",
+        model_alias="champion",
+    )
+    client.get_model_version_by_alias.assert_called_once_with(
+        "ClimaSentinel_RiskForecaster",
+        "champion",
+    )
+    client.search_model_versions.assert_not_called()
+    client.get_latest_versions.assert_not_called()
+
+
+def test_explicit_version_pin_overrides_alias():
+    client = MagicMock()
+    client.get_model_version.return_value = SimpleNamespace(
+        version="8",
+        status="READY",
+    )
+
+    with (
+        patch.object(main.settings, "MLFLOW_MODEL_VERSION", " 8 "),
+        patch.object(main.settings, "MLFLOW_MODEL_ALIAS", "champion"),
+    ):
+        reference = main._resolve_registry_model_reference(client)
+
+    assert reference == main.ResolvedModelReference(
+        model_uri="models:/ClimaSentinel_RiskForecaster/8",
+        model_version="8",
+        model_alias=None,
+    )
+    client.get_model_version.assert_called_once_with(
+        "ClimaSentinel_RiskForecaster",
+        "8",
+    )
+    client.get_model_version_by_alias.assert_not_called()
+    client.search_model_versions.assert_not_called()
+    client.get_latest_versions.assert_not_called()
+
+
+@pytest.mark.parametrize("configured_version", ["not-a-number", "0", "-1"])
+def test_invalid_explicit_version_pin_is_rejected(configured_version):
+    client = MagicMock()
+
+    with (
+        patch.object(main.settings, "MLFLOW_MODEL_VERSION", configured_version),
+        pytest.raises(ValueError, match="positive integer string"),
+    ):
+        main._resolve_registry_model_reference(client)
+
+    client.get_model_version.assert_not_called()
+    client.get_model_version_by_alias.assert_not_called()
+
+
+def test_blank_version_pin_uses_configured_alias():
+    client = MagicMock()
+    client.get_model_version_by_alias.return_value = SimpleNamespace(
+        version="9",
+        status="READY",
+    )
+
+    with (
+        patch.object(main.settings, "MLFLOW_MODEL_VERSION", "   "),
+        patch.object(main.settings, "MLFLOW_MODEL_ALIAS", "candidate-approved"),
+    ):
+        reference = main._resolve_registry_model_reference(client)
+
+    assert reference.model_version == "9"
+    assert reference.model_alias == "candidate-approved"
+    client.get_model_version_by_alias.assert_called_once_with(
+        "ClimaSentinel_RiskForecaster",
+        "candidate-approved",
+    )
+
+
+def test_blank_alias_defaults_to_champion():
+    client = MagicMock()
+    client.get_model_version_by_alias.return_value = SimpleNamespace(
+        version="10",
+        status="READY",
+    )
+
+    with (
+        patch.object(main.settings, "MLFLOW_MODEL_VERSION", None),
+        patch.object(main.settings, "MLFLOW_MODEL_ALIAS", "  "),
+    ):
+        reference = main._resolve_registry_model_reference(client)
+
+    assert reference.model_alias == "champion"
+    client.get_model_version_by_alias.assert_called_once_with(
+        "ClimaSentinel_RiskForecaster",
+        "champion",
+    )
+
+
+def test_missing_alias_raises_clear_compatibility_error():
+    client = MagicMock()
+    client.get_model_version_by_alias.side_effect = RuntimeError("missing alias")
+
+    with (
+        patch.object(main.settings, "MLFLOW_MODEL_VERSION", None),
+        patch.object(main.settings, "MLFLOW_MODEL_ALIAS", "missing"),
+        pytest.raises(ValueError, match="Registry alias 'missing' could not be resolved"),
+    ):
+        main._resolve_registry_model_reference(client)
+
+    client.search_model_versions.assert_not_called()
+    client.get_latest_versions.assert_not_called()
 
 
 def test_successful_ml_forecast_reports_loaded_model_provenance(

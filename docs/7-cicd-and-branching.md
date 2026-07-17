@@ -70,7 +70,7 @@ This is the final deployment gate. It runs model promotion quality gates before 
 
 | Step | Description |
 |---|---|
-| **Model promotion gates** | Executes `model/promote.py` which connects to DagsHub MLflow, fetches the latest model metrics, and validates that **R2 >= 0.45** and **MAE <= 7.0**. If passed, the script automatically promotes the model to the `Production` stage in the registry. |
+| **Model promotion gates** | Executes `model/promote.py`, validates the existing candidate against **R2 >= 0.35** and **MAE <= 7.0**, retains the `Production` stage transition for compatibility, and assigns the configured alias (default `champion`) to the approved version. Serving resolves this alias or an explicit version pin; it never selects the newest version automatically. |
 | **Deploy backend to Railway** | `railway up --environment production` — only runs if the quality gates pass. |
 | **Deploy frontend to Railway** | `railway up --environment production` for the frontend service. |
 
