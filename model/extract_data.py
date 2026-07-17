@@ -21,7 +21,7 @@ def extract_data():
     df = client.query(query).to_dataframe()
     
     # 1. River Discharge: Fill with 0 (Valid for cities without rivers)
-    river_cols = ['river_discharge_m3s', 'river_forecast_plus_1d', 'river_forecast_plus_2d', 'river_forecast_plus_3d']
+    river_cols = ['river_discharge_m3s', 'river_forecast_plus_1d', 'river_forecast_plus_2d', 'river_forecast_plus_3d', 'river_forecast_plus_4d']
     df[river_cols] = df[river_cols].fillna(0)
     
     # 2. Wind Gusts: Fallback to average wind speed if gust sensor data is missing
