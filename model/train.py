@@ -108,6 +108,7 @@ def train_model():
             registered_model_name="ClimaSentinel_RiskForecaster",
             signature=signature,
             input_example=input_example,
+            serialization_format=mlflow.sklearn.SERIALIZATION_FORMAT_CLOUDPICKLE,
         )
         print("Model successfully registered to MLflow!")
         
