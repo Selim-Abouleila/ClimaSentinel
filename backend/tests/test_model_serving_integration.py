@@ -18,8 +18,10 @@ from app import main
 from app.ml_pipeline import (
     ALL_CITIES,
     FEATURE_COLUMNS,
+    FORECAST_HORIZONS,
     NUMERIC_FEATURE_COLUMNS,
     TARGET_COLUMNS,
+    TARGET_COLUMNS_BY_HORIZON,
     build_model_pipeline,
     prepare_feature_frame,
     validate_fitted_pipeline,
@@ -35,12 +37,16 @@ def _synthetic_training_data() -> pd.DataFrame:
     }
     data["city_id"] = [ALL_CITIES[index % len(ALL_CITIES)] for index in range(row_count)]
     frame = pd.DataFrame(data)
-    for target_index, target in enumerate(TARGET_COLUMNS):
-        signal = frame[NUMERIC_FEATURE_COLUMNS[target_index]]
-        frame[target] = (
-            signal * (0.8 + target_index * 0.1)
-            + rng.normal(scale=2.0 + target_index, size=row_count)
-        )
+    for horizon in FORECAST_HORIZONS:
+        for target_index, target in enumerate(
+            TARGET_COLUMNS_BY_HORIZON[horizon]
+        ):
+            signal = frame[NUMERIC_FEATURE_COLUMNS[target_index]]
+            frame[target] = (
+                horizon * 20.0
+                + signal * (0.10 + target_index * 0.02)
+                + rng.normal(scale=0.5, size=row_count)
+            )
     return frame
 
 
@@ -88,6 +94,7 @@ def _feature_store_row(training_data: pd.DataFrame) -> dict:
     row = training_data.iloc[0].loc[list(FEATURE_COLUMNS)].to_dict()
     row.update(
         {
+            "city_id": "paris_fr",
             "date": date(2026, 7, 17),
             "real_current_tipping_score": 61.0,
             "real_primary_driver": "Heat",
@@ -185,15 +192,36 @@ def test_real_registry_alias_pin_and_missing_alias_serving(tmp_path, monkeypatch
             patch("app.main.get_bq_client", return_value=bq_client),
             patch("app.main._heuristic_predictions") as fallback,
         ):
-            champion_response = api_client.get(
-                "/data/city/paris_fr/forecast?horizon_days=3"
+            champion_responses = [
+                api_client.get(
+                    f"/data/city/paris_fr/forecast?horizon_days={horizon}"
+                )
+                for horizon in FORECAST_HORIZONS
+            ]
+            assert all(response.status_code == 200 for response in champion_responses)
+            champion_bodies = [response.json() for response in champion_responses]
+            assert [
+                body["horizon_days"] for body in champion_bodies
+            ] == list(FORECAST_HORIZONS)
+            assert all(
+                body["prediction_source"] == "mlflow_registry"
+                for body in champion_bodies
             )
-            assert champion_response.status_code == 200
-            champion_body = champion_response.json()
-            assert champion_body["prediction_source"] == "mlflow_registry"
-            assert champion_body["model_version"] == version_1
-            assert champion_body["model_version"] != version_2
-            _assert_finite_forecast(champion_body)
+            assert all(
+                body["model_version"] == version_1
+                for body in champion_bodies
+            )
+            assert all(
+                body["model_version"] != version_2
+                for body in champion_bodies
+            )
+            assert (
+                champion_bodies[0]["estimated_total_tipping_score"]
+                < champion_bodies[1]["estimated_total_tipping_score"]
+                < champion_bodies[2]["estimated_total_tipping_score"]
+            )
+            for champion_body in champion_bodies:
+                _assert_finite_forecast(champion_body)
             fallback.assert_not_called()
 
             assert main._cached_model is not None

@@ -444,7 +444,7 @@ def get_city_forecast(
 ):
     """
     Returns the N-day future climate tipping forecast for a single city.
-    Accepts horizon_days (1-3) to control how far ahead the model predicts.
+    Selects the genuine horizon-specific outputs trained for Day +1, +2, or +3.
     Fetches the pre-computed weather trajectory from `mart_ml_feature_store`,
     runs inference via the Multi-Output Random Forest model, and calculates
     individual sub-scores, total tipping risk, and 95% confidence intervals.
@@ -485,17 +485,6 @@ def get_city_forecast(
         feature_row = dict(row)
         feature_row["current_tipping_score"] = row["real_current_tipping_score"]
         
-        # ── Forward-fill forecast features beyond the requested horizon ──
-        # Preserve the existing shorter-horizon behavior for temperature,
-        # precipitation, and average-wind features through Day +3.
-        if horizon_days < 3:
-            for prefix in ['temp_forecast_plus_', 'precip_forecast_plus_', 'wind_forecast_plus_']:
-                for d in range(horizon_days + 1, 4):  # e.g. horizon=1 → fill 2d,3d with 1d
-                    col = f"{prefix}{d}d"
-                    prev_col = f"{prefix}{horizon_days}d"
-                    if col in feature_row and prev_col in feature_row:
-                        feature_row[col] = feature_row[prev_col]
-
         try:
             loaded_model = _get_ml_model()
             if loaded_model is None:
@@ -504,6 +493,7 @@ def get_city_forecast(
             all_predictions, all_standard_deviations = predict_with_ensemble_spread(
                 loaded_model.estimator,
                 feature_row,
+                horizon_days=horizon_days,
             )
             predictions = all_predictions[0]
             standard_deviations = all_standard_deviations[0]

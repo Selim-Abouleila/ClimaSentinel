@@ -93,13 +93,16 @@ This document provides a clean, human-readable reference of the ClimaSentinel RE
 
 ### `GET /data/city/{city_id}/forecast`
 - **Tags:** Data
-- **Description**: Returns the **3-day future climate tipping forecast** using the Multi-Output Random Forest model. It extracts weather trajectories, runs inference, and computes dynamic 95% Confidence Intervals based on tree-level variance.
+- **Description**: Returns a genuine **Day +1, Day +2, or Day +3 climate tipping forecast** from the matching horizon-specific outputs in the registered Multi-Output Random Forest artifact. The displayed “95%” margins are uncalibrated tree-spread bands computed from estimator variance, not guaranteed-coverage prediction intervals.
 - **Path Parameters**:
   - `city_id` (string, required): The unique identifier for the city (e.g., `paris_fr`).
+- **Query Parameters**:
+  - `horizon_days` (integer, optional, default `3`): Requested trained horizon; accepted values are `1`, `2`, and `3`.
 - **Response** (200 OK):
   ```json
   {
     "city_id": "paris_fr",
+    "horizon_days": 3,
     "prediction_date": "2026-06-30",
     "current_tipping_score": 42.5,
     "estimated_total_tipping_score": 65.2,
@@ -116,7 +119,7 @@ This document provides a clean, human-readable reference of the ClimaSentinel RE
       }
       // ... (includes wind, rain, air, river)
     },
-    "weather_trajectory_3d": {
+    "weather_trajectory": {
       "temp_max_plus_1d": 32.5,
       "temp_max_plus_2d": 34.1,
       "temp_max_plus_3d": 35.8,
