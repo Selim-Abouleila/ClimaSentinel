@@ -13,11 +13,15 @@ WITH feature_base AS (
         f.date,
         s.global_tipping_score AS current_tipping_score,
         
+        -- Historical Baseline
+        n.normal_temperature_2m_max,
+        
         -- Current weather signals (t0)
         f.temperature_2m_max,
         f.temperature_2m_min,
         f.precipitation_sum_mm,
         f.wind_speed_10m_max,
+        f.wind_gusts_10m_max,
         f.european_aqi_max,
         f.river_discharge_m3s,
         
@@ -33,6 +37,18 @@ WITH feature_base AS (
         LEAD(f.wind_speed_10m_max, 1) OVER (PARTITION BY f.city_id ORDER BY f.date) AS wind_forecast_plus_1d,
         LEAD(f.wind_speed_10m_max, 2) OVER (PARTITION BY f.city_id ORDER BY f.date) AS wind_forecast_plus_2d,
         LEAD(f.wind_speed_10m_max, 3) OVER (PARTITION BY f.city_id ORDER BY f.date) AS wind_forecast_plus_3d,
+
+        LEAD(f.wind_gusts_10m_max, 1) OVER (PARTITION BY f.city_id ORDER BY f.date) AS wind_gusts_forecast_plus_1d,
+        LEAD(f.wind_gusts_10m_max, 2) OVER (PARTITION BY f.city_id ORDER BY f.date) AS wind_gusts_forecast_plus_2d,
+        LEAD(f.wind_gusts_10m_max, 3) OVER (PARTITION BY f.city_id ORDER BY f.date) AS wind_gusts_forecast_plus_3d,
+
+        LEAD(f.european_aqi_max, 1) OVER (PARTITION BY f.city_id ORDER BY f.date) AS aqi_forecast_plus_1d,
+        LEAD(f.european_aqi_max, 2) OVER (PARTITION BY f.city_id ORDER BY f.date) AS aqi_forecast_plus_2d,
+        LEAD(f.european_aqi_max, 3) OVER (PARTITION BY f.city_id ORDER BY f.date) AS aqi_forecast_plus_3d,
+
+        LEAD(f.river_discharge_m3s, 1) OVER (PARTITION BY f.city_id ORDER BY f.date) AS river_forecast_plus_1d,
+        LEAD(f.river_discharge_m3s, 2) OVER (PARTITION BY f.city_id ORDER BY f.date) AS river_forecast_plus_2d,
+        LEAD(f.river_discharge_m3s, 3) OVER (PARTITION BY f.city_id ORDER BY f.date) AS river_forecast_plus_3d,
         
         -- Target Variables (t+3) - Multi-Output Regression
         LEAD(s.heat_score, 3) OVER (PARTITION BY f.city_id ORDER BY f.date) AS future_heat_score_3d,
@@ -45,6 +61,8 @@ WITH feature_base AS (
     FROM {{ ref('stg_city_signal_input') }} f
     LEFT JOIN {{ ref('mart_city_score_history') }} s
         ON f.city_id = s.city_id AND f.date = s.date
+    LEFT JOIN {{ ref('city_monthly_normals') }} n
+        ON f.city_id = n.city_id AND EXTRACT(MONTH FROM f.date) = n.month
 )
 
 SELECT * FROM feature_base
