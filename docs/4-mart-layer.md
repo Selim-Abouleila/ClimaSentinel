@@ -37,7 +37,7 @@ The score is calculated across 5 factors using both absolute physics and relativ
 | **🌡️ Heat** | Relative (Anomaly + Velocity) | `(Forecast - Normal) * 5 + Positive_24h_Jump * 5` |
 | **💨 Wind** | Absolute Threshold | `(Gusts - 40km/h) * 2.5` |
 | **🌧️ Rain** | Absolute Volume | `Daily Precipitation (mm) * 2` |
-| **🌫️ Air Quality** | Direct Mapping | `European AQI Max` |
+| **🌫️ Air Quality** | Threshold (EU "Moderate") | `(AQI - 40) * 1.67` (forward-filled if sensor drops out) |
 | **🌊 River** | Velocity Spikes | `24h River Volume % Increase * 200` |
 
 #### The Global Score
@@ -96,7 +96,7 @@ Exposes the five individual tipping sub-scores (Heat, Wind, Rain, Air Quality, R
 | `heat_score` | Heat sub-score (0-100): based on temperature anomaly and positive velocity |
 | `wind_score` | Wind sub-score (0-100): based on gust speed above 40 km/h threshold |
 | `rain_score` | Rain sub-score (0-100): based on daily precipitation sum |
-| `air_score` | Air Quality sub-score (0-100): direct mapping of European AQI max |
+| `air_score` | Air Quality sub-score (0-100): threshold at EU "Moderate" (AQI > 40), scaled via `(AQI - 40) * 1.67`. Forward-fills last known AQI if sensor data is missing. |
 | `river_score` | River/Flood sub-score (0-100): based on positive river discharge velocity |
 | `temperature_2m_max`, `wind_gusts_10m_max`, `precipitation_sum_mm`, `european_aqi_max`, `river_discharge_m3s` | Raw signal context values for tooltip display in the UI |
 
