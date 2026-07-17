@@ -51,26 +51,82 @@ class LoadedModel:
     model_version: str | None
 
 
+@dataclass(frozen=True)
+class ResolvedModelReference:
+    model_uri: str
+    model_version: str
+    model_alias: str | None
+
+
 _cached_model: LoadedModel | None = None
 
 
-def _latest_registered_model_version() -> str:
-    """Resolve the same latest registry policy to a concrete version string."""
-    from mlflow.tracking import MlflowClient
-
-    versions = list(
-        MlflowClient().search_model_versions(f"name='{MODEL_NAME}'")
-    )
-    ready_versions = [
-        version for version in versions if getattr(version, "status", None) == "READY"
-    ]
-    if not ready_versions:
+def _validate_ready_model_version(model_version, selection: str) -> str:
+    """Return a concrete ready version or reject the selected reference."""
+    version = str(getattr(model_version, "version", "")).strip()
+    status = str(getattr(model_version, "status", "")).strip().upper()
+    if not version or not version.isdigit() or int(version) <= 0:
         raise ModelCompatibilityError(
-            f"No ready registered versions are available for {MODEL_NAME}"
+            f"{selection} did not resolve to a valid registered model version"
         )
-    return str(
-        max(ready_versions, key=lambda version: int(version.version)).version
+    if status != "READY":
+        raise ModelCompatibilityError(
+            f"{selection} resolved to model version {version}, which is not ready"
+        )
+    return str(int(version))
+
+
+def _resolve_registry_model_reference(client) -> ResolvedModelReference:
+    """Resolve an explicit pin or registry alias to one exact ready version."""
+    configured_version = (settings.MLFLOW_MODEL_VERSION or "").strip()
+    if configured_version:
+        if not configured_version.isdigit() or int(configured_version) <= 0:
+            raise ModelCompatibilityError(
+                "MLFLOW_MODEL_VERSION must be a positive integer string"
+            )
+        normalized_version = str(int(configured_version))
+        try:
+            model_version = client.get_model_version(
+                MODEL_NAME,
+                normalized_version,
+            )
+        except Exception as exc:
+            raise ModelCompatibilityError(
+                f"Configured model version {normalized_version} could not be resolved"
+            ) from exc
+        resolved_version = _validate_ready_model_version(
+            model_version,
+            f"Configured model version {normalized_version}",
+        )
+        return ResolvedModelReference(
+            model_uri=f"models:/{MODEL_NAME}/{resolved_version}",
+            model_version=resolved_version,
+            model_alias=None,
+        )
+
+    model_alias = (settings.MLFLOW_MODEL_ALIAS or "").strip() or "champion"
+    try:
+        model_version = client.get_model_version_by_alias(
+            MODEL_NAME,
+            model_alias,
+        )
+    except Exception as exc:
+        raise ModelCompatibilityError(
+            f"Registry alias '{model_alias}' could not be resolved"
+        ) from exc
+    resolved_version = _validate_ready_model_version(
+        model_version,
+        f"Registry alias '{model_alias}'",
     )
+    return ResolvedModelReference(
+        model_uri=f"models:/{MODEL_NAME}/{resolved_version}",
+        model_version=resolved_version,
+        model_alias=model_alias,
+    )
+
+
+def _allow_local_artifact() -> bool:
+    return not _is_production()
 
 def _get_ml_model():
     """Load and cache the ML model. Downloads once, reuses forever."""
@@ -80,9 +136,9 @@ def _get_ml_model():
     
     import joblib
     
-    # Try local pickle first
+    # Local artifacts are a development/staging convenience only.
     model_path = os.path.join(os.path.dirname(__file__), "risk_forecaster.pkl")
-    if os.path.exists(model_path):
+    if _allow_local_artifact() and os.path.exists(model_path):
         try:
             estimator = joblib.load(model_path)
             validate_fitted_pipeline(estimator)
@@ -105,19 +161,30 @@ def _get_ml_model():
             import dagshub
             dagshub.init(repo_owner=os.environ.get("DAGSHUB_USERNAME", "Selim-Abouleila"), repo_name="ClimaSentinel", mlflow=True)
         import mlflow.sklearn
-        model_version = _latest_registered_model_version()
-        estimator = mlflow.sklearn.load_model(
-            f"models:/{MODEL_NAME}/{model_version}"
-        )
+        from mlflow.tracking import MlflowClient
+
+        model_reference = _resolve_registry_model_reference(MlflowClient())
+        if model_reference.model_alias is not None:
+            log.info(
+                "Resolved registry alias '%s' to model version %s.",
+                model_reference.model_alias,
+                model_reference.model_version,
+            )
+        else:
+            log.info(
+                "Resolved explicit model version pin %s.",
+                model_reference.model_version,
+            )
+        estimator = mlflow.sklearn.load_model(model_reference.model_uri)
         validate_fitted_pipeline(estimator)
         _cached_model = LoadedModel(
             estimator=estimator,
             prediction_source="mlflow_registry",
-            model_version=model_version,
+            model_version=model_reference.model_version,
         )
         log.info(
-            "Compatible ML model version %s loaded from MLflow and cached.",
-            model_version,
+            "Loaded exact registered model version %s and cached it.",
+            model_reference.model_version,
         )
         return _cached_model
     except Exception:
