@@ -71,4 +71,4 @@ jobs:
           DAGSHUB_USERNAME: ${{ secrets.DAGSHUB_USERNAME }}
           DAGSHUB_USER_TOKEN: ${{ secrets.DAGSHUB_TOKEN }}
           MLFLOW_ALLOW_FILE_STORE: "true"
-        run: python model/train.py
+        run: python -m model.train

@@ -96,7 +96,7 @@ This pipeline handles the full ML lifecycle: data extraction, versioning, traini
 | **Track with DVC & push** | `dvc add model/data/training_snapshot.csv` → `dvc push` to DagsHub storage |
 | **Commit DVC version** | Auto-commits the updated `.dvc` file back to Git with `[skip ci]` to avoid infinite loops |
 | **Validate MLflow secrets** | Checks that `MLFLOW_TRACKING_URI` is set before training |
-| **Train & register model** | Runs `python model/train.py` which trains a `RandomForestRegressor` and registers it in the MLflow Model Registry on DagsHub |
+| **Train & register model** | Runs `python -m model.train` which trains the shared multi-output preprocessing/model pipeline and registers it in the MLflow Model Registry on DagsHub |
 
 **Every training run is traceable to:**
 - A **DVC data version** (MD5 hash read from the `.dvc` metadata file)

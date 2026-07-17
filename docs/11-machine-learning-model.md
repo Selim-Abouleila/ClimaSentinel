@@ -86,14 +86,14 @@ Because the sub-scores represent distinct environmental dynamics (e.g., thermal 
 $$\mathbf{y} = \begin{bmatrix} y_{\text{heat}} \\ y_{\text{wind}} \\ y_{\text{rain}} \\ y_{\text{air}} \\ y_{\text{river}} \end{bmatrix} = \mathbf{f}(\mathbf{X})$$
 
 * **Hyperparameters**: `n_estimators=100`, `max_depth=10`, `random_state=42`.
-* **Categorical Encoding**: `city_id` is converted to categorical dummies (`pd.get_dummies(..., drop_first=True)`). A fixed list of the 10 monitored European cities ensures identical dummy dimensions between training and real-time inference.
+* **Shared Preprocessing**: Training and serving both use `backend/app/ml_pipeline.py`. Its fitted `ColumnTransformer` median-imputes numeric fields and one-hot encodes `city_id` against the same fixed list of 10 monitored European cities.
 
 ### 3.2 MLflow & DagsHub Experiment Tracking
 During execution, `train.py` initializes a connection to DagsHub (`https://dagshub.com/Selim-Abouleila/ClimaSentinel.mlflow`). It logs:
-* **Parameters**: `n_estimators`, `max_depth`, `random_state`, `dvc_data_hash`, `git_commit`.
+* **Parameters**: `n_estimators`, `max_depth`, `random_state`, `dvc_data_hash`, `git_commit`, `feature_schema_version`.
 * **Global Metrics**: Overall Mean Absolute Error (`mae`), Mean Squared Error (`mse`), and Global R² (`r2`).
 * **Granular Sub-Score Metrics**: `r2_heat_score`, `r2_wind_score`, `r2_rain_score`, `r2_air_score`, `r2_river_score`.
-* **Model Artifact**: The full Scikit-Learn model pipeline is logged to the MLflow artifact repository as `random_forest_model` and registered in the Model Registry under the name **`ClimaSentinel_RiskForecaster`**.
+* **Model Artifact**: The full Scikit-Learn preprocessing/model pipeline is logged to the MLflow artifact repository as `random_forest_model` and registered in the Model Registry under the name **`ClimaSentinel_RiskForecaster`**. MLflow receives a signature and representative input example for the raw, pre-preprocessing feature DataFrame.
 
 ---
 
@@ -103,8 +103,8 @@ During execution, `train.py` initializes a connection to DagsHub (`https://dagsh
 To maintain blazing-fast response times ($<50\text{ms}$) while supporting Railway's auto-sleeping container architecture, the backend avoids re-downloading the model from DagsHub on every incoming request.
 
 ```python
-# ── Cached ML Model (loaded once at first request) ──────────────────────
-_cached_model = None
+# ── Cached estimator and provenance (loaded once at first request) ─────
+_cached_model: LoadedModel | None = None
 
 def _get_ml_model():
     """Load and cache the ML model. Downloads once, reuses forever."""
@@ -112,11 +112,13 @@ def _get_ml_model():
     if _cached_model is not None:
         return _cached_model
     
-    # 1. Try loading local fallback pickle artifact (`risk_forecaster.pkl`)
-    # 2. Try authenticating with DagsHub via DAGSHUB_USER_TOKEN and loading from Registry:
-    _cached_model = mlflow.sklearn.load_model("models:/ClimaSentinel_RiskForecaster/latest")
+    # 1. Load and validate the local Pipeline artifact when available.
+    # 2. Otherwise resolve the latest ready MLflow version, load that exact
+    #    version, validate it, and cache its source and version metadata.
     return _cached_model
 ```
+
+Successful forecast responses expose `prediction_source` and `model_version`. If loading, preprocessing, prediction, or spread calculation fails in production, the endpoint returns HTTP 503 and never executes the temporary heuristic fallback. Development and staging may use that fallback, but identify it explicitly as `heuristic_fallback`.
 
 ### 4.2 Mathematical Derivation of Confidence Intervals (Tree Variance)
 A standard `.predict(X)` call on a Random Forest returns the mean prediction across all trees. However, ClimaSentinel provides true **Explainable AI** by extracting the individual predictions from all 100 decision trees to measure model variance and compute the 95% confidence interval ($1.96 \times \sigma$).
