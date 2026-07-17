@@ -6,6 +6,7 @@ import mlflow
 import mlflow.sklearn
 import joblib
 from sklearn.ensemble import RandomForestRegressor
+from sklearn.multioutput import MultiOutputRegressor
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
 
@@ -26,14 +27,21 @@ def train_model():
     print("Loading data snapshot...")
     df = pd.read_csv("model/data/training_snapshot.csv")
     
+    # Sort chronologically to prevent future data leakage during train/test split
+    df = df.sort_values(by=['date', 'city_id']).reset_index(drop=True)
+    
     # One-hot encode city_id so the model learns city-specific behavior
     # We include current_tipping_score and the full 3-day weather forecast trajectory
     feature_cols = [
         'current_tipping_score', 
-        'temperature_2m_max', 'temperature_2m_min', 'precipitation_sum_mm', 'wind_speed_10m_max', 'european_aqi_max', 'river_discharge_m3s',
-        'temp_forecast_plus_1d', 'temp_forecast_plus_2d', 'temp_forecast_plus_3d',
+        'normal_temperature_2m_max',
+        'temperature_2m_max', 'temperature_2m_min', 'precipitation_sum_mm', 'wind_speed_10m_max', 'wind_gusts_10m_max', 'european_aqi_max', 'river_discharge_m3s',
+        'temp_forecast_plus_1d', 'temp_forecast_plus_2d', 'temp_forecast_plus_3d', 'temp_forecast_plus_4d',
         'precip_forecast_plus_1d', 'precip_forecast_plus_2d', 'precip_forecast_plus_3d',
         'wind_forecast_plus_1d', 'wind_forecast_plus_2d', 'wind_forecast_plus_3d',
+        'wind_gusts_forecast_plus_1d', 'wind_gusts_forecast_plus_2d', 'wind_gusts_forecast_plus_3d',
+        'aqi_forecast_plus_1d', 'aqi_forecast_plus_2d', 'aqi_forecast_plus_3d',
+        'river_forecast_plus_1d', 'river_forecast_plus_2d', 'river_forecast_plus_3d', 'river_forecast_plus_4d',
         'city_id'
     ]
     targets = [
@@ -48,7 +56,8 @@ def train_model():
     X = pd.get_dummies(df_features, columns=['city_id'], drop_first=True)
     y = df[targets]
     
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+    # Time-based split (no shuffle) to strictly evaluate future generalization
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, shuffle=False)
     
     # Clean up any accidental newlines from GitHub Secrets
     dagshub_username = os.environ.get("DAGSHUB_USERNAME", "Selim-Abouleila").strip()
@@ -80,7 +89,8 @@ def train_model():
         mlflow.log_param("git_commit", get_git_commit())
         mlflow.log_param("dvc_data_hash", get_dvc_hash())
         
-        model = RandomForestRegressor(**params)
+        base_model = RandomForestRegressor(**params)
+        model = MultiOutputRegressor(base_model)
         model.fit(X_train, y_train)
         
         predictions = model.predict(X_test)

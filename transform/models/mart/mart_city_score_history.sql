@@ -34,7 +34,7 @@ signals_with_velocity AS (
         
         -- River velocity: (River tomorrow - River today) / River today
         CASE 
-            WHEN river_discharge_m3s IS NOT NULL AND river_discharge_m3s > 0 THEN
+            WHEN river_discharge_m3s IS NOT NULL AND river_discharge_m3s > 50 THEN
                 COALESCE(
                     (LEAD(river_discharge_m3s) OVER(PARTITION BY city_id ORDER BY date) - river_discharge_m3s) / river_discharge_m3s,
                     0
@@ -63,9 +63,13 @@ factor_scores AS (
             precipitation_sum_mm * 2
         )) AS rain_score,
 
-        -- 🌫️ Air Quality Score: Direct mapping of AQI
+        -- 🌫️ Air Quality Score: Threshold at EU "Moderate" (AQI > 40), scaled to 0-100
         GREATEST(0, LEAST(100, 
-            COALESCE(european_aqi_max, 0)
+            (COALESCE(
+                european_aqi_max,
+                LAST_VALUE(european_aqi_max IGNORE NULLS) OVER (PARTITION BY city_id ORDER BY date ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING),
+                0
+            ) - 40) * 1.67
         )) AS air_score,
 
         -- 🌊 River Score: Positive velocity percentage * 200
