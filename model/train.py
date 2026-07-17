@@ -34,10 +34,14 @@ def train_model():
     # We include current_tipping_score and the full 3-day weather forecast trajectory
     feature_cols = [
         'current_tipping_score', 
-        'temperature_2m_max', 'temperature_2m_min', 'precipitation_sum_mm', 'wind_speed_10m_max', 'european_aqi_max', 'river_discharge_m3s',
-        'temp_forecast_plus_1d', 'temp_forecast_plus_2d', 'temp_forecast_plus_3d',
+        'normal_temperature_2m_max',
+        'temperature_2m_max', 'temperature_2m_min', 'precipitation_sum_mm', 'wind_speed_10m_max', 'wind_gusts_10m_max', 'european_aqi_max', 'river_discharge_m3s',
+        'temp_forecast_plus_1d', 'temp_forecast_plus_2d', 'temp_forecast_plus_3d', 'temp_forecast_plus_4d',
         'precip_forecast_plus_1d', 'precip_forecast_plus_2d', 'precip_forecast_plus_3d',
         'wind_forecast_plus_1d', 'wind_forecast_plus_2d', 'wind_forecast_plus_3d',
+        'wind_gusts_forecast_plus_1d', 'wind_gusts_forecast_plus_2d', 'wind_gusts_forecast_plus_3d',
+        'aqi_forecast_plus_1d', 'aqi_forecast_plus_2d', 'aqi_forecast_plus_3d',
+        'river_forecast_plus_1d', 'river_forecast_plus_2d', 'river_forecast_plus_3d', 'river_forecast_plus_4d',
         'city_id'
     ]
     targets = [
