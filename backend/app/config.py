@@ -14,6 +14,10 @@ class Settings(BaseSettings):
     APP_NAME: str = "ClimaSentinel Backend"
     APP_VERSION: str = "1.0.0"
     ENVIRONMENT: str = "development"
+
+    # MLflow model serving
+    MLFLOW_MODEL_VERSION: Optional[str] = None
+    MLFLOW_MODEL_ALIAS: str = "champion"
     
     # GCP / BigQuery
     GCP_PROJECT_ID: str = "clima-sentinel"

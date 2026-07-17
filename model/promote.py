@@ -24,6 +24,10 @@ def promote_model():
 
     client = MlflowClient()
     model_name = "ClimaSentinel_RiskForecaster"
+    model_alias = (
+        os.environ.get("MLFLOW_MODEL_ALIAS", "champion").strip()
+        or "champion"
+    )
     
     try:
         # 2. Fetch the latest version of the model
@@ -54,12 +58,22 @@ def promote_model():
         MAE_THRESHOLD = 7.0
         
         if r2 >= R2_THRESHOLD and mae <= MAE_THRESHOLD:
-            logging.info("✅ Quality Gates Passed! Promoting model to 'Production'.")
+            logging.info("✅ Quality gates passed.")
             client.transition_model_version_stage(
                 name=model_name,
                 version=latest_version.version,
                 stage="Production",
                 archive_existing_versions=True
+            )
+            client.set_registered_model_alias(
+                model_name,
+                model_alias,
+                latest_version.version,
+            )
+            logging.info(
+                "Assigned alias '%s' to model version %s.",
+                model_alias,
+                latest_version.version,
             )
             logging.info("Model successfully promoted to Production.")
         else:

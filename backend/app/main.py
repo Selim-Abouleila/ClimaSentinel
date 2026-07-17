@@ -6,10 +6,14 @@ Endpoints:
   GET  /health  → health check
 """
 
-import time
 import logging
+import os
+import time
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
+from typing import Any
 
+import numpy as np
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from google.cloud import bigquery
@@ -17,6 +21,11 @@ from google.cloud import bigquery
 from prometheus_fastapi_instrumentator import Instrumentator
 
 from .config import get_settings
+from .ml_pipeline import (
+    ModelCompatibilityError,
+    predict_with_ensemble_spread,
+    validate_fitted_pipeline,
+)
 
 log = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s  %(levelname)-8s  %(message)s")
@@ -25,7 +34,99 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s  %(levelname)-8s  %(
 _start_time: float = 0.0
 
 # ── Cached ML Model (loaded once at first request) ──────────────────────
-_cached_model = None
+MODEL_NAME = "ClimaSentinel_RiskForecaster"
+SUB_SCORE_NAMES = (
+    "heat_score",
+    "wind_score",
+    "rain_score",
+    "air_score",
+    "river_score",
+)
+
+
+@dataclass(frozen=True)
+class LoadedModel:
+    estimator: Any
+    prediction_source: str
+    model_version: str | None
+
+
+@dataclass(frozen=True)
+class ResolvedModelReference:
+    model_uri: str
+    model_version: str
+    model_alias: str | None
+
+
+_cached_model: LoadedModel | None = None
+
+
+def _validate_ready_model_version(model_version, selection: str) -> str:
+    """Return a concrete ready version or reject the selected reference."""
+    version = str(getattr(model_version, "version", "")).strip()
+    status = str(getattr(model_version, "status", "")).strip().upper()
+    if not version or not version.isdigit() or int(version) <= 0:
+        raise ModelCompatibilityError(
+            f"{selection} did not resolve to a valid registered model version"
+        )
+    if status != "READY":
+        raise ModelCompatibilityError(
+            f"{selection} resolved to model version {version}, which is not ready"
+        )
+    return str(int(version))
+
+
+def _resolve_registry_model_reference(client) -> ResolvedModelReference:
+    """Resolve an explicit pin or registry alias to one exact ready version."""
+    configured_version = (settings.MLFLOW_MODEL_VERSION or "").strip()
+    if configured_version:
+        if not configured_version.isdigit() or int(configured_version) <= 0:
+            raise ModelCompatibilityError(
+                "MLFLOW_MODEL_VERSION must be a positive integer string"
+            )
+        normalized_version = str(int(configured_version))
+        try:
+            model_version = client.get_model_version(
+                MODEL_NAME,
+                normalized_version,
+            )
+        except Exception as exc:
+            raise ModelCompatibilityError(
+                f"Configured model version {normalized_version} could not be resolved"
+            ) from exc
+        resolved_version = _validate_ready_model_version(
+            model_version,
+            f"Configured model version {normalized_version}",
+        )
+        return ResolvedModelReference(
+            model_uri=f"models:/{MODEL_NAME}/{resolved_version}",
+            model_version=resolved_version,
+            model_alias=None,
+        )
+
+    model_alias = (settings.MLFLOW_MODEL_ALIAS or "").strip() or "champion"
+    try:
+        model_version = client.get_model_version_by_alias(
+            MODEL_NAME,
+            model_alias,
+        )
+    except Exception as exc:
+        raise ModelCompatibilityError(
+            f"Registry alias '{model_alias}' could not be resolved"
+        ) from exc
+    resolved_version = _validate_ready_model_version(
+        model_version,
+        f"Registry alias '{model_alias}'",
+    )
+    return ResolvedModelReference(
+        model_uri=f"models:/{MODEL_NAME}/{resolved_version}",
+        model_version=resolved_version,
+        model_alias=model_alias,
+    )
+
+
+def _allow_local_artifact() -> bool:
+    return not _is_production()
 
 def _get_ml_model():
     """Load and cache the ML model. Downloads once, reuses forever."""
@@ -33,18 +134,26 @@ def _get_ml_model():
     if _cached_model is not None:
         return _cached_model
     
-    import os
     import joblib
     
-    # Try local pickle first
+    # Local artifacts are a development/staging convenience only.
     model_path = os.path.join(os.path.dirname(__file__), "risk_forecaster.pkl")
-    if os.path.exists(model_path):
+    if _allow_local_artifact() and os.path.exists(model_path):
         try:
-            _cached_model = joblib.load(model_path)
-            log.info("ML model loaded from local pickle artifact.")
+            estimator = joblib.load(model_path)
+            validate_fitted_pipeline(estimator)
+            _cached_model = LoadedModel(
+                estimator=estimator,
+                prediction_source="local_artifact",
+                model_version="local",
+            )
+            log.info("Compatible ML model loaded from local pickle artifact.")
             return _cached_model
-        except Exception as e:
-            log.info(f"Local pickle not loaded: {e}")
+        except Exception:
+            log.warning(
+                "Local model artifact is unavailable or incompatible; trying MLflow.",
+                exc_info=True,
+            )
     
     # Try MLflow/DagsHub registry
     try:
@@ -52,12 +161,101 @@ def _get_ml_model():
             import dagshub
             dagshub.init(repo_owner=os.environ.get("DAGSHUB_USERNAME", "Selim-Abouleila"), repo_name="ClimaSentinel", mlflow=True)
         import mlflow.sklearn
-        _cached_model = mlflow.sklearn.load_model("models:/ClimaSentinel_RiskForecaster/latest")
-        log.info("ML model loaded from MLflow registry and cached.")
+        from mlflow.tracking import MlflowClient
+
+        model_reference = _resolve_registry_model_reference(MlflowClient())
+        if model_reference.model_alias is not None:
+            log.info(
+                "Resolved registry alias '%s' to model version %s.",
+                model_reference.model_alias,
+                model_reference.model_version,
+            )
+        else:
+            log.info(
+                "Resolved explicit model version pin %s.",
+                model_reference.model_version,
+            )
+        estimator = mlflow.sklearn.load_model(model_reference.model_uri)
+        validate_fitted_pipeline(estimator)
+        _cached_model = LoadedModel(
+            estimator=estimator,
+            prediction_source="mlflow_registry",
+            model_version=model_reference.model_version,
+        )
+        log.info(
+            "Loaded exact registered model version %s and cached it.",
+            model_reference.model_version,
+        )
         return _cached_model
-    except Exception as e:
-        log.info("MLflow model not available; will use calibrated simulation fallback.")
+    except Exception:
+        log.warning(
+            "No compatible MLflow registry model is available.",
+            exc_info=True,
+        )
         return None
+
+
+def _is_production() -> bool:
+    return settings.ENVIRONMENT.strip().lower() == "production"
+
+
+def _heuristic_predictions(row: dict[str, Any], horizon_days: int):
+    """Return the existing temporary non-production fallback and its spread."""
+    base = float(
+        row.get("real_current_tipping_score")
+        or row.get("current_tipping_score")
+        or 50.0
+    )
+    t_max = float(row.get(f"temp_forecast_plus_{horizon_days}d") or 25.0)
+    p_sum = float(row.get(f"precip_forecast_plus_{horizon_days}d") or 0.0)
+    w_max = float(row.get(f"wind_forecast_plus_{horizon_days}d") or 20.0)
+    river_disc = float(row.get("river_discharge_m3s") or 0.0)
+
+    scores = np.asarray(
+        [
+            min(100.0, max(0.0, base * 0.4 + (t_max - 20.0) * 2.5)),
+            min(
+                100.0,
+                max(0.0, (w_max - 30.0) * 2.0 if w_max > 30 else base * 0.2),
+            ),
+            min(100.0, max(0.0, p_sum * 5.0 if p_sum > 0 else base * 0.2)),
+            min(100.0, max(0.0, base * 0.8)),
+            min(100.0, max(0.0, base * 0.5 if river_disc > 0 else 0.0)),
+        ],
+        dtype=float,
+    )
+    standard_deviations = np.where(scores > 0, scores * 0.12, 0.0)
+    return scores, standard_deviations
+
+
+def _build_forecast_statistics(predictions, standard_deviations):
+    """Apply the existing interval formula to five validated sub-scores."""
+    predictions = np.asarray(predictions, dtype=float)
+    standard_deviations = np.asarray(standard_deviations, dtype=float)
+    expected_shape = (len(SUB_SCORE_NAMES),)
+    if predictions.shape != expected_shape or standard_deviations.shape != expected_shape:
+        raise ModelCompatibilityError(
+            "Forecast prediction and spread must each contain exactly five values"
+        )
+    if not np.isfinite(predictions).all() or not np.isfinite(standard_deviations).all():
+        raise ModelCompatibilityError("Forecast prediction and spread must be finite")
+
+    clipped_predictions = np.clip(predictions, 0.0, 100.0)
+    confidence_intervals = {}
+    for index, name in enumerate(SUB_SCORE_NAMES):
+        mean_value = clipped_predictions[index]
+        margin = 1.96 * standard_deviations[index]
+        confidence_intervals[name] = {
+            "estimated_score": round(float(mean_value), 1),
+            "ci_lower": round(float(max(0.0, mean_value - margin)), 1),
+            "ci_upper": round(float(min(100.0, mean_value + margin)), 1),
+            "confidence_margin": round(float(margin), 1),
+        }
+
+    driver_index = int(np.argmax(clipped_predictions))
+    total_estimated = round(float(clipped_predictions[driver_index]), 1)
+    total_margin = round(float(1.96 * standard_deviations[driver_index]), 1)
+    return confidence_intervals, total_estimated, total_margin
 
 
 # ── Lifespan (startup / shutdown) ────────────────────────────────────────
@@ -284,110 +482,66 @@ def get_city_forecast(
         row = dict(rows[0])
         
         # ── ML Model Inference & Confidence Intervals ──
-        import numpy as np
-        import pandas as pd
-        
-        # Prepare feature vector matching train.py
-        feature_cols = [
-            'current_tipping_score', 
-            'temperature_2m_max', 'temperature_2m_min', 'precipitation_sum_mm', 'wind_speed_10m_max', 'european_aqi_max', 'river_discharge_m3s',
-            'temp_forecast_plus_1d', 'temp_forecast_plus_2d', 'temp_forecast_plus_3d',
-            'precip_forecast_plus_1d', 'precip_forecast_plus_2d', 'precip_forecast_plus_3d',
-            'wind_forecast_plus_1d', 'wind_forecast_plus_2d', 'wind_forecast_plus_3d',
-            'city_id'
-        ]
-        
-        # Build DataFrame for get_dummies matching training structure
-        all_cities = ['amsterdam_nl', 'athens_gr', 'berlin_de', 'lisbon_pt', 'london_gb', 'madrid_es', 'paris_fr', 'rome_it', 'stockholm_se', 'warsaw_pl']
-        
-        df_input = pd.DataFrame([row])
-        df_input['river_discharge_m3s'] = df_input['river_discharge_m3s'].fillna(0).infer_objects(copy=False)
-        df_input['current_tipping_score'] = df_input['real_current_tipping_score']
-        df_features = df_input[feature_cols].copy()
+        feature_row = dict(row)
+        feature_row["current_tipping_score"] = row["real_current_tipping_score"]
         
         # ── Forward-fill forecast features beyond the requested horizon ──
-        # The model was trained with all 9 forecast features (plus_1d/2d/3d).
-        # For shorter horizons, we forward-fill the weather from the target day 
-        # so the model doesn't interpret missing days as 0.0 (freezing/no wind).
+        # Preserve the existing shorter-horizon behavior for temperature,
+        # precipitation, and average-wind features through Day +3.
         if horizon_days < 3:
             for prefix in ['temp_forecast_plus_', 'precip_forecast_plus_', 'wind_forecast_plus_']:
                 for d in range(horizon_days + 1, 4):  # e.g. horizon=1 → fill 2d,3d with 1d
                     col = f"{prefix}{d}d"
                     prev_col = f"{prefix}{horizon_days}d"
-                    if col in df_features.columns and prev_col in df_features.columns:
-                        df_features[col] = df_features[prev_col]
-        
-        df_features['city_id'] = pd.Categorical(df_features['city_id'], categories=all_cities)
-        X = pd.get_dummies(df_features, columns=['city_id'], drop_first=True)
-        
-        sub_score_names = ['heat_score', 'wind_score', 'rain_score', 'air_score', 'river_score']
-        preds = None
-        conf_intervals = {}
-        
-        # Use cached model (loaded once, reused forever)
-        model = _get_ml_model()
-        
-        if model and hasattr(model, "estimators_"):
-            try:
-                # Multi-Output Random Forest Inference with Tree-Level Uncertainty
-                preds = model.predict(X)[0] # array of 5 sub-scores
-                
-                # Extract predictions across all trees in the forest to compute 95% Confidence Intervals
-                tree_preds = np.array([tree.predict(X.values)[0] for tree in model.estimators_])
-                stds = np.std(tree_preds, axis=0)
-                
-                for idx, name in enumerate(sub_score_names):
-                    mean_val = preds[idx]
-                    std_val = stds[idx]
-                    margin = 1.96 * std_val
-                    conf_intervals[name] = {
-                        "estimated_score": round(float(mean_val), 1),
-                        "ci_lower": round(float(max(0.0, mean_val - margin)), 1),
-                        "ci_upper": round(float(min(100.0, mean_val + margin)), 1),
-                        "confidence_margin": round(float(margin), 1)
-                    }
-                
-                total_estimated = round(float(max(preds)), 1)
-                driver_idx = np.argmax(preds)
-                total_margin = round(float(1.96 * stds[driver_idx]), 1)
-            except Exception as e:
-                log.warning(f"Model prediction failed, falling back to simulation: {e}")
-                model = None # trigger fallback below
-                
-        if not model or not conf_intervals:
-            # Robust fallback simulation calibrated to exact mart_ml_feature_store weather trajectories
-            # Use the weather data for the target horizon day
-            base = float(row.get('real_current_tipping_score') or row.get('current_tipping_score') or 50.0)
-            t_max = float(row.get(f'temp_forecast_plus_{horizon_days}d') or 25.0)
-            p_sum = float(row.get(f'precip_forecast_plus_{horizon_days}d') or 0.0)
-            w_max = float(row.get(f'wind_forecast_plus_{horizon_days}d') or 20.0)
-            river_disc = float(row.get('river_discharge_m3s') or 0.0)
-            
-            est_heat = min(100.0, max(0.0, base * 0.4 + (t_max - 20.0) * 2.5))
-            est_wind = min(100.0, max(0.0, (w_max - 30.0) * 2.0 if w_max > 30 else base * 0.2))
-            est_rain = min(100.0, max(0.0, p_sum * 5.0 if p_sum > 0 else base * 0.2))
-            est_air = min(100.0, max(0.0, base * 0.8))
-            est_river = min(100.0, max(0.0, base * 0.5 if river_disc > 0 else 0.0))
-            
-            scores_map = [est_heat, est_wind, est_rain, est_air, est_river]
-            
-            for idx, name in enumerate(sub_score_names):
-                mean_val = scores_map[idx]
-                std_val = mean_val * 0.12 if mean_val > 0 else 0.0
-                margin = 1.96 * std_val
-                conf_intervals[name] = {
-                    "estimated_score": round(float(mean_val), 1),
-                    "ci_lower": round(float(max(0.0, mean_val - margin)), 1),
-                    "ci_upper": round(float(min(100.0, mean_val + margin)), 1),
-                    "confidence_margin": round(float(margin), 1)
-                }
-            
-            total_estimated = round(float(max(scores_map)), 1)
-            driver_idx = np.argmax(scores_map)
-            total_margin = round(float(1.96 * (scores_map[driver_idx] * 0.12)), 1)
+                    if col in feature_row and prev_col in feature_row:
+                        feature_row[col] = feature_row[prev_col]
+
+        try:
+            loaded_model = _get_ml_model()
+            if loaded_model is None:
+                raise ModelCompatibilityError("No compatible ML model could be loaded")
+
+            all_predictions, all_standard_deviations = predict_with_ensemble_spread(
+                loaded_model.estimator,
+                feature_row,
+            )
+            predictions = all_predictions[0]
+            standard_deviations = all_standard_deviations[0]
+            prediction_source = loaded_model.prediction_source
+            model_version = loaded_model.model_version
+            conf_intervals, total_estimated, total_margin = (
+                _build_forecast_statistics(predictions, standard_deviations)
+            )
+        except Exception:
+            if _is_production():
+                log.error(
+                    "ML forecast failed in production for city '%s'.",
+                    city_id,
+                    exc_info=True,
+                )
+                raise HTTPException(
+                    status_code=503,
+                    detail="ML forecast model is temporarily unavailable",
+                )
+
+            log.warning(
+                "ML forecast failed for city '%s'; using the explicit "
+                "non-production heuristic fallback.",
+                city_id,
+                exc_info=True,
+            )
+            predictions, standard_deviations = _heuristic_predictions(
+                row,
+                horizon_days,
+            )
+            prediction_source = "heuristic_fallback"
+            model_version = None
+            conf_intervals, total_estimated, total_margin = (
+                _build_forecast_statistics(predictions, standard_deviations)
+            )
 
         driver_map = {0: 'Heat', 1: 'Wind', 2: 'Rain', 3: 'Air Quality', 4: 'River/Flood'}
-        best_driver = driver_map[np.argmax([conf_intervals[n]["estimated_score"] for n in sub_score_names])]
+        best_driver = driver_map[np.argmax([conf_intervals[n]["estimated_score"] for n in SUB_SCORE_NAMES])]
 
         # ── Build weather trajectory for the selected horizon ──
         weather_trajectory = {}
@@ -408,7 +562,9 @@ def get_city_forecast(
             "total_ci_upper": round(float(min(100.0, total_estimated + total_margin)), 1),
             "forecast_primary_driver": best_driver,
             "sub_scores_forecast": conf_intervals,
-            "weather_trajectory": weather_trajectory
+            "weather_trajectory": weather_trajectory,
+            "prediction_source": prediction_source,
+            "model_version": model_version,
         }
 
     except HTTPException:

@@ -55,6 +55,8 @@ export interface CityForecast {
   city_id: string;
   horizon_days: number;
   prediction_date: string;
+  prediction_source: string;
+  model_version: string | null;
   current_tipping_score: number;
   estimated_total_tipping_score: number;
   total_confidence_margin: number;

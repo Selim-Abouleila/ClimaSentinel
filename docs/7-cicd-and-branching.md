@@ -70,7 +70,7 @@ This is the final deployment gate. It runs model promotion quality gates before 
 
 | Step | Description |
 |---|---|
-| **Model promotion gates** | Executes `model/promote.py` which connects to DagsHub MLflow, fetches the latest model metrics, and validates that **R2 >= 0.45** and **MAE <= 7.0**. If passed, the script automatically promotes the model to the `Production` stage in the registry. |
+| **Model promotion gates** | Executes `model/promote.py`, validates the existing candidate against **R2 >= 0.35** and **MAE <= 7.0**, retains the `Production` stage transition for compatibility, and assigns the configured alias (default `champion`) to the approved version. Serving resolves this alias or an explicit version pin; it never selects the newest version automatically. |
 | **Deploy backend to Railway** | `railway up --environment production` — only runs if the quality gates pass. |
 | **Deploy frontend to Railway** | `railway up --environment production` for the frontend service. |
 
@@ -96,7 +96,7 @@ This pipeline handles the full ML lifecycle: data extraction, versioning, traini
 | **Track with DVC & push** | `dvc add model/data/training_snapshot.csv` → `dvc push` to DagsHub storage |
 | **Commit DVC version** | Auto-commits the updated `.dvc` file back to Git with `[skip ci]` to avoid infinite loops |
 | **Validate MLflow secrets** | Checks that `MLFLOW_TRACKING_URI` is set before training |
-| **Train & register model** | Runs `python model/train.py` which trains a `RandomForestRegressor` and registers it in the MLflow Model Registry on DagsHub |
+| **Train & register model** | Runs `python -m model.train` which trains the shared multi-output preprocessing/model pipeline and registers it in the MLflow Model Registry on DagsHub |
 
 **Every training run is traceable to:**
 - A **DVC data version** (MD5 hash read from the `.dvc` metadata file)

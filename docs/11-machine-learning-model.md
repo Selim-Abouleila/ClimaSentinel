@@ -86,14 +86,14 @@ Because the sub-scores represent distinct environmental dynamics (e.g., thermal 
 $$\mathbf{y} = \begin{bmatrix} y_{\text{heat}} \\ y_{\text{wind}} \\ y_{\text{rain}} \\ y_{\text{air}} \\ y_{\text{river}} \end{bmatrix} = \mathbf{f}(\mathbf{X})$$
 
 * **Hyperparameters**: `n_estimators=100`, `max_depth=10`, `random_state=42`.
-* **Categorical Encoding**: `city_id` is converted to categorical dummies (`pd.get_dummies(..., drop_first=True)`). A fixed list of the 10 monitored European cities ensures identical dummy dimensions between training and real-time inference.
+* **Shared Preprocessing**: Training and serving both use `backend/app/ml_pipeline.py`. Its fitted `ColumnTransformer` median-imputes numeric fields and one-hot encodes `city_id` against the same fixed list of 10 monitored European cities.
 
 ### 3.2 MLflow & DagsHub Experiment Tracking
 During execution, `train.py` initializes a connection to DagsHub (`https://dagshub.com/Selim-Abouleila/ClimaSentinel.mlflow`). It logs:
-* **Parameters**: `n_estimators`, `max_depth`, `random_state`, `dvc_data_hash`, `git_commit`.
+* **Parameters**: `n_estimators`, `max_depth`, `random_state`, `dvc_data_hash`, `git_commit`, `feature_schema_version`.
 * **Global Metrics**: Overall Mean Absolute Error (`mae`), Mean Squared Error (`mse`), and Global R² (`r2`).
 * **Granular Sub-Score Metrics**: `r2_heat_score`, `r2_wind_score`, `r2_rain_score`, `r2_air_score`, `r2_river_score`.
-* **Model Artifact**: The full Scikit-Learn model pipeline is logged to the MLflow artifact repository as `random_forest_model` and registered in the Model Registry under the name **`ClimaSentinel_RiskForecaster`**.
+* **Model Artifact**: The full Scikit-Learn preprocessing/model pipeline is logged to the MLflow artifact repository as `random_forest_model` and registered in the Model Registry under the name **`ClimaSentinel_RiskForecaster`**. MLflow receives a signature and representative input example for the raw, pre-preprocessing feature DataFrame.
 
 ---
 
@@ -103,8 +103,8 @@ During execution, `train.py` initializes a connection to DagsHub (`https://dagsh
 To maintain blazing-fast response times ($<50\text{ms}$) while supporting Railway's auto-sleeping container architecture, the backend avoids re-downloading the model from DagsHub on every incoming request.
 
 ```python
-# ── Cached ML Model (loaded once at first request) ──────────────────────
-_cached_model = None
+# ── Cached estimator and provenance (loaded once at first request) ─────
+_cached_model: LoadedModel | None = None
 
 def _get_ml_model():
     """Load and cache the ML model. Downloads once, reuses forever."""
@@ -112,11 +112,15 @@ def _get_ml_model():
     if _cached_model is not None:
         return _cached_model
     
-    # 1. Try loading local fallback pickle artifact (`risk_forecaster.pkl`)
-    # 2. Try authenticating with DagsHub via DAGSHUB_USER_TOKEN and loading from Registry:
-    _cached_model = mlflow.sklearn.load_model("models:/ClimaSentinel_RiskForecaster/latest")
+    # 1. In development/staging, a compatible local Pipeline may be used.
+    # 2. Otherwise resolve an explicit version pin or the configured alias.
+    # 3. Load, validate, and cache that exact concrete registered version.
     return _cached_model
 ```
+
+An explicit `MLFLOW_MODEL_VERSION` pin has first precedence. When no pin is configured, the backend resolves `MLFLOW_MODEL_ALIAS`, which defaults to `champion`, to one concrete version and loads that exact version URI. It never automatically selects the numerically highest model version. Production also skips the bundled local pickle and returns HTTP 503 when registry selection, loading, preprocessing, prediction, or spread calculation fails. Development and staging may use the local artifact or the explicitly identified `heuristic_fallback`.
+
+Successful forecast responses expose `prediction_source` and `model_version`; `model_version` is always the concrete version actually loaded, even when selection began from an alias. After the existing promotion quality gates pass, `model/promote.py` assigns the configured alias to the approved version.
 
 ### 4.2 Mathematical Derivation of Confidence Intervals (Tree Variance)
 A standard `.predict(X)` call on a Random Forest returns the mean prediction across all trees. However, ClimaSentinel provides true **Explainable AI** by extracting the individual predictions from all 100 decision trees to measure model variance and compute the 95% confidence interval ($1.96 \times \sigma$).
@@ -166,6 +170,8 @@ To successfully deploy and run the ML forecast module in any environment (Local,
 | :--- | :--- | :--- |
 | `DAGSHUB_USER_TOKEN` | Authentication token for DagsHub MLflow server | `***` (DagsHub Settings ➔ Tokens) |
 | `DAGSHUB_USERNAME` | Repository owner username | `Selim-Abouleila` |
+| `MLFLOW_MODEL_VERSION` | Optional exact registered-model version; overrides the alias | Blank or `18` |
+| `MLFLOW_MODEL_ALIAS` | Registry alias used when no exact version is pinned | `champion` |
 | `GCP_PROJECT_ID` | GCP Project ID for BigQuery Feature Store | `climasentinel` |
 | `BQ_DATASET` | Target BigQuery dataset containing mart tables | `mart` |
 
@@ -173,6 +179,8 @@ To successfully deploy and run the ML forecast module in any environment (Local,
 * **Run Feature Extraction**: `python -m model.extract_data`
 * **Retrain & Log Model to DagsHub**: `python -m model.train`
 * **Test FastAPI Inference Endpoint**: `curl http://127.0.0.1:8000/data/city/paris_fr/forecast`
+
+The model-serving integration test uses a temporary SQLite-backed MLflow Registry, registers two real sklearn Pipelines, assigns `champion` to the older version, and invokes the real FastAPI route. This proves alias resolution, exact-version artifact loading, preprocessing, multi-output prediction, per-tree spread, explicit pin precedence, caching, and production failure for a missing alias without using DagsHub, BigQuery, GCP, Railway, secrets, or network access.
 
 ### 6.3 Audit Logs Example (Healthy Execution)
 ```text
