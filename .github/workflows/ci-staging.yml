@@ -58,6 +58,21 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install model promotion dependencies
+        run: pip install mlflow dagshub
+
+      - name: Run model quality gates and assign champion
+        run: python model/promote.py
+        env:
+          DAGSHUB_USERNAME: ${{ secrets.DAGSHUB_USERNAME }}
+          DAGSHUB_USER_TOKEN: ${{ secrets.DAGSHUB_USER_TOKEN || secrets.DAGSHUB_TOKEN }}
+          MLFLOW_MODEL_ALIAS: champion
+
       - name: Install Railway CLI
         run: npm install -g @railway/cli
 
@@ -74,10 +89,6 @@ jobs:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
           RAILWAY_PROJECT_ID: ${{ secrets.RAILWAY_PROJECT_ID }}
           RAILWAY_SERVICE_ID: ${{ secrets.RAILWAY_FRONTEND_SERVICE_ID }}
-
-      # TODO: Deploy candidate model from MLflow registry
-      - name: Deploy candidate model (placeholder)
-        run: echo "🤖 Deploy candidate model from MLflow registry to staging"
 
   e2e-test:
     name: E2E Playwright Test
