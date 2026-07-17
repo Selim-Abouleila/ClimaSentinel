@@ -34,7 +34,7 @@ signals_with_velocity AS (
         
         -- River velocity: (River tomorrow - River today) / River today
         CASE 
-            WHEN river_discharge_m3s IS NOT NULL AND river_discharge_m3s > 0 THEN
+            WHEN river_discharge_m3s IS NOT NULL AND river_discharge_m3s > 50 THEN
                 COALESCE(
                     (LEAD(river_discharge_m3s) OVER(PARTITION BY city_id ORDER BY date) - river_discharge_m3s) / river_discharge_m3s,
                     0
