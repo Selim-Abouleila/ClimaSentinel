@@ -87,7 +87,8 @@ models:
     description: >
       Single source of truth Feature Store for MLOps training and serving. Pre-computes 
       3-day future weather forecast trajectories (temperature, precipitation, wind speed) 
-      and aligns them with the current tipping score baseline and the 3-day future target variable.
+      and aligns them with the current tipping score baseline and genuine Day +1, Day +2,
+      and Day +3 future component-score targets.
     columns:
       - name: city_id
         tests:

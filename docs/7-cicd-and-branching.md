@@ -56,7 +56,8 @@ This pipeline re-runs the full test suite, builds the Docker image, and deploys 
 | **Build Docker image** | Builds `climasentinel-backend:staging` |
 | **Deploy backend to Railway** | Uses `railway up --environment staging` with service-specific secrets |
 | **Deploy frontend to Railway** | Uses `railway up --environment staging` for the frontend service |
-| **Deploy candidate model** | Deploys the latest candidate model version from the MLflow registry to the staging environment for validation |
+| **Train and register model** | Calls the reusable MLOps workflow and returns the exact registered multi-horizon model version |
+| **Promote candidate model** | Runs per-horizon quality gates and assigns `champion` to that exact returned version before Railway deployment and E2E |
 
 **Railway secrets used:** `RAILWAY_TOKEN`, `RAILWAY_PROJECT_ID`, `RAILWAY_SERVICE_ID`, `RAILWAY_FRONTEND_SERVICE_ID` — all injected from the `staging` GitHub environment.
 
@@ -70,7 +71,7 @@ This is the final deployment gate. It runs model promotion quality gates before 
 
 | Step | Description |
 |---|---|
-| **Model promotion gates** | Executes `model/promote.py`, validates the existing candidate against **R2 >= 0.35** and **MAE <= 7.0**, retains the `Production` stage transition for compatibility, and assigns the configured alias (default `champion`) to the approved version. Serving resolves this alias or an explicit version pin; it never selects the newest version automatically. |
+| **Model promotion gates** | Trains first, then executes `model/promote.py` against the exact returned version. Every Day +1/+2/+3 model must satisfy **R2 >= 0.35** and **MAE <= 7.0** before the configured alias (default `champion`) moves. Serving resolves that alias or an explicit version pin. |
 | **Deploy backend to Railway** | `railway up --environment production` — only runs if the quality gates pass. |
 | **Deploy frontend to Railway** | `railway up --environment production` for the frontend service. |
 
@@ -82,7 +83,7 @@ This is the final deployment gate. It runs model promotion quality gates before 
 
 ### Pipeline 4 — MLOps Training Pipeline (`ci-mlops.yml`)
 
-**Trigger:** Push to `main` *or* manual dispatch (`workflow_dispatch`).
+**Trigger:** Reusable calls from staging/production deployment workflows, or manual dispatch (`workflow_dispatch`).
 
 This pipeline handles the full ML lifecycle: data extraction, versioning, training, and model registration.
 
@@ -92,11 +93,11 @@ This pipeline handles the full ML lifecycle: data extraction, versioning, traini
 | **Set up Python 3.11** | Installs ML stack: `scikit-learn`, `mlflow`, `dagshub`, `dvc`, `pandas`, etc. |
 | **Authenticate with GCP** | Uses `google-github-actions/auth@v2` with `GCP_SA_KEY` secret |
 | **Configure DVC remote** | Sets up DagsHub DVC remote with basic auth (`DAGSHUB_USERNAME`, `DAGSHUB_TOKEN`) |
-| **Extract data from BigQuery** | Runs `python model/extract_data.py` to snapshot the latest mart data |
+| **Extract data from BigQuery** | Runs `python -m model.extract_data` to snapshot the latest mart data |
 | **Track with DVC & push** | `dvc add model/data/training_snapshot.csv` → `dvc push` to DagsHub storage |
 | **Commit DVC version** | Auto-commits the updated `.dvc` file back to Git with `[skip ci]` to avoid infinite loops |
 | **Validate MLflow secrets** | Checks that `MLFLOW_TRACKING_URI` is set before training |
-| **Train & register model** | Runs `python -m model.train` which trains the shared multi-output preprocessing/model pipeline and registers it in the MLflow Model Registry on DagsHub |
+| **Train & register model** | Trains 15 independent outputs (five components × three horizons), registers one atomic MLflow artifact, and returns its exact concrete version to promotion |
 
 **Every training run is traceable to:**
 - A **DVC data version** (MD5 hash read from the `.dvc` metadata file)

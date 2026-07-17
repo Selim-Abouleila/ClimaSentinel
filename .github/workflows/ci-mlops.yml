@@ -1,15 +1,18 @@
 name: MLOps Training Pipeline
 
 on:
-  push:
-    branches:
-      - main
-      - staging
+  workflow_call:
+    outputs:
+      model_version:
+        description: Exact registered model version produced by this run
+        value: ${{ jobs.train-and-register.outputs.model_version }}
   workflow_dispatch:
 
 jobs:
   train-and-register:
     runs-on: ubuntu-latest
+    outputs:
+      model_version: ${{ steps.train-model.outputs.model_version }}
     permissions:
       contents: write
     steps:
@@ -41,7 +44,7 @@ jobs:
         env:
           GCP_PROJECT_ID: clima-sentinel
           BQ_DATASET: mart
-        run: python model/extract_data.py
+        run: python -m model.extract_data
         
       - name: Track with DVC & Push to DagsHub
         run: |
@@ -67,6 +70,7 @@ jobs:
           MLFLOW_TRACKING_URI: ${{ secrets.MLFLOW_TRACKING_URI }}
 
       - name: Train Model & Log to MLflow
+        id: train-model
         env:
           DAGSHUB_USERNAME: ${{ secrets.DAGSHUB_USERNAME }}
           DAGSHUB_USER_TOKEN: ${{ secrets.DAGSHUB_TOKEN }}

@@ -6,7 +6,7 @@ This document details the complete end-to-end architecture, mathematics, data en
 
 ## 📐 1. Architectural Overview & Objectives
 
-While the primary ClimaSentinel dashboard provides real-time situational awareness ($t_0$) based on factual, validated environmental signals, the **AI Tipping Forecast** module serves as an advanced predictive extension ($t_{+3\text{ days}}$). 
+While the primary ClimaSentinel dashboard provides real-time situational awareness ($t_0$) based on factual, validated environmental signals, the **AI Tipping Forecast** module serves as an advanced predictive extension for $t_{+1}$, $t_{+2}$, and $t_{+3\text{ days}}$.
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
@@ -28,7 +28,7 @@ While the primary ClimaSentinel dashboard provides real-time situational awarene
 ┌─────────────────────────────────────────────────────────────────────────┐
 │                    4. IN-MEMORY CACHED MODEL SERVING                    │
 │    FastAPI (`main.py`) loads once from DagsHub Registry / Pickle Fallback│
-│    Computes 95% Confidence Intervals using Tree Estimator Variance       │
+│    Computes tree-spread uncertainty bands from estimator variance       │
 └────────────────────────────────────┬────────────────────────────────────┘
                                      ▼
 ┌─────────────────────────────────────────────────────────────────────────┐
@@ -38,9 +38,9 @@ While the primary ClimaSentinel dashboard provides real-time situational awarene
 ```
 
 ### Key Design Principles:
-1. **Predictive Granularity**: Predicting a single global tipping score obscures the specific operational threats. The model utilizes a `MultiOutputRegressor` to simultaneously forecast 5 distinct sub-scores: `heat_score`, `wind_score`, `rain_score`, `air_score`, and `river_score`.
+1. **Predictive Granularity**: The `MultiOutputRegressor` fits 15 independent Random Forest outputs: five risk components (`heat`, `wind`, `rain`, `air`, and `river`) for each genuine Day +1, Day +2, and Day +3 target. The requested horizon selects its own five-output block; shorter horizons are never synthesized by forward-filling Day +3 inputs.
 2. **True MLflow MLOps Integration**: Full experiment tracking, DVC data versioning, hyperparameter logging, and model registry via **DagsHub**.
-3. **Uncertainty Quantification**: Decision makers need to know when a model is confident vs. uncertain. Instead of point estimates, the backend inspects all $N=100$ individual tree estimators in the Random Forest to dynamically compute 95% Confidence Intervals (CI).
+3. **Uncertainty Indication**: Decision makers need to know when trees disagree. The backend inspects all $N=100$ tree estimators and reports a $1.96 \times$ tree-standard-deviation band. This is a useful model-spread signal, but it is not a calibrated 95% prediction interval and does not promise 95% empirical coverage.
 4. **Serverless & Sleeping Optimization**: To prevent high latency and high cloud costs in ephemeral/sleeping environments (Railway/Cloud Run), the model artifact is downloaded exactly once on app startup and cached globally in memory.
 
 ---
@@ -61,20 +61,19 @@ The extraction script connects to BigQuery via Google Cloud Python SDK and runs 
 # Handle missing river discharge gracefully (impute 0 for non-river cities)
 df['river_discharge_m3s'] = df['river_discharge_m3s'].fillna(0).infer_objects(copy=False)
 
-# Strict dropna across ALL target variables to prevent corrupting MultiOutput training
-df = df.dropna(subset=[
-    'current_tipping_score', 
-    'future_tipping_score_3d', 
-    'future_heat_score_3d', 
-    'future_wind_score_3d',
-    'future_rain_score_3d',
-    'future_air_score_3d',
-    'future_river_score_3d',
-    'temp_forecast_plus_3d'
-])
+# Each feature-store date is joined to score history at exact +1, +2, and +3
+# calendar dates, producing five component targets per horizon.
+df = df.dropna(subset=["current_tipping_score", *TARGET_COLUMNS])
 ```
 
 The resulting `model/data/training_snapshot.csv` is tracked by **DVC** (`.dvc` file committed to Git), ensuring that every model run can be traced back to the precise immutable data snapshot it was trained on.
+
+The horizon labels and purged evaluation split are point-in-time correct for the
+observed score dates. However, the current feature store retains the latest
+weather forecast available for each valid date rather than every historical
+forecast vintage. Per-horizon test metrics can therefore be optimistic until
+the ingestion layer stores both forecast issue time and valid time. Promotion
+gates all three horizons, but it does not by itself guarantee live accuracy.
 
 ---
 
@@ -83,16 +82,17 @@ The resulting `model/data/training_snapshot.csv` is tracked by **DVC** (`.dvc` f
 ### 3.1 Multi-Output Random Forest Regressor
 Because the sub-scores represent distinct environmental dynamics (e.g., thermal velocity vs. hydrological flow), we wrap a Scikit-Learn `RandomForestRegressor` inside a `MultiOutputRegressor`.
 
-$$\mathbf{y} = \begin{bmatrix} y_{\text{heat}} \\ y_{\text{wind}} \\ y_{\text{rain}} \\ y_{\text{air}} \\ y_{\text{river}} \end{bmatrix} = \mathbf{f}(\mathbf{X})$$
+$$\mathbf{y} = \begin{bmatrix} \mathbf{y}_{+1} \\ \mathbf{y}_{+2} \\ \mathbf{y}_{+3} \end{bmatrix}, \qquad \mathbf{y}_{+h} = \begin{bmatrix} y_{\text{heat},h} \\ y_{\text{wind},h} \\ y_{\text{rain},h} \\ y_{\text{air},h} \\ y_{\text{river},h} \end{bmatrix}$$
 
 * **Hyperparameters**: `n_estimators=100`, `max_depth=10`, `random_state=42`.
 * **Shared Preprocessing**: Training and serving both use `backend/app/ml_pipeline.py`. Its fitted `ColumnTransformer` median-imputes numeric fields and one-hot encodes `city_id` against the same fixed list of 10 monitored European cities.
+* **Held-Out Evaluation**: The split is made on whole calendar dates, and the three days before the test window are purged so training labels cannot overlap the held-out forecast period.
 
 ### 3.2 MLflow & DagsHub Experiment Tracking
 During execution, `train.py` initializes a connection to DagsHub (`https://dagshub.com/Selim-Abouleila/ClimaSentinel.mlflow`). It logs:
-* **Parameters**: `n_estimators`, `max_depth`, `random_state`, `dvc_data_hash`, `git_commit`, `feature_schema_version`.
+* **Parameters**: `n_estimators`, `max_depth`, `random_state`, `dvc_data_hash`, `git_commit`, `feature_schema_version`, and `forecast_horizons=1,2,3`.
 * **Global Metrics**: Overall Mean Absolute Error (`mae`), Mean Squared Error (`mse`), and Global R² (`r2`).
-* **Granular Sub-Score Metrics**: `r2_heat_score`, `r2_wind_score`, `r2_rain_score`, `r2_air_score`, `r2_river_score`.
+* **Per-Horizon Metrics**: `mae_d1/d2/d3` and `r2_d1/d2/d3`, plus component metrics such as `r2_heat_score_d1` and `mae_heat_score_d1`. Promotion requires every horizon average and every individual component to pass the R² and MAE thresholds, preventing easy or constant targets from hiding a weak heat, wind, rain, air, or river model.
 * **Model Artifact**: The full Scikit-Learn preprocessing/model pipeline is logged to the MLflow artifact repository as `random_forest_model` and registered in the Model Registry under the name **`ClimaSentinel_RiskForecaster`**. MLflow receives a signature and representative input example for the raw, pre-preprocessing feature DataFrame.
 
 ---
@@ -120,17 +120,19 @@ def _get_ml_model():
 
 An explicit `MLFLOW_MODEL_VERSION` pin has first precedence. When no pin is configured, the backend resolves `MLFLOW_MODEL_ALIAS`, which defaults to `champion`, to one concrete version and loads that exact version URI. It never automatically selects the numerically highest model version. Production also skips the bundled local pickle and returns HTTP 503 when registry selection, loading, preprocessing, prediction, or spread calculation fails. Development and staging may use the local artifact or the explicitly identified `heuristic_fallback`.
 
-Successful forecast responses expose `prediction_source` and `model_version`; `model_version` is always the concrete version actually loaded, even when selection began from an alias. After the existing promotion quality gates pass, `model/promote.py` assigns the configured alias to the approved version.
+Successful forecast responses expose `prediction_source` and `model_version`; `model_version` is always the concrete version actually loaded, even when selection began from an alias. `horizon_days` selects the corresponding five fitted outputs from that atomic 15-output artifact. After every horizon passes the quality gates, `model/promote.py` assigns the configured alias to the exact version returned by the training job.
 
-### 4.2 Mathematical Derivation of Confidence Intervals (Tree Variance)
-A standard `.predict(X)` call on a Random Forest returns the mean prediction across all trees. However, ClimaSentinel provides true **Explainable AI** by extracting the individual predictions from all 100 decision trees to measure model variance and compute the 95% confidence interval ($1.96 \times \sigma$).
+### 4.2 Tree-Spread Uncertainty Bands
+A standard `.predict(X)` call on a Random Forest returns the mean prediction across all trees. ClimaSentinel extracts predictions from all 100 trees to expose model disagreement and computes the displayed band as $1.96 \times \sigma$. Because Random Forest trees are correlated and the band has not been calibrated on held-out coverage, it must not be interpreted as a statistically calibrated confidence or prediction interval.
 
 ```python
-# Extract individual estimator predictions across the MultiOutput structure
+# Extract tree predictions across the selected five-output horizon block.
+regressor = pipeline.named_steps["regressor"]
+horizon_estimators = regressor.estimators_[horizon_slice]
 all_tree_preds = []
-for est in model.estimators_: # 5 estimators (one for each sub-score)
-    # Each estimator is a RandomForestRegressor containing 100 DecisionTreeRegressors
-    sub_tree_preds = [tree.predict(X_array)[0] for tree in est.estimators_]
+for forest in horizon_estimators:
+    # Each output has its own 100-tree RandomForestRegressor.
+    sub_tree_preds = [tree.predict(X_array)[0] for tree in forest.estimators_]
     all_tree_preds.append(sub_tree_preds)
 
 # all_tree_preds is shape (5, 100)
@@ -145,7 +147,7 @@ for i, name in enumerate(sub_score_names):
     ci_upper = min(100.0, round(mean_val + margin, 1))
 ```
 
-* **Honest Uncertainty**: If the trees disagree heavily (e.g., high volatility in air quality or extreme storm outliers), the confidence margin expands accordingly (e.g., $\pm 36.4$). If the trees are completely aligned, the interval tightens.
+* **Tree disagreement**: If the trees disagree heavily, the displayed margin expands; if they align, it tightens. It describes estimator spread, not all sources of forecast error.
 
 ---
 
@@ -157,7 +159,7 @@ To prevent unnecessary API calls and server wake-ups, the Next.js forecast page 
 1. **Empty State (Default)**: On initial page load, no city is selected. The user is presented with a sleek prompt ("Select a Region") and a map pin icon, ensuring zero backend load until explicitly requested.
 2. **Calculating State (Active Inference)**: When a city pill is clicked, the UI enters a loading state displaying an animated spinner and contextual engineering text:
    > *"Calculating Forecast — Running real-time inference for **Paris, FR** across 100 decision tree estimators and computing 95% confidence intervals."*
-3. **Results State**: Displays the estimated total risk score, forecasted primary driver, baseline deltas, 3-day Open-Meteo weather trajectory, and the 5 granular sub-score cards complete with visual uncertainty progress bars.
+3. **Results State**: Displays the selected horizon's estimated total risk, primary driver, baseline delta, weather trajectory, and five granular sub-score cards with uncertainty intervals.
 
 ---
 
@@ -180,7 +182,7 @@ To successfully deploy and run the ML forecast module in any environment (Local,
 * **Retrain & Log Model to DagsHub**: `python -m model.train`
 * **Test FastAPI Inference Endpoint**: `curl http://127.0.0.1:8000/data/city/paris_fr/forecast`
 
-The model-serving integration test uses a temporary SQLite-backed MLflow Registry, registers two real sklearn Pipelines, assigns `champion` to the older version, and invokes the real FastAPI route. This proves alias resolution, exact-version artifact loading, preprocessing, multi-output prediction, per-tree spread, explicit pin precedence, caching, and production failure for a missing alias without using DagsHub, BigQuery, GCP, Railway, secrets, or network access.
+The model-serving integration test uses a temporary SQLite-backed MLflow Registry, registers two real 15-output sklearn Pipelines, assigns `champion` to the older version, and invokes the real FastAPI route for Day +1, +2, and +3. This proves horizon selection, alias resolution, exact-version loading, preprocessing, per-tree spread, pin precedence, caching, and production failure for a missing alias without external services.
 
 ### 6.3 Audit Logs Example (Healthy Execution)
 ```text

@@ -104,7 +104,7 @@ Exposes the five individual tipping sub-scores (Heat, Wind, Rain, Air Quality, R
 
 ### 5. `mart_ml_feature_store` (Table)
 
-Single source of truth Feature Store for MLOps training and serving. Pre-computes 3-day future weather forecast trajectories (temperature, precipitation, wind speed) and aligns them with the current tipping score baseline and the 3-day future target variable.
+Single source of truth Feature Store for MLOps training and serving. Pre-computes three-day weather trajectories and aligns them with separate Day +1, Day +2, and Day +3 component-score targets.
 
 *   **Materialization:** **Table** (partitioned by `date`).
 *   **Sources:** `stg_city_signal_input` (Silver layer) + `mart_city_score_history` (Gold layer).
@@ -115,7 +115,7 @@ Single source of truth Feature Store for MLOps training and serving. Pre-compute
 | **Current weather (t₀)** | `temperature_2m_max`, `temperature_2m_min`, `precipitation_sum_mm`, `wind_speed_10m_max`, `european_aqi_max`, `river_discharge_m3s` |
 | **Forecast trajectory (t+1…t+3)** | `temp_forecast_plus_1d/2d/3d`, `precip_forecast_plus_1d/2d/3d`, `wind_forecast_plus_1d/2d/3d` |
 | **Baseline** | `current_tipping_score` (from `mart_city_score_history`) |
-| **Targets (Multi-Output)** | `future_heat_score_3d`, `future_wind_score_3d`, `future_rain_score_3d`, `future_air_score_3d`, `future_river_score_3d`, `future_tipping_score_3d` |
+| **Targets (Multi-Output)** | Five component targets plus the total target at each suffix: `*_1d`, `*_2d`, and `*_3d` |
 
 ---
 
@@ -140,4 +140,3 @@ The following tests are defined in `_mart_models.yml` and run automatically duri
 *   `zone_name`: `not_null` and `unique` (ensures exact aggregation)
 *   `current_tipping_score`: `not_null` (on `mart_city_score_current`, `mart_city_score_detail`)
 *   `city_id`: `not_null` and `unique` (on `mart_city_score_current`, `mart_city_score_detail`)
-

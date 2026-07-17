@@ -2,6 +2,8 @@ import os
 import pandas as pd
 from google.cloud import bigquery
 
+from backend.app.ml_pipeline import FEATURE_COLUMNS, TARGET_COLUMNS
+
 # We expect GCP_PROJECT_ID to be injected by Github Actions
 project_id = os.getenv("GCP_PROJECT_ID", "climasentinel")
 dataset = os.getenv("BQ_DATASET", "mart")
@@ -9,12 +11,36 @@ staging_dataset = "stg"
 
 def extract_data():
     client = bigquery.Client()
-    
-    # Pull pre-computed feature vectors directly from our dbt materialized Feature Store
+
+    feature_projection = ",\n                ".join(
+        f"f.`{column}`" for column in FEATURE_COLUMNS
+    )
+    target_projection = ",\n                ".join(
+        f"s{horizon}.`{target.removeprefix('future_').removesuffix(f'_{horizon}d')}` "
+        f"AS `{target}`"
+        for horizon in (1, 2, 3)
+        for target in TARGET_COLUMNS
+        if target.endswith(f"_{horizon}d")
+    )
+
+    # Join score history by exact target date so Day +1/+2/+3 labels are
+    # available even before the expanded dbt mart is materialized.
     query = f"""
-        SELECT *
-        FROM `{project_id}.{dataset}.mart_ml_feature_store`
-        ORDER BY city_id, date
+        SELECT
+                f.date,
+                {feature_projection},
+                {target_projection}
+        FROM `{project_id}.{dataset}.mart_ml_feature_store` f
+        LEFT JOIN `{project_id}.{dataset}.mart_city_score_history` s1
+          ON s1.city_id = f.city_id
+         AND s1.date = DATE_ADD(f.date, INTERVAL 1 DAY)
+        LEFT JOIN `{project_id}.{dataset}.mart_city_score_history` s2
+          ON s2.city_id = f.city_id
+         AND s2.date = DATE_ADD(f.date, INTERVAL 2 DAY)
+        LEFT JOIN `{project_id}.{dataset}.mart_city_score_history` s3
+          ON s3.city_id = f.city_id
+         AND s3.date = DATE_ADD(f.date, INTERVAL 3 DAY)
+        ORDER BY f.city_id, f.date
     """
     
     print("Extracting data from BigQuery Feature Store...")
@@ -36,8 +62,10 @@ def extract_data():
     # If a city has absolutely NO AQI data, fallback to the global median to prevent crashes
     df[aqi_cols] = df[aqi_cols].fillna(df[aqi_cols].median())
 
-    # Drop rows where the future target is null (the final 3 days of the timeline)
-    df = df.dropna(subset=['current_tipping_score', 'future_tipping_score_3d', 'future_heat_score_3d', 'temp_forecast_plus_3d'])
+    # Drop rows without the complete horizon-specific target matrix.
+    df = df.dropna(
+        subset=["current_tipping_score", "temp_forecast_plus_3d", *TARGET_COLUMNS]
+    )
     
     output_path = "model/data/training_snapshot.csv"
     os.makedirs("model/data", exist_ok=True)
