@@ -13,7 +13,10 @@ from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder
 
 
-FEATURE_SCHEMA_VERSION = "1"
+FEATURE_SCHEMA_VERSION = "2"
+
+FORECAST_HORIZONS = (1, 2, 3)
+TARGET_SCORE_NAMES = ("heat", "wind", "rain", "air", "river")
 
 NUMERIC_FEATURE_COLUMNS = (
     "current_tipping_score",
@@ -50,13 +53,21 @@ NUMERIC_FEATURE_COLUMNS = (
 CATEGORICAL_FEATURE_COLUMNS = ("city_id",)
 FEATURE_COLUMNS = NUMERIC_FEATURE_COLUMNS + CATEGORICAL_FEATURE_COLUMNS
 
-TARGET_COLUMNS = (
-    "future_heat_score_3d",
-    "future_wind_score_3d",
-    "future_rain_score_3d",
-    "future_air_score_3d",
-    "future_river_score_3d",
+TARGET_COLUMNS_BY_HORIZON = {
+    horizon: tuple(
+        f"future_{score_name}_score_{horizon}d"
+        for score_name in TARGET_SCORE_NAMES
+    )
+    for horizon in FORECAST_HORIZONS
+}
+
+TARGET_COLUMNS = tuple(
+    target
+    for horizon in FORECAST_HORIZONS
+    for target in TARGET_COLUMNS_BY_HORIZON[horizon]
 )
+
+OUTPUTS_PER_HORIZON = len(TARGET_SCORE_NAMES)
 
 ALL_CITIES = (
     "amsterdam_nl",
@@ -74,6 +85,52 @@ ALL_CITIES = (
 
 class ModelCompatibilityError(ValueError):
     """Raised when a serialized estimator is not the shared fitted pipeline."""
+
+
+def output_slice_for_horizon(horizon_days: int) -> slice:
+    """Return the five-output slice belonging to one forecast horizon."""
+    if horizon_days not in FORECAST_HORIZONS:
+        raise ModelCompatibilityError(
+            f"Unsupported forecast horizon {horizon_days}; expected one of "
+            f"{FORECAST_HORIZONS}"
+        )
+    start = FORECAST_HORIZONS.index(horizon_days) * OUTPUTS_PER_HORIZON
+    return slice(start, start + OUTPUTS_PER_HORIZON)
+
+
+def chronological_purged_split(
+    features: pd.DataFrame,
+    targets: pd.DataFrame,
+    dates: pd.Series,
+    test_fraction: float = 0.2,
+    purge_days: int = max(FORECAST_HORIZONS),
+):
+    """Split on whole dates and purge targets overlapping the test window."""
+    parsed_dates = pd.to_datetime(dates, errors="raise")
+    unique_dates = pd.Index(parsed_dates.unique()).sort_values()
+    if len(unique_dates) < 6:
+        raise ValueError("At least six distinct dates are required for a purged split")
+    if not 0.0 < test_fraction < 1.0:
+        raise ValueError("test_fraction must be strictly between zero and one")
+
+    split_index = min(
+        len(unique_dates) - 1,
+        max(1, int(len(unique_dates) * (1.0 - test_fraction))),
+    )
+    test_start = pd.Timestamp(unique_dates[split_index])
+    purge_boundary = test_start - pd.Timedelta(purge_days, unit="D")
+    train_mask = parsed_dates < purge_boundary
+    test_mask = parsed_dates >= test_start
+    if not train_mask.any() or not test_mask.any():
+        raise ValueError("Purged chronological split produced an empty partition")
+
+    return (
+        features.loc[train_mask].reset_index(drop=True),
+        features.loc[test_mask].reset_index(drop=True),
+        targets.loc[train_mask].reset_index(drop=True),
+        targets.loc[test_mask].reset_index(drop=True),
+        test_start,
+    )
 
 
 def prepare_feature_frame(
@@ -217,8 +274,9 @@ def validate_fitted_pipeline(model: Any) -> Pipeline:
 def predict_with_ensemble_spread(
     model: Any,
     raw_features: pd.DataFrame | pd.Series | Mapping[str, Any],
+    horizon_days: int | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Return point predictions and per-output tree standard deviations."""
+    """Return predictions and tree spread for all outputs or one horizon."""
     pipeline = validate_fitted_pipeline(model)
     feature_frame = prepare_feature_frame(raw_features)
     expected_shape = (len(feature_frame), len(TARGET_COLUMNS))
@@ -267,4 +325,8 @@ def predict_with_ensemble_spread(
     if not np.isfinite(predictions).all() or not np.isfinite(ensemble_stds).all():
         raise ModelCompatibilityError("Model predictions and spread must be finite")
 
-    return predictions, ensemble_stds
+    if horizon_days is None:
+        return predictions, ensemble_stds
+
+    horizon_slice = output_slice_for_horizon(horizon_days)
+    return predictions[:, horizon_slice], ensemble_stds[:, horizon_slice]
