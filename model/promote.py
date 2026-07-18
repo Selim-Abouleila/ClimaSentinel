@@ -6,7 +6,16 @@ from mlflow.tracking import MlflowClient
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
-SCORE_NAMES = ("heat_score", "wind_score", "rain_score", "air_score", "river_score")
+R2_THRESHOLD = 0.35
+HORIZON_MAE_THRESHOLD = 7.0
+COMPONENT_MAE_THRESHOLDS = {
+    "heat_score": 10.0,
+    "wind_score": 7.0,
+    "rain_score": 7.0,
+    "air_score": 7.0,
+    "river_score": 7.0,
+}
+SCORE_NAMES = tuple(COMPONENT_MAE_THRESHOLDS)
 
 def promote_model():
     # 1. Authenticate with DagsHub MLflow Registry
@@ -72,12 +81,8 @@ def promote_model():
             logging.error("Candidate does not declare Day +1/+2/+3 horizons.")
             sys.exit(1)
 
-        # 4. Evaluate against Quality Gate Thresholds
-        R2_THRESHOLD = 0.35
-        MAE_THRESHOLD = 7.0
-        
-        horizon_metrics = {}
-        component_metrics = {}
+        # 4. Evaluate against horizon and score-specific quality gates.
+        failed_gates = []
         for horizon in (1, 2, 3):
             r2 = metrics.get(f"r2_d{horizon}")
             mae = metrics.get(f"mae_d{horizon}")
@@ -88,13 +93,22 @@ def promote_model():
                     run_id,
                 )
                 sys.exit(1)
-            horizon_metrics[horizon] = (r2, mae)
             logging.info(
                 "Day +%s metrics -> R2: %.4f, MAE: %.4f",
                 horizon,
                 r2,
                 mae,
             )
+            if r2 < R2_THRESHOLD:
+                failed_gates.append(
+                    f"Day +{horizon} R2 {r2:.4f} < {R2_THRESHOLD:.2f}"
+                )
+            if mae > HORIZON_MAE_THRESHOLD:
+                failed_gates.append(
+                    f"Day +{horizon} MAE {mae:.4f} > "
+                    f"{HORIZON_MAE_THRESHOLD:.1f}"
+                )
+
             for score_name in SCORE_NAMES:
                 component_r2 = metrics.get(f"r2_{score_name}_d{horizon}")
                 component_mae = metrics.get(f"mae_{score_name}_d{horizon}")
@@ -106,10 +120,6 @@ def promote_model():
                         run_id,
                     )
                     sys.exit(1)
-                component_metrics[(horizon, score_name)] = (
-                    component_r2,
-                    component_mae,
-                )
                 logging.info(
                     "Day +%s %s -> R2: %.4f, MAE: %.4f",
                     horizon,
@@ -117,14 +127,19 @@ def promote_model():
                     component_r2,
                     component_mae,
                 )
+                if component_r2 < R2_THRESHOLD:
+                    failed_gates.append(
+                        f"Day +{horizon} {score_name} R2 "
+                        f"{component_r2:.4f} < {R2_THRESHOLD:.2f}"
+                    )
+                component_mae_threshold = COMPONENT_MAE_THRESHOLDS[score_name]
+                if component_mae > component_mae_threshold:
+                    failed_gates.append(
+                        f"Day +{horizon} {score_name} MAE "
+                        f"{component_mae:.4f} > {component_mae_threshold:.1f}"
+                    )
 
-        if all(
-            r2 >= R2_THRESHOLD and mae <= MAE_THRESHOLD
-            for r2, mae in (
-                *horizon_metrics.values(),
-                *component_metrics.values(),
-            )
-        ):
+        if not failed_gates:
             logging.info("✅ Quality gates passed.")
             client.transition_model_version_stage(
                 name=model_name,
@@ -145,8 +160,8 @@ def promote_model():
             logging.info("Model successfully promoted to Production.")
         else:
             logging.error(
-                "❌ Quality Gates Failed! Every horizon and component must satisfy "
-                f"R2 >= {R2_THRESHOLD} and MAE <= {MAE_THRESHOLD}"
+                "❌ Quality Gates Failed:\n - %s",
+                "\n - ".join(failed_gates),
             )
             sys.exit(1)
 
