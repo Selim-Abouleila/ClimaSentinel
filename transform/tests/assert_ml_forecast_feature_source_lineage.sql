@@ -14,7 +14,7 @@ WITH all_source_signal AS (
 
 source_signal AS (
     SELECT *
-    FROM source_signal
+    FROM all_source_signal
     WHERE horizon_days BETWEEN 0 AND 4
 ),
 
@@ -25,7 +25,7 @@ source_groups AS (
         forecast_origin_date,
         MIN(ingested_at_utc) AS ingested_at_utc,
         ANY_VALUE(forecast_origin_time_zone) AS forecast_origin_time_zone
-    FROM all_source_signal
+    FROM source_signal
     GROUP BY ingestion_run_id, city_id, forecast_origin_date
 ),
 
