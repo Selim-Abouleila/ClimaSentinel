@@ -1,0 +1,172 @@
+version: 2
+
+models:
+  - name: stg_weather_forecast_hourly_vintage
+    description: >
+      Point-in-time weather forecast ledger. Preserves one row per ingestion
+      run, city, and valid timestamp instead of retaining only the newest
+      forecast revision. ingested_at_utc is the ingestion-run start timestamp
+      used as ClimaSentinel's availability proxy, not the provider's model
+      initialization time.
+    columns:
+      - name: ingestion_run_id
+        description: UUID identifying the retrieval snapshot.
+        tests: [not_null]
+      - name: ingested_at_utc
+        description: UTC ingestion-run start timestamp used as the snapshot availability proxy.
+        tests: [not_null]
+      - name: forecast_origin_date
+        description: UTC calendar date derived from ingested_at_utc.
+        tests: [not_null]
+      - name: city_id
+        tests: [not_null]
+      - name: valid_ts_utc
+        description: >
+          Raw forecast-valid timestamp. The current ingestion code stores a
+          city-local, offset-free provider timestamp in this UTC-named field;
+          use valid_date for horizon construction until ingestion is corrected.
+        tests: [not_null]
+      - name: valid_date
+        description: Calendar date derived from valid_ts_utc.
+        tests: [not_null]
+      - name: horizon_days
+        description: Exact calendar-day difference between valid_date and forecast_origin_date.
+        tests: [not_null]
+
+  - name: stg_city_daily_weather_vintage
+    description: >
+      Daily weather summaries calculated independently inside each forecast
+      retrieval. Null measurements remain null and per-variable reading counts
+      expose partial responses.
+    columns:
+      - name: ingestion_run_id
+        tests: [not_null]
+      - name: ingested_at_utc
+        tests: [not_null]
+      - name: forecast_origin_date
+        tests: [not_null]
+      - name: city_id
+        tests: [not_null]
+      - name: valid_date
+        tests: [not_null]
+      - name: horizon_days
+        tests: [not_null]
+      - name: hour_count
+        description: Number of deduplicated hourly rows in this run/city/day group.
+        tests: [not_null]
+      - name: distinct_hour_count
+        description: Number of distinct forecast-valid timestamps in the day.
+        tests: [not_null]
+      - name: has_24_hour_coverage
+        description: True only when exactly 24 distinct timestamps are present; DST exceptions remain visible.
+        tests: [not_null]
+      - name: has_complete_weather_values
+        description: True when every weather metric is non-null on every retained hourly row.
+        tests: [not_null]
+
+  - name: stg_air_quality_hourly_vintage
+    description: >
+      Point-in-time air-quality forecast ledger at one row per ingestion run,
+      city, and valid timestamp. Separate retrievals forecasting the same hour
+      remain separate vintages.
+    columns:
+      - name: ingestion_run_id
+        tests: [not_null]
+      - name: ingested_at_utc
+        tests: [not_null]
+      - name: forecast_origin_date
+        tests: [not_null]
+      - name: city_id
+        tests: [not_null]
+      - name: valid_ts_utc
+        tests: [not_null]
+      - name: valid_date
+        tests: [not_null]
+      - name: horizon_days
+        tests: [not_null]
+
+  - name: stg_city_daily_air_quality_vintage
+    description: >
+      Daily air-quality summaries calculated independently inside each
+      retrieval. Missing pollutant readings are not converted to zero.
+    columns:
+      - name: ingestion_run_id
+        tests: [not_null]
+      - name: ingested_at_utc
+        tests: [not_null]
+      - name: forecast_origin_date
+        tests: [not_null]
+      - name: city_id
+        tests: [not_null]
+      - name: valid_date
+        tests: [not_null]
+      - name: horizon_days
+        tests: [not_null]
+      - name: hour_count
+        description: Number of deduplicated hourly rows in this run/city/day group.
+        tests: [not_null]
+      - name: distinct_hour_count
+        tests: [not_null]
+      - name: has_24_hour_coverage
+        description: True only when exactly 24 distinct timestamps are present; DST exceptions remain visible.
+        tests: [not_null]
+      - name: has_complete_air_quality_values
+        description: True when every requested AQ metric is non-null on every retained hourly row.
+        tests: [not_null]
+
+  - name: stg_flood_daily_vintage
+    description: >
+      Point-in-time river-discharge forecast ledger for river-enabled cities.
+      Forecast runs remain distinct even when they share a valid date.
+    columns:
+      - name: ingestion_run_id
+        tests: [not_null]
+      - name: ingested_at_utc
+        tests: [not_null]
+      - name: forecast_origin_date
+        tests: [not_null]
+      - name: city_id
+        tests: [not_null]
+      - name: valid_date
+        tests: [not_null]
+      - name: horizon_days
+        tests: [not_null]
+      - name: has_river_discharge_value
+        tests: [not_null]
+
+  - name: stg_city_signal_vintage
+    description: >
+      Unified point-in-time forecast view anchored on weather. Air quality and
+      flood values join only from the exact same ingestion run, city, and valid
+      date; missing sources remain explicit and never fall back to another
+      vintage. ERA5 is intentionally excluded because it belongs to the later
+      realized-outcome path.
+    columns:
+      - name: ingestion_run_id
+        tests: [not_null]
+      - name: ingested_at_utc
+        tests: [not_null]
+      - name: forecast_origin_date
+        tests: [not_null]
+      - name: city_id
+        tests: [not_null]
+      - name: valid_date
+        tests: [not_null]
+      - name: horizon_days
+        tests: [not_null]
+      - name: weather_hour_count
+        tests: [not_null]
+      - name: weather_has_24_hour_coverage
+        tests: [not_null]
+      - name: has_complete_weather_values
+        tests: [not_null]
+      - name: has_air_quality_forecast
+        description: Whether AQ data from this exact ingestion run and valid date was present.
+        tests: [not_null]
+      - name: has_flood_forecast
+        description: Whether flood data from this exact ingestion run and valid date was present.
+        tests: [not_null]
+      - name: air_quality_ingested_at_utc
+        description: AQ ingestion-run timestamp when a same-vintage AQ row is present; otherwise NULL.
+      - name: flood_ingested_at_utc
+        description: Flood ingestion-run timestamp when a same-vintage flood row is present; otherwise NULL.
