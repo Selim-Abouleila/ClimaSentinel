@@ -1,7 +1,12 @@
 "use client";
 
 import { useState } from "react";
-import { CityForecast } from "@/lib/api";
+import type {
+  CityForecast,
+  ForecastComponentMethod,
+  ForecastValidationStatus,
+  SubScoreForecast,
+} from "@/lib/api";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
 
@@ -48,6 +53,64 @@ function getRiskBand(score: number): RiskBand {
 
 function clampScore(score: number) {
   return Math.min(100, Math.max(0, score));
+}
+
+function getMethodLabel(method: ForecastComponentMethod) {
+  if (method === "learned_model") return "Learned model";
+  if (method === "development_fallback_rule") return "Development fallback";
+  return "Forecast rule";
+}
+
+function getMethodTone(method: ForecastComponentMethod) {
+  if (method === "learned_model") return "learned";
+  if (method === "development_fallback_rule") return "fallback";
+  return "rule";
+}
+
+function getValidationLabel(status: ForecastValidationStatus) {
+  return status === "era5_realized_validated"
+    ? "ERA5-realized validation"
+    : "Not observation-validated";
+}
+
+function hasModelSpread(
+  component: SubScoreForecast,
+): component is SubScoreForecast & {
+  estimated_score: number;
+  ci_lower: number;
+  ci_upper: number;
+  confidence_margin: number;
+} {
+  return (
+    component.available &&
+    component.method === "learned_model" &&
+    component.uncertainty_method === "tree_spread_not_calibrated" &&
+    component.estimated_score !== null &&
+    component.ci_lower !== null &&
+    component.ci_upper !== null &&
+    component.confidence_margin !== null
+  );
+}
+
+const COMPONENT_LABELS: Record<string, string> = {
+  heat: "Heat",
+  heat_score: "Heat",
+  wind: "Wind",
+  wind_score: "Wind",
+  rain: "Rain",
+  rain_score: "Rain",
+  air: "Air quality",
+  air_score: "Air quality",
+  river: "River / flood",
+  river_score: "River / flood",
+};
+
+function formatComponentList(components: string[]) {
+  return components.map((component) => COMPONENT_LABELS[component] ?? component).join(", ");
+}
+
+function humanizeSource(source: string) {
+  return source.replaceAll("_", " ");
 }
 
 export default function ForecastPage() {
@@ -101,6 +164,18 @@ export default function ForecastPage() {
   const targetWind = forecast
     ? forecast.weather_trajectory[`wind_plus_${horizonDays}d`]
     : null;
+  const totalSpread =
+    forecast &&
+    forecast.total_uncertainty_method === "tree_spread_not_calibrated" &&
+    forecast.total_ci_lower !== null &&
+    forecast.total_ci_upper !== null &&
+    forecast.total_confidence_margin !== null
+      ? {
+          lower: forecast.total_ci_lower,
+          upper: forecast.total_ci_upper,
+          margin: forecast.total_confidence_margin,
+        }
+      : null;
 
   return (
     <main className="subpage-shell forecast-page">
@@ -108,14 +183,15 @@ export default function ForecastPage() {
         <header className="subpage-hero">
           <div className="dashboard-eyebrow">
             <span className="dashboard-eyebrow__dot" aria-hidden="true" />
-            Predictive outlook · 1–3 days · 95% intervals
+            Hybrid outlook · 1–3 days · explicit provenance
           </div>
           <div className="subpage-hero__title-row">
             <h1>AI Tipping Forecast</h1>
-            <span className="model-status">Beta model</span>
+            <span className="model-status">Hybrid beta</span>
           </div>
           <p>
-            Explore projected climate stress across ten European cities using a multi-output random forest model.
+            Explore projected climate stress using learned Heat and Rain estimates
+            alongside forecast-rule Wind, Air-quality, and River indicators.
           </p>
         </header>
 
@@ -184,9 +260,10 @@ export default function ForecastPage() {
         >
           <strong>Validation scope</strong>
           <p>
-            Model validation currently covers heat and rainfall only. Wind,
-            air-quality, and river-risk values are forecast-based indicators and
-            are not yet validated against observed outcomes.
+            Heat and rainfall are learned from realized ERA5 outcomes. Wind,
+            air-quality, and river-risk values are forecast-rule estimates and
+            are not yet validated against observed outcomes. Missing source
+            forecasts are shown as unavailable, never as zero risk.
           </p>
         </aside>
 
@@ -198,7 +275,8 @@ export default function ForecastPage() {
             <span className="section-kicker">Awaiting input</span>
             <h2 id="forecast-empty-title">Select a Region</h2>
             <p>
-              Choose a city to calculate its Day +{horizonDays} risk estimate, confidence interval, and factor-level outlook.
+              Choose a city to calculate its Day +{horizonDays} hybrid risk
+              estimate and factor-level outlook.
             </p>
           </section>
         )}
@@ -206,10 +284,11 @@ export default function ForecastPage() {
         {loading && selectedCity && (
           <section className="forecast-state" role="status" aria-live="polite">
             <span className="forecast-loader" aria-hidden="true" />
-            <span className="section-kicker">Model inference</span>
+            <span className="section-kicker">Hybrid inference</span>
             <h2>Calculating Forecast</h2>
             <p>
-              Evaluating {currentCity?.name} at Day +{horizonDays} and calculating 95% confidence intervals.
+              Evaluating {currentCity?.name} at Day +{horizonDays} with the
+              learned model and same-vintage forecast rules.
             </p>
           </section>
         )}
@@ -220,7 +299,8 @@ export default function ForecastPage() {
             <span className="section-kicker">Connection error</span>
             <h2>Forecast Unavailable</h2>
             <p>
-              The model output for {currentCity?.name} could not be retrieved. Check the backend connection and try again.
+              The forecast output for {currentCity?.name} could not be retrieved.
+              Check the backend connection and try again.
             </p>
             <button type="button" onClick={() => fetchForecast(selectedCity, horizonDays)}>
               Retry forecast
@@ -234,7 +314,7 @@ export default function ForecastPage() {
               <div>
                 <span className="section-kicker">Forecast output</span>
                 <h2>{currentCity?.name} · Day +{horizonDays}</h2>
-                <p>Model input date {forecast.prediction_date}</p>
+                <p>Forecast vintage date {forecast.prediction_date}</p>
               </div>
               <div className={`forecast-results__status risk-${forecastBand.tone}`}>
                 <i className="risk-dot" aria-hidden="true" />
@@ -252,10 +332,14 @@ export default function ForecastPage() {
                   <strong>{forecast.estimated_total_tipping_score.toFixed(1)}</strong>
                   <span>/ 100</span>
                 </div>
-                <p>
-                  95% CI <b>{forecast.total_ci_lower.toFixed(1)}–{forecast.total_ci_upper.toFixed(1)}</b>
-                  <span>±{forecast.total_confidence_margin.toFixed(1)}</span>
-                </p>
+                {totalSpread ? (
+                  <p>
+                    Uncalibrated model spread <b>{totalSpread.lower.toFixed(1)}–{totalSpread.upper.toFixed(1)}</b>
+                    <span>±{totalSpread.margin.toFixed(1)}</span>
+                  </p>
+                ) : (
+                  <p>Mixed-method maximum · no aggregate model band</p>
+                )}
               </article>
 
               <article className={`forecast-summary-card risk-${baselineBand.tone}`}>
@@ -278,7 +362,9 @@ export default function ForecastPage() {
                   <small>03</small>
                 </div>
                 <h3>{forecast.forecast_primary_driver}</h3>
-                <p>Highest projected factor at the selected horizon</p>
+                <p>
+                  Highest projected factor · {getMethodLabel(forecast.forecast_primary_driver_method)}
+                </p>
               </article>
 
               <article className="forecast-summary-card forecast-summary-card--weather">
@@ -311,57 +397,128 @@ export default function ForecastPage() {
             <section className="forecast-factors" aria-labelledby="forecast-factors-title">
               <div className="forecast-factors__header">
                 <div>
-                  <span className="section-kicker">Model components</span>
+                  <span className="section-kicker">Hybrid components</span>
                   <h2 id="forecast-factors-title">Factor-level outlook</h2>
-                  <p>Projected score and uncertainty range for each climate signal.</p>
+                  <p>Learned estimates and same-vintage forecast-rule indicators.</p>
                 </div>
                 <div className="confidence-key">
                   <span><i /> Point estimate</span>
-                  <span><i /> 95% Confidence Interval</span>
+                  <span><i /> Model spread · Heat / Rain only</span>
                 </div>
               </div>
 
               <div className="forecast-factor-grid">
                 {FORECAST_FACTORS.map((factor, index) => {
                   const factorData = forecast.sub_scores_forecast[factor.key];
-                  const factorBand = getRiskBand(factorData.estimated_score);
-                  const score = clampScore(factorData.estimated_score);
-                  const ciStart = clampScore(factorData.ci_lower);
-                  const ciEnd = clampScore(factorData.ci_upper);
+                  const estimatedScore = factorData.available
+                    ? factorData.estimated_score
+                    : null;
+                  const factorBand = estimatedScore === null
+                    ? null
+                    : getRiskBand(estimatedScore);
+                  const score = estimatedScore === null
+                    ? null
+                    : clampScore(estimatedScore);
+                  const modelSpread = hasModelSpread(factorData)
+                    ? {
+                        start: clampScore(factorData.ci_lower),
+                        end: clampScore(factorData.ci_upper),
+                        margin: factorData.confidence_margin,
+                      }
+                    : null;
+                  const methodTone = getMethodTone(factorData.method);
 
                   return (
-                    <article key={factor.key} className={`forecast-factor-card risk-${factorBand.tone}`}>
+                    <article
+                      key={factor.key}
+                      aria-label={`${factor.label} forecast`}
+                      className={`forecast-factor-card ${factorBand ? `risk-${factorBand.tone}` : "is-unavailable"}`}
+                      data-forecast-method={factorData.method}
+                    >
                       <div className="forecast-factor-card__topline">
                         <span>#{String(index + 1).padStart(2, "0")}</span>
-                        <strong><i className="risk-dot" aria-hidden="true" />{factorBand.label}</strong>
+                        <strong>
+                          <i className="risk-dot" aria-hidden="true" />
+                          {factorBand?.label ?? "Unavailable"}
+                        </strong>
                       </div>
                       <h3>{factor.title}</h3>
-                      <div className="forecast-factor-card__score">
-                        <strong>{factorData.estimated_score.toFixed(1)}</strong>
-                        <span>/ 100</span>
+                      <div className={`forecast-factor-card__method forecast-factor-card__method--${methodTone}`}>
+                        {getMethodLabel(factorData.method)}
                       </div>
-                      <div className="forecast-factor-card__meter" aria-hidden="true">
-                        <span className="forecast-factor-card__fill" style={{ width: `${score}%` }} />
-                        <span
-                          className="forecast-factor-card__interval"
-                          style={{ left: `${ciStart}%`, width: `${Math.max(0, ciEnd - ciStart)}%` }}
-                        />
-                        <i style={{ left: `${score}%` }} />
+                      <div className={`forecast-factor-card__score ${score === null ? "is-unavailable" : ""}`}>
+                        <strong>{estimatedScore === null ? "—" : estimatedScore.toFixed(1)}</strong>
+                        {estimatedScore !== null && <span>/ 100</span>}
+                      </div>
+                      <div
+                        className={`forecast-factor-card__meter ${score === null ? "is-unavailable" : ""}`}
+                        aria-hidden="true"
+                      >
+                        {score !== null && (
+                          <>
+                            <span className="forecast-factor-card__fill" style={{ width: `${score}%` }} />
+                            {modelSpread && (
+                              <span
+                                className="forecast-factor-card__interval"
+                                style={{
+                                  left: `${modelSpread.start}%`,
+                                  width: `${Math.max(0, modelSpread.end - modelSpread.start)}%`,
+                                }}
+                              />
+                            )}
+                            <i style={{ left: `${score}%` }} />
+                          </>
+                        )}
                       </div>
                       <div className="forecast-factor-card__ci">
-                        <span>95% Confidence Interval</span>
-                        <strong>{factorData.ci_lower.toFixed(1)}–{factorData.ci_upper.toFixed(1)}</strong>
+                        {score === null ? (
+                          <>
+                            <span>Availability</span>
+                            <strong>Unavailable</strong>
+                          </>
+                        ) : modelSpread ? (
+                          <>
+                            <span>Model spread band</span>
+                            <strong>{modelSpread.start.toFixed(1)}–{modelSpread.end.toFixed(1)}</strong>
+                          </>
+                        ) : (
+                          <>
+                            <span>Forecast-rule estimate</span>
+                            <strong>No model band</strong>
+                          </>
+                        )}
                       </div>
-                      <p>Uncertainty margin ±{factorData.confidence_margin.toFixed(1)}</p>
+                      <p className="forecast-factor-card__context">
+                        {score === null
+                          ? factorData.unavailable_reason ?? "Required source forecast is unavailable"
+                          : modelSpread
+                            ? `${getValidationLabel(factorData.validation_status)} · tree spread ±${modelSpread.margin.toFixed(1)} · not a calibrated interval`
+                            : factorData.method === "development_fallback_rule"
+                              ? `Development-only fallback · ${getValidationLabel(factorData.validation_status)}`
+                              : `Same-vintage rule · ${getValidationLabel(factorData.validation_status)}`}
+                      </p>
                     </article>
                   );
                 })}
               </div>
             </section>
 
-            <footer className="dashboard-data-note">
-              <span>Forecast method</span>
-              Multi-output random forest · Tree-level uncertainty · 95% intervals
+            <footer className="dashboard-data-note forecast-provenance" aria-label="Forecast provenance">
+              <span>Forecast provenance</span>
+              <div>
+                <p>
+                  Learned: {formatComponentList(forecast.model_target_components)} · {humanizeSource(forecast.prediction_source)}
+                  {forecast.model_version ? ` v${forecast.model_version}` : ""}
+                </p>
+                <p>Forecast rules: {formatComponentList(forecast.rule_based_components)}</p>
+                <p>
+                  Feature schema {forecast.feature_schema_version} · run{" "}
+                  <code title={forecast.feature_ingestion_run_id}>
+                    {forecast.feature_ingestion_run_id}
+                  </code>{" "}
+                  · ingested {forecast.feature_ingested_at_utc} · {forecast.forecast_origin_time_zone}
+                </p>
+              </div>
             </footer>
           </div>
         )}

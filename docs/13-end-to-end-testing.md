@@ -1,49 +1,83 @@
 # 13. End-to-End Testing
 
-To ensure the highest quality of integration across the full stack (Frontend, Backend, and ML Model), ClimaSentinel utilizes **Playwright** for Automated End-to-End (E2E) testing. 
+Playwright validates the deployed staging frontend, backend, BigQuery serving
+mart and promoted MLflow artifact as one system. Unit tests remain responsible
+for formula boundaries and failure branches; E2E proves the live release wiring.
 
-## 1. What the E2E Test Evaluates
+## What the staging test verifies
 
-Unlike unit tests that evaluate isolated functions, our E2E test validates the application from the exact perspective of a human user. The automated headless browser:
-1. **Navigates to the Forecast Page:** It loads the `/forecast` route.
-2. **Validates UI Rendering:** It ensures the "AI Tipping Forecast" hero title is visible and that there are no "500 Internal Server Error" crashes.
-3. **Simulates User Interaction:** It clicks on a specific city button (e.g., "Paris, FR") and selects a forecast horizon (e.g., "+3 Days").
-4. **Validates ML Model & Database Delivery:** It waits for the BigQuery and ML Model to return the data, verifying that the granular sub-scores (e.g., "Heat Score Forecast") and "95% Confidence Interval" metrics successfully render on the screen.
+`frontend/tests/e2e/dashboard.spec.ts` opens `/forecast` and exercises each
+genuine Day +1, Day +2 and Day +3 selector. The test verifies that:
 
-## 2. CI/CD Integration Architecture
+- the page and city/horizon controls render without a server error;
+- the API reports `hybrid_ml_and_forecast_rules`;
+- Heat and Rain are identified as learned, ERA5-validated components;
+- Wind, Air Quality and River are identified as forecast-rule indicators;
+- rule-derived factors do not claim a tree-spread interval;
+- unavailable optional-source factors remain unavailable rather than becoming
+  zero-risk values;
+- the visible observed-label disclaimer remains present; and
+- the API's concrete `model_version` matches `EXPECTED_MODEL_VERSION`, the
+  exact candidate promoted by the same workflow run.
 
-To ensure speed and efficiency, the E2E test runs exclusively in the **`dev → staging` CI pipeline** (`.github/workflows/ci-staging.yml`), rather than running on every pull request.
+The test must not require every optional AQ or River source to be available.
+Those feeds have an explicit nullable contract. It should require coherent
+method and availability rendering in either state.
 
-**Pipeline Flow:**
-1. Code is merged into `staging`.
-2. The CI pipeline builds the Docker image and deploys the backend and frontend to the Railway Staging environment.
-3. The `e2e-test` CI job boots up, installs Playwright, and targets the **live deployed staging URL** using the `STAGING_FRONTEND_URL` GitHub Secret.
-4. The test executes. If it fails, developers are immediately alerted that the latest release broke the staging deployment.
+## Staging workflow order
 
-## 3. Directory Structure
+The live E2E job runs only from `.github/workflows/ci-staging.yml` after:
 
-All E2E testing logic resides in the `frontend` directory:
+1. backend tests pass;
+2. a schema-v3 `ClimaSentinel_HeatRainForecaster` candidate is trained and
+   registered;
+3. the exact candidate passes Heat/Rain quality and artifact-contract gates;
+4. `champion` is assigned to that concrete version; and
+5. backend and frontend services are deployed to Railway staging.
+
+This order matters. Running E2E before promotion can test an older cached model,
+and deploying before quality gates can expose an incompatible legacy artifact.
+The workflow uses a non-canceling model-promotion concurrency group to avoid two
+runs moving the alias concurrently.
+
+## Directory structure
 
 ```text
 frontend/
-├── playwright.config.ts           # Playwright configuration (baseURL, timeouts, browsers)
+├── playwright.config.ts
 └── tests/
     └── e2e/
-        └── dashboard.spec.ts      # The core UI testing script
+        └── dashboard.spec.ts
 ```
 
-## 4. Running the Tests Locally
+## Running locally
 
-You can run the Playwright tests on your local machine to verify changes before pushing them.
+Start the frontend and a compatible backend, then run:
 
-1. Ensure your local frontend is running (`npm run dev` running on `http://localhost:3000`).
-2. Open a new terminal in the `frontend/` directory.
-3. Execute the test command:
-   ```bash
-   npm run test:e2e
-   ```
-
-By default, the local test runs against `http://localhost:3000`. If you want to test against the live production or staging URL from your local machine, you can pass the environment variable:
 ```bash
-PLAYWRIGHT_TEST_BASE_URL=https://frontend-staging-3885.up.railway.app npm run test:e2e
+cd frontend
+npm install
+npx playwright install --with-deps chromium
+npm run test:e2e
 ```
+
+The default target is `http://localhost:3000`. Override it and, when required,
+pin the expected registered-model version:
+
+```bash
+PLAYWRIGHT_TEST_BASE_URL=https://your-staging-frontend.example \
+EXPECTED_MODEL_VERSION=42 \
+npm run test:e2e
+```
+
+## Failure interpretation
+
+- “Forecast unavailable” usually means the serving mart has no eligible current
+  vintage or the backend rejected/failed to load the registry artifact.
+- A model-version mismatch means the deployed backend did not serve the exact
+  candidate promoted in that run; this is a release failure even if scores
+  render.
+- An unavailable AQ or River card by itself is not an E2E failure when the API
+  marks it unavailable with the correct rule provenance.
+- A rule card displaying model confidence bounds, or a missing validation
+  disclaimer, is a contract failure.

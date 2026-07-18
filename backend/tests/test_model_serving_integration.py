@@ -1,6 +1,6 @@
 """Real local MLflow Registry-to-FastAPI model-serving integration test."""
 
-from datetime import date
+from datetime import date, datetime, timezone
 import math
 from unittest.mock import MagicMock, patch
 from uuid import uuid4
@@ -76,7 +76,7 @@ def _register_real_pipeline(
     with mlflow.start_run(experiment_id=experiment_id):
         model_info = mlflow.sklearn.log_model(
             sk_model=pipeline,
-            artifact_path="risk_forecaster",
+            name="risk_forecaster",
             registered_model_name=model_name,
             signature=signature,
             input_example=input_example,
@@ -90,16 +90,29 @@ def _register_real_pipeline(
     return version
 
 
-def _feature_store_row(training_data: pd.DataFrame) -> dict:
+def _serving_feature_row(training_data: pd.DataFrame) -> dict:
     row = training_data.iloc[0].loc[list(FEATURE_COLUMNS)].to_dict()
     row.update(
         {
             "city_id": "paris_fr",
-            "date": date(2026, 7, 17),
-            "real_current_tipping_score": 61.0,
-            "real_primary_driver": "Heat",
+            "forecast_origin_date": date(2026, 7, 17),
+            "forecast_origin_time_zone": "Europe/Paris",
+            "ingestion_run_id": "integration-run",
+            "ingested_at_utc": datetime(2026, 7, 17, 5, tzinfo=timezone.utc),
+            "forecast_age_days": 0,
+            "is_canonical_daily_vintage": True,
+            "has_expected_horizon_dates": True,
+            "has_complete_weather_feature_window": True,
+            "current_tipping_score": 61.0,
         }
     )
+    for horizon in range(1, 5):
+        row[f"weather_has_24_hour_coverage_plus_{horizon}d"] = True
+        row[f"has_complete_weather_values_plus_{horizon}d"] = True
+        row[f"has_air_quality_forecast_plus_{horizon}d"] = True
+        row[f"air_quality_has_24_hour_coverage_plus_{horizon}d"] = True
+        row[f"has_complete_air_quality_values_plus_{horizon}d"] = True
+        row[f"has_flood_forecast_plus_{horizon}d"] = True
     return row
 
 
@@ -113,11 +126,22 @@ def _mock_bigquery_client(row: dict) -> MagicMock:
 
 def _assert_finite_forecast(response_body: dict) -> None:
     assert set(response_body["sub_scores_forecast"]) == set(main.SUB_SCORE_NAMES)
-    for forecast in response_body["sub_scores_forecast"].values():
+    for name in ("heat_score", "rain_score"):
+        forecast = response_body["sub_scores_forecast"][name]
         for field in ("estimated_score", "ci_lower", "ci_upper", "confidence_margin"):
             assert math.isfinite(forecast[field])
+        assert forecast["method"] == "learned_model"
+        assert forecast["uncertainty_method"] == "tree_spread_not_calibrated"
+    for name in ("wind_score", "air_score", "river_score"):
+        forecast = response_body["sub_scores_forecast"][name]
+        assert forecast["method"] == "forecast_rule"
+        assert forecast["validation_status"] == "not_observation_validated"
+        assert forecast["ci_lower"] is None
+        assert forecast["ci_upper"] is None
+        assert forecast["confidence_margin"] is None
     assert math.isfinite(response_body["estimated_total_tipping_score"])
     assert 0.0 <= response_body["estimated_total_tipping_score"] <= 100.0
+    assert response_body["forecast_method"] == "hybrid_ml_and_forecast_rules"
 
 
 @pytest.mark.integration
@@ -129,7 +153,7 @@ def test_real_registry_alias_pin_and_missing_alias_serving(tmp_path, monkeypatch
     tracking_uri = f"sqlite:///{tmp_path / 'mlflow.db'}"
     artifact_root = (tmp_path / "artifacts").resolve()
     artifact_root.mkdir()
-    model_name = f"ClimaSentinel_RiskForecaster_{uuid4().hex}"
+    model_name = f"ClimaSentinel_HeatRainForecaster_{uuid4().hex}"
 
     for variable in (
         "DAGSHUB_USER_TOKEN",
@@ -184,13 +208,13 @@ def test_real_registry_alias_pin_and_missing_alias_serving(tmp_path, monkeypatch
             ).version
         ) == version_1
 
-        bq_client = _mock_bigquery_client(_feature_store_row(training_data))
+        bq_client = _mock_bigquery_client(_serving_feature_row(training_data))
         api_client = TestClient(main.app)
         main._cached_model = None
 
         with (
             patch("app.main.get_bq_client", return_value=bq_client),
-            patch("app.main._heuristic_predictions") as fallback,
+            patch("app.main._development_heat_rain_estimates") as fallback,
         ):
             champion_responses = [
                 api_client.get(
