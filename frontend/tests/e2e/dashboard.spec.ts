@@ -8,6 +8,9 @@ test.describe('ClimaSentinel Forecast E2E', () => {
 
     // 2. Verify the hero title loaded
     await expect(page.getByRole('heading', { name: 'AI Tipping Forecast' })).toBeVisible();
+    await expect(page.getByLabel('Forecast validation scope')).toContainText(
+      'Model validation currently covers heat and rainfall only'
+    );
 
     // 3. Verify there are no 500 errors
     const bodyText = await page.locator('body').textContent();

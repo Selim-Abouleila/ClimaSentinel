@@ -178,6 +178,18 @@ export default function ForecastPage() {
           </div>
         </section>
 
+        <aside
+          className="forecast-validation-note"
+          aria-label="Forecast validation scope"
+        >
+          <strong>Validation scope</strong>
+          <p>
+            Model validation currently covers heat and rainfall only. Wind,
+            air-quality, and river-risk values are forecast-based indicators and
+            are not yet validated against observed outcomes.
+          </p>
+        </aside>
+
         {!selectedCity && (
           <section className="forecast-state" aria-labelledby="forecast-empty-title">
             <span className="forecast-state__symbol" aria-hidden="true">
