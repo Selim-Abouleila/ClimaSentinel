@@ -85,10 +85,9 @@ models:
 
   - name: mart_ml_feature_store
     description: >
-      Single source of truth Feature Store for MLOps training and serving. Pre-computes 
-      3-day future weather forecast trajectories (temperature, precipitation, wind speed) 
-      and aligns them with the current tipping score baseline and genuine Day +1, Day +2,
-      and Day +3 future component-score targets.
+      Legacy feature table retained temporarily for application compatibility.
+      Its date-based LEAD construction does not preserve an exact forecast
+      vintage and it must not be used by the new point-in-time training path.
     columns:
       - name: city_id
         tests:
@@ -96,3 +95,154 @@ models:
       - name: date
         tests:
           - not_null
+
+  - name: mart_ml_forecast_features_vintage
+    description: >
+      Point-in-time-safe wide forecast feature ledger. One row preserves
+      Horizon 0 through Horizon 4 from one exact ingestion run, city, and local
+      forecast origin date. Weather is mandatory for eligibility; air quality
+      and flood remain nullable with explicit presence and completeness flags.
+      This is the shared feature-definition source for training and serving.
+    columns:
+      - name: ingestion_run_id
+        description: Retrieval snapshot shared by every horizon on the row.
+        tests: [not_null]
+      - name: ingested_at_utc
+        description: Snapshot availability proxy used for temporal-safety checks.
+        tests: [not_null]
+      - name: forecast_origin_time_zone
+        tests: [not_null]
+      - name: forecast_origin_date
+        description: City-local calendar date on which the forecast was retrieved.
+        tests: [not_null]
+      - name: city_id
+        tests: [not_null]
+      - name: valid_date_0d
+      - name: valid_date_plus_1d
+      - name: valid_date_plus_2d
+      - name: valid_date_plus_3d
+      - name: valid_date_plus_4d
+      - name: normal_temperature_2m_max
+      - name: current_tipping_score
+        description: Same-vintage operational baseline calculated from Horizon 0 and Horizon 1 inputs.
+      - name: has_expected_horizon_dates
+        tests: [not_null]
+      - name: has_complete_weather_feature_window
+        description: True only when Horizons 0-4 have expected dates, 24-hour coverage, and complete weather values.
+        tests: [not_null]
+      - name: is_canonical_daily_vintage
+        description: True for the latest eligible vintage per city and local origin date.
+        tests: [not_null]
+
+  - name: mart_city_realized_weather_daily
+    description: >
+      Realized ERA5 reanalysis label boundary at one row per city and valid
+      date. Heat and Rain are the only supported realized scores. Wind is
+      retained as raw context only because observed gust is unavailable;
+      observed AQ and river
+      discharge are also unavailable. Unsupported score fields remain NULL and
+      their label flags remain FALSE.
+    columns:
+      - name: city_id
+        tests: [not_null]
+      - name: valid_date
+        tests: [not_null]
+      - name: realized_weather_ingestion_run_id
+        tests: [not_null]
+      - name: realized_weather_ingested_at_utc
+        tests: [not_null]
+      - name: has_realized_heat_label
+        tests: [not_null]
+      - name: has_realized_rain_label
+        tests: [not_null]
+      - name: has_realized_wind_label
+        tests: [not_null]
+      - name: has_realized_air_label
+        tests: [not_null]
+      - name: has_realized_river_label
+        tests: [not_null]
+      - name: has_mature_realized_labels
+        description: True only when both the realized Heat and Rain labels are available.
+        tests: [not_null]
+      - name: label_source
+        tests: [not_null]
+      - name: unsupported_label_components
+        tests: [not_null]
+
+  - name: mart_ml_training_examples
+    description: >
+      Point-in-time-safe supervised examples. Selects the latest complete exact
+      forecast vintage per city/local-origin date and joins mature ERA5 Heat and
+      Rain labels for Day +1, Day +2, and Day +3. Label availability must be
+      strictly later than forecast ingestion. No unsupported component is
+      exposed as a trainable target.
+    columns:
+      - name: ingestion_run_id
+        tests: [not_null]
+      - name: ingested_at_utc
+        tests: [not_null]
+      - name: forecast_origin_date
+        tests: [not_null]
+      - name: city_id
+        tests: [not_null]
+      - name: target_date_1d
+        tests: [not_null]
+      - name: target_date_2d
+        tests: [not_null]
+      - name: target_date_3d
+        tests: [not_null]
+      - name: future_heat_score_1d
+        tests: [not_null]
+      - name: future_heat_score_2d
+        tests: [not_null]
+      - name: future_heat_score_3d
+        tests: [not_null]
+      - name: future_rain_score_1d
+        tests: [not_null]
+      - name: future_rain_score_2d
+        tests: [not_null]
+      - name: future_rain_score_3d
+        tests: [not_null]
+      - name: labels_available_at_utc_1d
+        tests: [not_null]
+      - name: labels_available_at_utc_2d
+        tests: [not_null]
+      - name: labels_available_at_utc_3d
+        tests: [not_null]
+      - name: training_labels_available_at_utc
+        tests: [not_null]
+      - name: label_source
+        tests: [not_null]
+      - name: supported_target_components
+        tests: [not_null]
+      - name: unsupported_target_components
+        tests: [not_null]
+      - name: canonical_vintage_rule
+        tests: [not_null]
+
+  - name: mart_ml_serving_features_current
+    description: >
+      Latest eligible point-in-time feature vector per city. Selects a canonical
+      complete vintage from the current date in the city's local timezone and
+      never exposes realized labels or silently falls back to a stale origin.
+    columns:
+      - name: ingestion_run_id
+        tests: [not_null]
+      - name: ingested_at_utc
+        tests: [not_null]
+      - name: forecast_origin_time_zone
+        tests: [not_null]
+      - name: forecast_origin_date
+        tests: [not_null]
+      - name: city_id
+        tests:
+          - not_null
+          - unique
+      - name: forecast_age_days
+        tests: [not_null]
+      - name: has_expected_horizon_dates
+        tests: [not_null]
+      - name: has_complete_weather_feature_window
+        tests: [not_null]
+      - name: is_canonical_daily_vintage
+        tests: [not_null]

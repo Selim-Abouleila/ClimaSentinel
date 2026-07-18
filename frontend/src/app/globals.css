@@ -849,6 +849,29 @@ body {
   border-radius: 12px;
 }
 
+.forecast-validation-note {
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+  margin-top: 12px;
+  padding: 11px 14px;
+  color: #8999a8;
+  background: rgba(223, 180, 81, 0.06);
+  border: 1px solid rgba(223, 180, 81, 0.2);
+  border-radius: 8px;
+  font-size: 0.7rem;
+  line-height: 1.55;
+}
+
+.forecast-validation-note strong {
+  flex: 0 0 auto;
+  color: var(--risk-monitoring);
+  font-size: 0.62rem;
+  font-weight: 650;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
 .forecast-control-divider {
   align-self: stretch;
   background: #1a293a;
@@ -1798,6 +1821,12 @@ body {
   .forecast-controls {
     padding: 18px;
     border-radius: 10px;
+  }
+
+  .forecast-validation-note {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 4px;
   }
 
   .forecast-control-group__header {
