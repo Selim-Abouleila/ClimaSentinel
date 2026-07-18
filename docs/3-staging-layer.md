@@ -17,7 +17,7 @@ For point-in-time ML inputs, we instead:
 
 1. **Preserve forecast runs** — Retain `ingestion_run_id` and `ingested_at_utc`
 2. **Aggregate within a run** — Never mix forecast revisions in one daily row
-3. **Use exact calendar horizons** — Derive `horizon_days` with `DATE_DIFF`
+3. **Use city-local calendar horizons** — Convert the UTC ingestion timestamp with the city's IANA timezone, then derive `horizon_days` with `DATE_DIFF`
 4. **Preserve missingness** — Keep NULL measurements and expose reading counts
 5. **Join coherently** — Join weather, AQ, and flood only from the exact same run
 
@@ -91,7 +91,7 @@ These views roll up deduplicated hourly data into daily summaries.
 
 ### Forecast-Vintage Views (6)
 
-These views preserve every ingestion run. `ingested_at_utc` is the ingestion-run start timestamp used as ClimaSentinel's availability proxy; it is not Open-Meteo's model issue or initialization timestamp.
+These views preserve every ingestion run. `ingested_at_utc` is the ingestion-run start timestamp used as ClimaSentinel's availability proxy; it is not Open-Meteo's model issue or initialization timestamp. `forecast_origin_time_zone` records the IANA timezone used to convert that UTC timestamp into the city's local `forecast_origin_date`.
 
 | Model | Grain | Purpose |
 |---|---|---|
@@ -111,8 +111,13 @@ The vintage path does not join ERA5. ERA5 is published later and belongs to a fu
 - AQ and flood never fall back to a different run after a partial ingestion failure.
 - Flood is legitimately absent for non-river-enabled cities.
 - AQ has a five-day window while weather and flood have seven-day windows.
+- Unknown city IDs fail during vintage-model evaluation until an IANA timezone is configured; they never silently fall back to UTC.
 
-> **Timestamp caveat:** the current fetcher requests city-local timestamps and stores the offset-free strings in `valid_ts_utc`. The daily `valid_date` and `horizon_days` convention is usable at the current 06:00 UTC cadence, but precise lead-hour and DST calculations must wait for the separate ingestion timestamp correction.
+> **Timestamp caveat:** the current fetcher requests city-local timestamps and stores the offset-free strings in `valid_ts_utc`. Calendar-day horizons are now anchored to the city-local ingestion date, including off-schedule runs that cross local midnight. Precise lead-hour and DST calculations still require the separate ingestion change that preserves the provider timestamp offset. When that field is corrected to contain a true UTC instant, `valid_date` must also change to `DATE(valid_ts_utc, forecast_origin_time_zone)` so the calendar contract remains local.
+
+`ingested_at_utc` is currently one timestamp captured at the start of the whole ingestion run. If an unusually long run begins before a city's local midnight but fetches that city after midnight, the raw schema cannot reconstruct the later per-city request date. Normal scheduled runs are short enough to avoid this edge case; a future ingestion revision should persist provider issue time or a per-city request timestamp.
+
+The local-origin rule matters for retries and manual runs. For example, an ingestion at `23:31 UTC` on July 4 is already July 5 in the configured European cities. Its weather window must remain Day `0–6`, not be mislabeled as Day `1–7`. Flood rows whose provider date is already in the local past remain visible in the flood ledger with a negative horizon, but cannot join the weather-anchored unified view unless their local valid date and horizon match.
 
 ---
 
@@ -169,7 +174,9 @@ dbt docs generate --profiles-dir . && dbt docs serve --profiles-dir .
 
 ## Schema Tests
 
-Core schema tests are defined in `_stg_models.yml` and `_stg_vintage_models.yml`. Singular tests in `transform/tests` validate the composite vintage grains, origin/horizon derivation, one timestamp per run, and the weather-anchored unified key set. Coverage anomalies are warnings during the initial raw-history audit rather than filters or hard failures.
+Core schema tests are defined in `_stg_models.yml` and `_stg_vintage_models.yml`. Singular tests in `transform/tests` validate the composite vintage grains, city-local origin/horizon derivation, one timestamp per run, same-run source payloads, and the weather-anchored unified key set. Coverage anomalies are warnings during the initial raw-history audit rather than filters or hard failures.
+
+Same-run payload tests compare nullable `FLOAT64` values with a `1e-6` tolerance. BigQuery can evaluate the same aggregate view independently on each side of a lineage check, and floating-point aggregate results are not guaranteed to be bit-for-bit deterministic. The tolerance is far below the daily staging outputs' `0.01` precision, so it removes execution noise without accepting a meaningful payload difference.
 
 | Model | Column | Test |
 |---|---|---|
@@ -178,3 +185,5 @@ Core schema tests are defined in `_stg_models.yml` and `_stg_vintage_models.yml`
 | Daily models | `date` | `not_null` |
 | Vintage models | Lineage and grain columns | `not_null` |
 | All vintage models | Composite run/city/valid key | Singular uniqueness test |
+
+For staging approval, all hard vintage tests must pass. The coverage audit may warn for preserved historical partial responses, older AQ windows, DST days, or off-schedule source-window differences; every warning must be explainable rather than removed or imputed in staging.

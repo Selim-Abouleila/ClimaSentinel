@@ -13,6 +13,7 @@
 SELECT
     w.ingestion_run_id,
     w.ingested_at_utc,
+    w.forecast_origin_time_zone,
     w.forecast_origin_date,
     w.city_id,
     w.valid_date,
@@ -68,6 +69,7 @@ FROM {{ ref('stg_city_daily_weather_vintage') }} w
 LEFT JOIN {{ ref('stg_city_daily_air_quality_vintage') }} aq
     ON w.ingestion_run_id = aq.ingestion_run_id
     AND w.ingested_at_utc = aq.ingested_at_utc
+    AND w.forecast_origin_time_zone = aq.forecast_origin_time_zone
     AND w.forecast_origin_date = aq.forecast_origin_date
     AND w.city_id = aq.city_id
     AND w.valid_date = aq.valid_date
@@ -75,6 +77,7 @@ LEFT JOIN {{ ref('stg_city_daily_air_quality_vintage') }} aq
 LEFT JOIN {{ ref('stg_flood_daily_vintage') }} fl
     ON w.ingestion_run_id = fl.ingestion_run_id
     AND w.ingested_at_utc = fl.ingested_at_utc
+    AND w.forecast_origin_time_zone = fl.forecast_origin_time_zone
     AND w.forecast_origin_date = fl.forecast_origin_date
     AND w.city_id = fl.city_id
     AND w.valid_date = fl.valid_date
