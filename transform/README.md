@@ -65,8 +65,11 @@ transform/
 │       ├── stg_city_daily_air_quality_vintage.sql
 │       ├── stg_flood_daily_vintage.sql
 │       └── stg_city_signal_vintage.sql   ← Point-in-time ML staging input
-├── macros/                          # (future) Shared SQL macros
-├── seeds/                           # (future) Static lookup CSVs
+├── macros/
+│   ├── forecast_origin_time_zone.sql # City ID → IANA timezone contract
+│   └── generate_schema_name.sql      # Preserve explicit stg/mart datasets
+├── seeds/
+│   └── city_monthly_normals.csv      # Static monthly climate baselines
 ├── snapshots/                       # (future) SCD Type-2 snapshots
 └── tests/                           # Singular lineage, grain, and coverage tests
 ```
@@ -94,7 +97,7 @@ raw.flood_daily ───────────────→ stg_flood_daily
                                                                                          (future ML marts)
 ```
 
-The vintage path keeps `ingestion_run_id` in its grain and joins sources only within the same run. Build and validate it independently with:
+The vintage path keeps `ingestion_run_id` in its grain and joins sources only within the same run. It exposes `forecast_origin_time_zone` and derives `forecast_origin_date` from the UTC ingestion timestamp in each city's IANA timezone, so late or manual runs retain the correct local Day `0–6` weather trajectory. Build and validate it independently with:
 
 ```bash
 dbt run --profiles-dir . --select tag:forecast_vintage

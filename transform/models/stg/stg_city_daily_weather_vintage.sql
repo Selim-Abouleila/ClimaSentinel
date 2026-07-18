@@ -9,6 +9,7 @@
 SELECT
     ingestion_run_id,
     ingested_at_utc,
+    forecast_origin_time_zone,
     forecast_origin_date,
     city_id,
     valid_date,
@@ -42,6 +43,7 @@ FROM {{ ref('stg_weather_forecast_hourly_vintage') }}
 GROUP BY
     ingestion_run_id,
     ingested_at_utc,
+    forecast_origin_time_zone,
     forecast_origin_date,
     city_id,
     valid_date,

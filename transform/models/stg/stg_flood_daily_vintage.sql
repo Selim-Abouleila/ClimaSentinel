@@ -13,16 +13,28 @@ WITH ranked AS (
             ORDER BY ingested_at_utc DESC, river_discharge_m3s DESC
         ) AS _row_num
     FROM {{ source('raw', 'flood_daily') }}
+),
+
+canonical AS (
+    SELECT
+        *,
+        {{ forecast_origin_time_zone('city_id') }} AS forecast_origin_time_zone
+    FROM ranked
+    WHERE _row_num = 1
 )
 
 SELECT
     ingestion_run_id,
     ingested_at_utc,
-    DATE(ingested_at_utc) AS forecast_origin_date,
+    forecast_origin_time_zone,
+    DATE(ingested_at_utc, forecast_origin_time_zone) AS forecast_origin_date,
     city_id,
     date AS valid_date,
-    DATE_DIFF(date, DATE(ingested_at_utc), DAY) AS horizon_days,
+    DATE_DIFF(
+        date,
+        DATE(ingested_at_utc, forecast_origin_time_zone),
+        DAY
+    ) AS horizon_days,
     river_discharge_m3s,
     river_discharge_m3s IS NOT NULL AS has_river_discharge_value
-FROM ranked
-WHERE _row_num = 1
+FROM canonical

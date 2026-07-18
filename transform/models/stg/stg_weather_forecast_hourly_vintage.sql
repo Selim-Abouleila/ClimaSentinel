@@ -23,18 +23,27 @@ WITH ranked AS (
                 weather_code DESC
         ) AS _row_num
     FROM {{ source('raw', 'weather_forecast_hourly') }}
+),
+
+canonical AS (
+    SELECT
+        *,
+        {{ forecast_origin_time_zone('city_id') }} AS forecast_origin_time_zone
+    FROM ranked
+    WHERE _row_num = 1
 )
 
 SELECT
     ingestion_run_id,
     ingested_at_utc,
-    DATE(ingested_at_utc) AS forecast_origin_date,
+    forecast_origin_time_zone,
+    DATE(ingested_at_utc, forecast_origin_time_zone) AS forecast_origin_date,
     city_id,
     valid_ts_utc,
     DATE(valid_ts_utc) AS valid_date,
     DATE_DIFF(
         DATE(valid_ts_utc),
-        DATE(ingested_at_utc),
+        DATE(ingested_at_utc, forecast_origin_time_zone),
         DAY
     ) AS horizon_days,
     temperature_2m,
@@ -42,5 +51,4 @@ SELECT
     wind_speed_10m,
     wind_gusts_10m,
     weather_code
-FROM ranked
-WHERE _row_num = 1
+FROM canonical
