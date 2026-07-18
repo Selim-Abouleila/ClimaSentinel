@@ -174,9 +174,9 @@ dbt docs generate --profiles-dir . && dbt docs serve --profiles-dir .
 
 ## Schema Tests
 
-Core schema tests are defined in `_stg_models.yml` and `_stg_vintage_models.yml`. Singular tests in `transform/tests` validate the composite vintage grains, city-local origin/horizon derivation, one timestamp per run, same-run source payloads, and the weather-anchored unified key set. Coverage anomalies are warnings during the initial raw-history audit rather than filters or hard failures.
+Core schema tests are defined in `_stg_models.yml` and `_stg_vintage_models.yml`. Singular tests in `transform/tests` validate the composite vintage grains, city-local origin/horizon derivation, one timestamp per run, raw retry-payload consistency, and the weather-anchored unified key set. The unified lineage test validates exact-vintage source presence, timestamps, coverage metadata, and nullable-value propagation. Coverage anomalies are warnings during the initial raw-history audit rather than filters or hard failures.
 
-Same-run payload tests compare nullable `FLOAT64` values with a `1e-6` tolerance. BigQuery can evaluate the same aggregate view independently on each side of a lineage check, and floating-point aggregate results are not guaranteed to be bit-for-bit deterministic. The tolerance is far below the daily staging outputs' `0.01` precision, so it removes execution noise without accepting a meaningful payload difference.
+The hard lineage test deliberately does not compare `AVG`/`SUM`-derived `FLOAT64` values by independently rereading the daily views. All staging relations are views, so BigQuery can expand those reductions separately through `stg_city_signal_vintage` and through the test's source references; floating-point reduction and the final two-decimal rounding can then depend on the query plan. Deterministic `MAX`/`MIN` and direct-value projections remain hard-checked. Raw conflicting payloads also fail `assert_forecast_vintage_raw_payloads_consistent`, while aggregate NULL propagation remains part of the lineage contract.
 
 | Model | Column | Test |
 |---|---|---|
