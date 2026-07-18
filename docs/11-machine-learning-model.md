@@ -92,7 +92,7 @@ $$\mathbf{y} = \begin{bmatrix} \mathbf{y}_{+1} \\ \mathbf{y}_{+2} \\ \mathbf{y}_
 During execution, `train.py` initializes a connection to DagsHub (`https://dagshub.com/Selim-Abouleila/ClimaSentinel.mlflow`). It logs:
 * **Parameters**: `n_estimators`, `max_depth`, `random_state`, `dvc_data_hash`, `git_commit`, `feature_schema_version`, and `forecast_horizons=1,2,3`.
 * **Global Metrics**: Overall Mean Absolute Error (`mae`), Mean Squared Error (`mse`), and Global R² (`r2`).
-* **Per-Horizon Metrics**: `mae_d1/d2/d3` and `r2_d1/d2/d3`, plus component metrics such as `r2_heat_score_d1` and `mae_heat_score_d1`. Promotion requires every horizon average and every individual component to pass the R² and MAE thresholds, preventing easy or constant targets from hiding a weak heat, wind, rain, air, or river model.
+* **Per-Horizon Metrics**: `mae_d1/d2/d3` and `r2_d1/d2/d3`, plus component metrics such as `r2_heat_score_d1` and `mae_heat_score_d1`. Promotion requires every horizon and component to reach R² ≥ 0.35. Horizon MAE must remain ≤ 7; individual component MAE must remain ≤ 7 except heat, whose more variable anomaly-and-velocity target has an explicit ≤ 10 tolerance. This prevents easy or constant targets from hiding a weak component without applying the aggregate MAE limit incorrectly to every output.
 * **Model Artifact**: The full Scikit-Learn preprocessing/model pipeline is logged to the MLflow artifact repository as `random_forest_model` and registered in the Model Registry under the name **`ClimaSentinel_RiskForecaster`**. MLflow receives a signature and representative input example for the raw, pre-preprocessing feature DataFrame.
 
 ---
