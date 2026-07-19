@@ -195,7 +195,7 @@ From the repository root:
 python -m model.extract_data
 dvc add model/data/training_snapshot.csv
 python -m model.train
-python model/promote.py
+python -m model.promote
 ```
 
 For local tests:
