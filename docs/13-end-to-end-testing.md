@@ -1,8 +1,9 @@
 # 13. End-to-End Testing
 
-Playwright validates the deployed staging frontend, backend, BigQuery serving
-mart and promoted MLflow artifact as one system. Unit tests remain responsible
-for formula boundaries and failure branches; E2E proves the live release wiring.
+Playwright validates the deployed staging frontend, backend and BigQuery serving
+mart as one system. MLflow challengers are evaluated separately. Unit tests
+remain responsible for formula boundaries and failure branches; E2E proves the
+live operational rule release.
 
 ## What the staging test verifies
 
@@ -10,15 +11,18 @@ for formula boundaries and failure branches; E2E proves the live release wiring.
 genuine Day +1, Day +2 and Day +3 selector. The test verifies that:
 
 - the page and city/horizon controls render without a server error;
-- the API reports `hybrid_ml_and_forecast_rules`;
-- Heat and Rain are identified as learned, ERA5-validated components;
-- Wind, Air Quality and River are identified as forecast-rule indicators;
-- rule-derived factors do not claim a tree-spread interval;
+- the API reports `forecast_rules_baseline` and
+  `same_vintage_forecast_rules`;
+- every factor is identified as a forecast rule;
+- Heat reports `era5_backtested_limited`, Rain reports
+  `era5_backtested_insufficient_skill`, and Wind, Air Quality and River report
+  `not_observation_validated`;
+- all component and aggregate interval fields are null;
 - unavailable optional-source factors remain unavailable rather than becoming
   zero-risk values;
-- the visible observed-label disclaimer remains present; and
-- the API's concrete `model_version` matches `EXPECTED_MODEL_VERSION`, the
-  exact candidate promoted by the same workflow run.
+- the visible validation-scope disclaimer remains present; and
+- `model_version` is null and no learned component is claimed by the
+  operational response.
 
 The test must not require every optional AQ or River source to be available.
 Those feeds have an explicit nullable contract. It should require coherent
@@ -29,16 +33,24 @@ method and availability rendering in either state.
 The live E2E job runs only from `.github/workflows/ci-staging.yml` after:
 
 1. backend tests pass;
-2. a schema-v3 `ClimaSentinel_HeatRainForecaster` candidate is trained and
+2. a schema-v3 `ClimaSentinel_HeatRainForecaster` challenger is trained and
    registered;
-3. the exact candidate passes Heat/Rain quality and artifact-contract gates;
-4. `champion` is assigned to that concrete version; and
-5. backend and frontend services are deployed to Railway staging.
+3. the exact challenger is evaluated; quality rejection is recorded without
+   moving `champion`, while operational/contract errors still fail the job;
+4. backend and frontend services are deployed to Railway staging using the
+   rule-baseline policy; and
+5. Playwright validates the live rule response.
 
-This order matters. Running E2E before promotion can test an older cached model,
-and deploying before quality gates can expose an incompatible legacy artifact.
-The workflow uses a non-canceling model-promotion concurrency group to avoid two
-runs moving the alias concurrently.
+This order proves that challenger evaluation completed and the deployed release
+remains available whether the candidate passed or was honestly rejected. The
+workflow uses a non-canceling model-promotion concurrency group to prevent two
+passing challengers from moving the alias concurrently.
+
+Railway deployments run in detached mode. Before Playwright starts, CI polls the
+staging `/forecast` HTML for the new rule-policy release marker for up to six
+minutes. The test then polls the backend API for the matching
+`forecast_rules_baseline:same_vintage_forecast_rules` contract before exercising
+all horizons. This avoids testing an old release or a rollout in progress.
 
 ## Directory structure
 
@@ -61,22 +73,18 @@ npx playwright install --with-deps chromium
 npm run test:e2e
 ```
 
-The default target is `http://localhost:3000`. Override it and, when required,
-pin the expected registered-model version:
+The default target is `http://localhost:3000`. Override it for a live target:
 
 ```bash
-PLAYWRIGHT_TEST_BASE_URL=https://your-staging-frontend.example \
-EXPECTED_MODEL_VERSION=42 \
-npm run test:e2e
+PLAYWRIGHT_TEST_BASE_URL=https://your-staging-frontend.example npm run test:e2e
 ```
 
 ## Failure interpretation
 
 - “Forecast unavailable” usually means the serving mart has no eligible current
-  vintage or the backend rejected/failed to load the registry artifact.
-- A model-version mismatch means the deployed backend did not serve the exact
-  candidate promoted in that run; this is a release failure even if scores
-  render.
+  vintage or the backend/data connection failed.
+- A learned method, non-null model version or non-null interval in the
+  operational response is a release-contract failure.
 - An unavailable AQ or River card by itself is not an E2E failure when the API
   marks it unavailable with the correct rule provenance.
 - A rule card displaying model confidence bounds, or a missing validation

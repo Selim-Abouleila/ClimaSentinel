@@ -44,26 +44,26 @@ export async function fetchCityScores(city_id: string): Promise<CityDetail | nul
   }
 }
 
-export type ForecastComponentMethod =
-  | 'learned_model'
-  | 'forecast_rule'
-  | 'development_fallback_rule';
+export type ForecastComponentMethod = 'forecast_rule';
 
 export type ForecastValidationStatus =
-  | 'era5_realized_validated'
+  | 'era5_backtested_limited'
+  | 'era5_backtested_insufficient_skill'
   | 'not_observation_validated';
 
-export type ForecastUncertaintyMethod = 'tree_spread_not_calibrated' | 'none';
+export type ForecastUncertaintyMethod = 'none';
 
 export interface SubScoreForecast {
   estimated_score: number | null;
-  ci_lower: number | null;
-  ci_upper: number | null;
-  confidence_margin: number | null;
+  ci_lower: null;
+  ci_upper: null;
+  confidence_margin: null;
   available: boolean;
   method: ForecastComponentMethod;
   validation_status: ForecastValidationStatus;
   uncertainty_method: ForecastUncertaintyMethod;
+  provenance: string;
+  method_reason: string;
   unavailable_reason: string | null;
 }
 
@@ -71,10 +71,10 @@ export interface CityForecast {
   city_id: string;
   horizon_days: number;
   prediction_date: string;
-  prediction_source: string;
-  model_version: string | null;
-  forecast_method: 'hybrid_ml_and_forecast_rules';
-  model_target_components: string[];
+  prediction_source: 'same_vintage_forecast_rules';
+  model_version: null;
+  forecast_method: 'forecast_rules_baseline';
+  model_target_components: [];
   rule_based_components: string[];
   feature_schema_version: string;
   feature_ingestion_run_id: string;
@@ -82,9 +82,9 @@ export interface CityForecast {
   forecast_origin_time_zone: string;
   current_tipping_score: number;
   estimated_total_tipping_score: number;
-  total_confidence_margin: number | null;
-  total_ci_lower: number | null;
-  total_ci_upper: number | null;
+  total_confidence_margin: null;
+  total_ci_lower: null;
+  total_ci_upper: null;
   total_uncertainty_method: ForecastUncertaintyMethod;
   forecast_primary_driver: string;
   forecast_primary_driver_method: ForecastComponentMethod;
