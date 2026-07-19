@@ -87,19 +87,19 @@ def test_integration_metrics_endpoint():
     assert "python_gc_" in resp.text or "http_requests" in resp.text
 
 
-# This test verifies the system's resilience by attempting a real connection
-# to BigQuery without valid credentials, ensuring it safely catches the 
-# authentication error and returns a 500 error instead of completely crashing.
+# This test verifies credential-failure handling without probing a real cloud
+# metadata endpoint. CI and local tests must remain hermetic.
 @pytest.mark.integration
 def test_integration_bq_auth_failure_handling():
     """
-    Test that when the application attempts to connect to BigQuery without valid
-    credentials (like in the CI environment without secrets), the exception is caught
-    and cleanly returns a 500 error instead of completely crashing the server.
+    Test that a BigQuery credential failure is caught and cleanly returned as a
+    500 response instead of crashing the server.
     """
-    # We do NOT mock get_bq_client here. We let it run the real integration code.
-    # It will hit an authentication error, which should be safely caught by our endpoint.
-    resp = client.get("/data/current-scores?limit=1")
+    with patch(
+        "app.main.get_bq_client",
+        side_effect=RuntimeError("Application default credentials unavailable"),
+    ):
+        resp = client.get("/data/current-scores?limit=1")
     
     assert resp.status_code == 500
     assert "Failed to retrieve data" in resp.json()["detail"]

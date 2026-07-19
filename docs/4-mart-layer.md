@@ -157,14 +157,22 @@ for that city instead of silently relabelling yesterday's horizons. Selecting
 serving features from the same feature mart is what removes the
 training/serving feature-definition skew.
 
-The current Python extractor and backend are not switched by this dbt-only
-change. After the marts have been run and their output has been approved, a
-separate integration change must:
+The Python integration now uses this contract directly:
 
-1. extract the versioned training snapshot from `mart_ml_training_examples`;
-2. train only against its realized Heat and Rain targets;
-3. query `mart_ml_serving_features_current` in the forecast endpoint; and
-4. verify the Python feature names and ordering against the dbt serving contract.
+1. `model/extract_data.py` snapshots `mart_ml_training_examples` without
+   reconstructing labels or filling optional forecast sources;
+2. schema-v3 training learns only the six realized Heat/Rain targets (two
+   components for each of Day +1, Day +2 and Day +3);
+3. the backend queries `mart_ml_serving_features_current` and validates the
+   ordered feature contract before inference; and
+4. Wind, Air Quality and River are calculated from the requested horizon's raw
+   same-vintage forecast values, never from observed-label claims or another
+   horizon's values.
+
+The fitted artifact is registered as `ClimaSentinel_HeatRainForecaster`. A
+four-day purge separates training and evaluation dates because the Day +3 Heat
+label depends on realized Day +4 temperature. This closes the remaining
+training/serving skew without pretending unsupported labels exist.
 
 ## Observed-label limitation and required product disclaimer
 
@@ -208,8 +216,8 @@ stg_city_signal_input
 Point-in-time ML path
 stg_city_signal_vintage
     └──► mart_ml_forecast_features_vintage
-             ├──► mart_ml_serving_features_current ──► backend (next change)
-             └──► mart_ml_training_examples ──► DVC snapshot (next change)
+             ├──► mart_ml_serving_features_current ──► hybrid backend forecast
+             └──► mart_ml_training_examples ──► DVC snapshot ──► Heat/Rain model
                         ▲
 stg_latest_historical_daily
     └──► mart_city_realized_weather_daily
@@ -236,12 +244,21 @@ passing cannot compensate for a failed same-vintage staging lineage test.
 ## Deployment and approval sequence
 
 1. Run the vintage staging models and tests.
-2. Build the four new ML marts.
+2. Build the four ML marts.
 3. Run schema and singular mart tests.
 4. Inspect row counts, origin-date coverage, missing optional sources and label
    maturity by horizon.
-5. Approve a deterministic `mart_ml_training_examples` snapshot.
-6. Only then switch the extractor, training pipeline and backend serving query.
+5. Extract and DVC-track a deterministic `mart_ml_training_examples` snapshot.
+6. Train and register a schema-v3 `ClimaSentinel_HeatRainForecaster` candidate.
+7. Promote the exact candidate version only if every learned Heat/Rain horizon
+   passes its quality gates.
+8. Deploy the backend and frontend together, then verify the hybrid response in
+   staging E2E tests.
+
+The MLOps workflow publishes the DVC object and commits its pointer only after
+extraction, contract validation, training and registry logging succeed. Model
+promotion remains a separate downstream gate; a registered version that fails
+quality thresholds does not receive the `champion` alias or deploy.
 
 At the current scale these marts intentionally use straightforward full-refresh
 tables plus one serving view. Incremental materialization can be introduced when

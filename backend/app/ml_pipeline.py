@@ -13,10 +13,15 @@ from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder
 
 
-FEATURE_SCHEMA_VERSION = "2"
+FEATURE_SCHEMA_VERSION = "3"
+TARGET_SCHEMA_VERSION = "realized_heat_rain_v1"
+TRAINING_DATA_CONTRACT = "mart_ml_training_examples_v1"
+REGISTERED_MODEL_NAME = "ClimaSentinel_HeatRainForecaster"
 
 FORECAST_HORIZONS = (1, 2, 3)
-TARGET_SCORE_NAMES = ("heat", "wind", "rain", "air", "river")
+TARGET_SCORE_NAMES = ("heat", "rain")
+RULE_BASED_SCORE_NAMES = ("wind", "air", "river")
+MAX_LABEL_LOOKAHEAD_DAYS = max(FORECAST_HORIZONS) + 1
 
 NUMERIC_FEATURE_COLUMNS = (
     "current_tipping_score",
@@ -88,7 +93,7 @@ class ModelCompatibilityError(ValueError):
 
 
 def output_slice_for_horizon(horizon_days: int) -> slice:
-    """Return the five-output slice belonging to one forecast horizon."""
+    """Return the learned Heat/Rain slice belonging to one forecast horizon."""
     if horizon_days not in FORECAST_HORIZONS:
         raise ModelCompatibilityError(
             f"Unsupported forecast horizon {horizon_days}; expected one of "
@@ -103,9 +108,9 @@ def chronological_purged_split(
     targets: pd.DataFrame,
     dates: pd.Series,
     test_fraction: float = 0.2,
-    purge_days: int = max(FORECAST_HORIZONS),
+    purge_days: int = MAX_LABEL_LOOKAHEAD_DAYS,
 ):
-    """Split on whole dates and purge targets overlapping the test window."""
+    """Split on dates and purge every label dependency crossing the test window."""
     parsed_dates = pd.to_datetime(dates, errors="raise")
     unique_dates = pd.Index(parsed_dates.unique()).sort_values()
     if len(unique_dates) < 6:
@@ -172,7 +177,7 @@ def build_model_pipeline(model_params: Mapping[str, Any] | None = None) -> Pipel
         transformers=[
             (
                 "numeric",
-                SimpleImputer(strategy="median"),
+                SimpleImputer(strategy="median", add_indicator=True),
                 list(NUMERIC_FEATURE_COLUMNS),
             ),
             (
@@ -189,7 +194,7 @@ def build_model_pipeline(model_params: Mapping[str, Any] | None = None) -> Pipel
         remainder="drop",
     )
 
-    return Pipeline(
+    pipeline = Pipeline(
         steps=[
             ("preprocessor", preprocessor),
             (
@@ -198,6 +203,16 @@ def build_model_pipeline(model_params: Mapping[str, Any] | None = None) -> Pipel
             ),
         ]
     )
+    # Persist the ordered semantic contract inside the artifact itself. MLflow
+    # run parameters are useful for promotion, but they are not sufficient to
+    # prove that a loaded six-output estimator uses the expected target order.
+    pipeline.climasentinel_feature_schema_version = FEATURE_SCHEMA_VERSION
+    pipeline.climasentinel_target_schema_version = TARGET_SCHEMA_VERSION
+    pipeline.climasentinel_training_data_contract = TRAINING_DATA_CONTRACT
+    pipeline.climasentinel_forecast_horizons = FORECAST_HORIZONS
+    pipeline.climasentinel_target_columns = TARGET_COLUMNS
+    pipeline.climasentinel_target_score_names = TARGET_SCORE_NAMES
+    return pipeline
 
 
 def validate_fitted_pipeline(model: Any) -> Pipeline:
@@ -215,6 +230,22 @@ def validate_fitted_pipeline(model: Any) -> Pipeline:
             "Incompatible model artifact: missing pipeline steps "
             + ", ".join(sorted(missing_steps))
         )
+
+    expected_contract = {
+        "climasentinel_feature_schema_version": FEATURE_SCHEMA_VERSION,
+        "climasentinel_target_schema_version": TARGET_SCHEMA_VERSION,
+        "climasentinel_training_data_contract": TRAINING_DATA_CONTRACT,
+        "climasentinel_forecast_horizons": FORECAST_HORIZONS,
+        "climasentinel_target_columns": TARGET_COLUMNS,
+        "climasentinel_target_score_names": TARGET_SCORE_NAMES,
+    }
+    for attribute, expected_value in expected_contract.items():
+        actual_value = getattr(model, attribute, None)
+        if actual_value != expected_value:
+            raise ModelCompatibilityError(
+                "Incompatible model artifact: contract field "
+                f"{attribute} does not match"
+            )
 
     preprocessor = model.named_steps["preprocessor"]
     if not isinstance(preprocessor, ColumnTransformer):

@@ -1,6 +1,6 @@
 """Focused offline tests for shared training and forecast inference behavior."""
 
-from datetime import date
+from datetime import date, datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -17,6 +17,7 @@ from app.ml_pipeline import (
     NUMERIC_FEATURE_COLUMNS,
     TARGET_COLUMNS,
     TARGET_COLUMNS_BY_HORIZON,
+    REGISTERED_MODEL_NAME,
     build_model_pipeline,
     chronological_purged_split,
     predict_with_ensemble_spread,
@@ -64,16 +65,29 @@ def _fit_tiny_pipeline(frame: pd.DataFrame):
     return model
 
 
-def _mock_feature_store_row(frame: pd.DataFrame) -> dict:
+def _mock_serving_feature_row(frame: pd.DataFrame) -> dict:
     row = frame.iloc[0].loc[list(FEATURE_COLUMNS)].to_dict()
     row.update(
         {
             "city_id": "paris_fr",
-            "date": date(2026, 7, 17),
-            "real_current_tipping_score": 61.0,
-            "real_primary_driver": "Heat",
+            "forecast_origin_date": date(2026, 7, 17),
+            "forecast_origin_time_zone": "Europe/Paris",
+            "ingestion_run_id": "run-2026-07-17",
+            "ingested_at_utc": datetime(2026, 7, 17, 5, tzinfo=timezone.utc),
+            "forecast_age_days": 0,
+            "is_canonical_daily_vintage": True,
+            "has_expected_horizon_dates": True,
+            "has_complete_weather_feature_window": True,
+            "current_tipping_score": 61.0,
         }
     )
+    for horizon in range(1, 5):
+        row[f"weather_has_24_hour_coverage_plus_{horizon}d"] = True
+        row[f"has_complete_weather_values_plus_{horizon}d"] = True
+        row[f"has_air_quality_forecast_plus_{horizon}d"] = True
+        row[f"air_quality_has_24_hour_coverage_plus_{horizon}d"] = True
+        row[f"has_complete_air_quality_values_plus_{horizon}d"] = True
+        row[f"has_flood_forecast_plus_{horizon}d"] = True
     return row
 
 
@@ -92,7 +106,7 @@ def test_shared_pipeline_fits_and_predicts_raw_features(synthetic_training_data)
         synthetic_training_data.loc[:5, list(FEATURE_COLUMNS)]
     )
 
-    assert predictions.shape == (6, 15)
+    assert predictions.shape == (6, 6)
     assert np.isfinite(predictions).all()
 
 
@@ -115,6 +129,35 @@ def test_prepare_feature_frame_identifies_missing_column(synthetic_training_data
         prepare_feature_frame(incomplete)
 
 
+def test_pipeline_preserves_nullable_optional_feature_contract(
+    synthetic_training_data,
+):
+    nullable = synthetic_training_data.copy()
+    nullable.loc[::2, "european_aqi_max"] = None
+    nullable.loc[1::2, "river_forecast_plus_3d"] = None
+
+    model = _fit_tiny_pipeline(nullable)
+    predictions = model.predict(
+        nullable.loc[:3, list(FEATURE_COLUMNS)]
+    )
+
+    assert predictions.shape == (4, 6)
+    assert np.isfinite(predictions).all()
+
+
+def test_artifact_without_embedded_semantic_contract_is_rejected(
+    synthetic_training_data,
+):
+    model = _fit_tiny_pipeline(synthetic_training_data)
+    del model.climasentinel_target_schema_version
+
+    with pytest.raises(ValueError, match="contract field"):
+        predict_with_ensemble_spread(
+            model,
+            synthetic_training_data.loc[:1, list(FEATURE_COLUMNS)],
+        )
+
+
 def test_chronological_split_groups_dates_and_purges_target_overlap():
     dates = pd.Series(
         np.repeat(pd.date_range("2026-01-01", periods=10, freq="D"), 2)
@@ -129,9 +172,9 @@ def test_chronological_split_groups_dates_and_purges_target_overlap():
     )
 
     assert test_start == pd.Timestamp("2026-01-09")
-    assert X_train["date_marker"].max() == pd.Timestamp("2026-01-05")
+    assert X_train["date_marker"].max() == pd.Timestamp("2026-01-04")
     assert X_test["date_marker"].min() == test_start
-    assert len(X_train) == len(y_train) == 10
+    assert len(X_train) == len(y_train) == 8
     assert len(X_test) == len(y_test) == 4
 
 
@@ -143,8 +186,8 @@ def test_multioutput_tree_traversal_returns_per_output_spread(
 
     predictions, spread = predict_with_ensemble_spread(model, prediction_rows)
 
-    assert predictions.shape == (8, 15)
-    assert spread.shape == (8, 15)
+    assert predictions.shape == (8, 6)
+    assert spread.shape == (8, 6)
     assert np.isfinite(predictions).all()
     assert np.isfinite(spread).all()
     assert not np.allclose(spread, spread[0, 0])
@@ -163,8 +206,8 @@ def test_shared_pipeline_returns_only_requested_horizon_outputs(
         horizon_days=horizon_days,
     )
 
-    assert predictions.shape == (6, 5)
-    assert spread.shape == (6, 5)
+    assert predictions.shape == (6, 2)
+    assert spread.shape == (6, 2)
     assert np.isfinite(predictions).all()
     assert np.isfinite(spread).all()
 
@@ -213,7 +256,7 @@ def test_legacy_day_three_only_artifact_is_rejected(synthetic_training_data):
         ],
     )
 
-    with pytest.raises(ValueError, match="expected 15 fitted output estimators"):
+    with pytest.raises(ValueError, match="expected 6 fitted output estimators"):
         predict_with_ensemble_spread(
             legacy_model,
             synthetic_training_data.loc[:1, list(FEATURE_COLUMNS)],
@@ -226,13 +269,13 @@ def test_endpoint_does_not_forward_fill_short_horizon_features(
     synthetic_training_data,
     horizon_days,
 ):
-    row = _mock_feature_store_row(synthetic_training_data)
+    row = _mock_serving_feature_row(synthetic_training_data)
     bq_client = _mock_bigquery_client(row)
     captured_features = {}
 
     def capture_prediction(_model, raw_features, horizon_days):
         captured_features.update(raw_features)
-        return np.full((1, 5), 10.0), np.zeros((1, 5))
+        return np.full((1, 2), 10.0), np.zeros((1, 2))
 
     loaded_model = main.LoadedModel(
         estimator=object(),
@@ -253,23 +296,29 @@ def test_endpoint_does_not_forward_fill_short_horizon_features(
         )
 
     assert response.status_code == 200
+    submitted_query = bq_client.query.call_args.args[0]
+    assert "mart_ml_serving_features_current" in submitted_query
+    assert "mart_ml_feature_store" not in submitted_query
+    assert "mart_city_score_current" not in submitted_query
     for prefix in ("temp_forecast_plus_", "precip_forecast_plus_", "wind_forecast_plus_"):
         for day in range(1, 4):
             column = f"{prefix}{day}d"
             assert captured_features[column] == row[column]
 
 
-def test_production_model_failure_returns_503_without_fallback(
+@pytest.mark.parametrize("environment", [" production ", "staging"])
+def test_deployed_model_failure_returns_503_without_fallback(
     synthetic_training_data,
+    environment,
 ):
-    row = _mock_feature_store_row(synthetic_training_data)
+    row = _mock_serving_feature_row(synthetic_training_data)
     bq_client = _mock_bigquery_client(row)
 
     with (
         patch("app.main.get_bq_client", return_value=bq_client),
         patch("app.main._get_ml_model", return_value=None),
-        patch("app.main._heuristic_predictions") as fallback,
-        patch.object(main.settings, "ENVIRONMENT", " production "),
+        patch("app.main._development_heat_rain_estimates") as fallback,
+        patch.object(main.settings, "ENVIRONMENT", environment),
     ):
         response = TestClient(main.app).get("/data/city/paris_fr/forecast")
 
@@ -280,21 +329,69 @@ def test_production_model_failure_returns_503_without_fallback(
     fallback.assert_not_called()
 
 
-def test_non_production_fallback_reports_provenance(synthetic_training_data):
-    row = _mock_feature_store_row(synthetic_training_data)
+def test_local_development_fallback_reports_provenance(synthetic_training_data):
+    row = _mock_serving_feature_row(synthetic_training_data)
     bq_client = _mock_bigquery_client(row)
 
     with (
         patch("app.main.get_bq_client", return_value=bq_client),
         patch("app.main._get_ml_model", return_value=None),
-        patch.object(main.settings, "ENVIRONMENT", "staging"),
+        patch.object(main.settings, "ENVIRONMENT", "development"),
     ):
         response = TestClient(main.app).get("/data/city/paris_fr/forecast")
 
     assert response.status_code == 200
     body = response.json()
-    assert body["prediction_source"] == "heuristic_fallback"
+    assert body["prediction_source"] == "development_fallback_rule"
     assert body["model_version"] is None
+    assert (
+        body["sub_scores_forecast"]["heat_score"]["method"]
+        == "development_fallback_rule"
+    )
+    assert body["sub_scores_forecast"]["heat_score"]["ci_lower"] is None
+
+
+def test_rule_driver_does_not_inherit_a_model_uncertainty_band():
+    learned = main._build_learned_components([20.0, 10.0], [2.0, 1.0])
+    rule = {
+        "wind_score": {
+            "estimated_score": 80.0,
+            "ci_lower": None,
+            "ci_upper": None,
+            "confidence_margin": None,
+            "available": True,
+            "method": "forecast_rule",
+            "validation_status": "not_observation_validated",
+            "uncertainty_method": "none",
+            "unavailable_reason": None,
+        },
+        "air_score": {
+            "estimated_score": None,
+            "ci_lower": None,
+            "ci_upper": None,
+            "confidence_margin": None,
+            "available": False,
+            "method": "forecast_rule",
+            "validation_status": "not_observation_validated",
+            "uncertainty_method": "none",
+            "unavailable_reason": "source missing",
+        },
+        "river_score": {
+            "estimated_score": 0.0,
+            "ci_lower": None,
+            "ci_upper": None,
+            "confidence_margin": None,
+            "available": True,
+            "method": "forecast_rule",
+            "validation_status": "not_observation_validated",
+            "uncertainty_method": "none",
+            "unavailable_reason": None,
+        },
+    }
+
+    summary = main._summarize_components({**learned, **rule})
+
+    assert summary == ("Wind", "forecast_rule", 80.0, None, None, None, "none")
 
 
 def test_registry_alias_resolves_to_exact_version_without_latest_apis():
@@ -311,12 +408,12 @@ def test_registry_alias_resolves_to_exact_version_without_latest_apis():
         reference = main._resolve_registry_model_reference(client)
 
     assert reference == main.ResolvedModelReference(
-        model_uri="models:/ClimaSentinel_RiskForecaster/7",
+        model_uri=f"models:/{REGISTERED_MODEL_NAME}/7",
         model_version="7",
         model_alias="champion",
     )
     client.get_model_version_by_alias.assert_called_once_with(
-        "ClimaSentinel_RiskForecaster",
+        REGISTERED_MODEL_NAME,
         "champion",
     )
     client.search_model_versions.assert_not_called()
@@ -337,12 +434,12 @@ def test_explicit_version_pin_overrides_alias():
         reference = main._resolve_registry_model_reference(client)
 
     assert reference == main.ResolvedModelReference(
-        model_uri="models:/ClimaSentinel_RiskForecaster/8",
+        model_uri=f"models:/{REGISTERED_MODEL_NAME}/8",
         model_version="8",
         model_alias=None,
     )
     client.get_model_version.assert_called_once_with(
-        "ClimaSentinel_RiskForecaster",
+        REGISTERED_MODEL_NAME,
         "8",
     )
     client.get_model_version_by_alias.assert_not_called()
@@ -380,7 +477,7 @@ def test_blank_version_pin_uses_configured_alias():
     assert reference.model_version == "9"
     assert reference.model_alias == "candidate-approved"
     client.get_model_version_by_alias.assert_called_once_with(
-        "ClimaSentinel_RiskForecaster",
+        REGISTERED_MODEL_NAME,
         "candidate-approved",
     )
 
@@ -400,7 +497,7 @@ def test_blank_alias_defaults_to_champion():
 
     assert reference.model_alias == "champion"
     client.get_model_version_by_alias.assert_called_once_with(
-        "ClimaSentinel_RiskForecaster",
+        REGISTERED_MODEL_NAME,
         "champion",
     )
 
@@ -423,7 +520,7 @@ def test_missing_alias_raises_clear_compatibility_error():
 def test_successful_ml_forecast_reports_loaded_model_provenance(
     synthetic_training_data,
 ):
-    row = _mock_feature_store_row(synthetic_training_data)
+    row = _mock_serving_feature_row(synthetic_training_data)
     bq_client = _mock_bigquery_client(row)
     loaded_model = main.LoadedModel(
         estimator=_fit_tiny_pipeline(synthetic_training_data),
@@ -434,7 +531,7 @@ def test_successful_ml_forecast_reports_loaded_model_provenance(
     with (
         patch("app.main.get_bq_client", return_value=bq_client),
         patch("app.main._get_ml_model", return_value=loaded_model),
-        patch("app.main._heuristic_predictions") as fallback,
+        patch("app.main._development_heat_rain_estimates") as fallback,
         patch.object(main.settings, "ENVIRONMENT", "production"),
     ):
         responses = [
@@ -449,6 +546,21 @@ def test_successful_ml_forecast_reports_loaded_model_provenance(
     assert [body["horizon_days"] for body in bodies] == list(FORECAST_HORIZONS)
     assert all(body["prediction_source"] == "mlflow_registry" for body in bodies)
     assert all(body["model_version"] == "18" for body in bodies)
+    assert all(
+        body["forecast_method"] == "hybrid_ml_and_forecast_rules"
+        for body in bodies
+    )
+    for body in bodies:
+        components = body["sub_scores_forecast"]
+        assert components["heat_score"]["method"] == "learned_model"
+        assert (
+            components["rain_score"]["validation_status"]
+            == "era5_realized_validated"
+        )
+        assert components["wind_score"]["method"] == "forecast_rule"
+        assert components["air_score"]["ci_lower"] is None
+        assert components["river_score"]["uncertainty_method"] == "none"
+        assert body["feature_ingestion_run_id"] == "run-2026-07-17"
     assert (
         bodies[0]["estimated_total_tipping_score"]
         < bodies[1]["estimated_total_tipping_score"]
