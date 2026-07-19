@@ -79,7 +79,7 @@ jobs:
         run: python -m pip install -r backend/requirements.txt
 
       - name: Run Heat/Rain quality gates and assign champion
-        run: python model/promote.py
+        run: python -m model.promote
         env:
           DAGSHUB_USERNAME: ${{ secrets.DAGSHUB_USERNAME }}
           DAGSHUB_USER_TOKEN: ${{ secrets.DAGSHUB_USER_TOKEN || secrets.DAGSHUB_TOKEN }}
