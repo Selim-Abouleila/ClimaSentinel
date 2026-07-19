@@ -7,6 +7,7 @@ Endpoints:
 """
 
 import logging
+import math
 import os
 import time
 from contextlib import asynccontextmanager
@@ -21,11 +22,17 @@ from google.cloud import bigquery
 from prometheus_fastapi_instrumentator import Instrumentator
 
 from .config import get_settings
+from .forecast_rules import forecast_rule_estimates
 from .ml_pipeline import (
+    FEATURE_SCHEMA_VERSION,
+    REGISTERED_MODEL_NAME,
+    RULE_BASED_SCORE_NAMES,
+    TARGET_SCORE_NAMES,
     ModelCompatibilityError,
     predict_with_ensemble_spread,
     validate_fitted_pipeline,
 )
+from .schemas import CityForecastResponse
 
 log = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s  %(levelname)-8s  %(message)s")
@@ -34,7 +41,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s  %(levelname)-8s  %(
 _start_time: float = 0.0
 
 # ── Cached ML Model (loaded once at first request) ──────────────────────
-MODEL_NAME = "ClimaSentinel_RiskForecaster"
+MODEL_NAME = REGISTERED_MODEL_NAME
 SUB_SCORE_NAMES = (
     "heat_score",
     "wind_score",
@@ -42,6 +49,15 @@ SUB_SCORE_NAMES = (
     "air_score",
     "river_score",
 )
+
+LEARNED_SUB_SCORE_NAMES = tuple(f"{name}_score" for name in TARGET_SCORE_NAMES)
+DRIVER_LABELS = {
+    "heat_score": "Heat",
+    "wind_score": "Wind",
+    "rain_score": "Rain",
+    "air_score": "Air Quality",
+    "river_score": "River/Flood",
+}
 
 
 @dataclass(frozen=True)
@@ -126,7 +142,8 @@ def _resolve_registry_model_reference(client) -> ResolvedModelReference:
 
 
 def _allow_local_artifact() -> bool:
-    return not _is_production()
+    return _allow_development_fallback()
+
 
 def _get_ml_model():
     """Load and cache the ML model. Downloads once, reuses forever."""
@@ -136,7 +153,7 @@ def _get_ml_model():
     
     import joblib
     
-    # Local artifacts are a development/staging convenience only.
+    # Local artifacts are an explicit local-development convenience only.
     model_path = os.path.join(os.path.dirname(__file__), "risk_forecaster.pkl")
     if _allow_local_artifact() and os.path.exists(model_path):
         try:
@@ -159,7 +176,14 @@ def _get_ml_model():
     try:
         if os.environ.get("DAGSHUB_USER_TOKEN"):
             import dagshub
-            dagshub.init(repo_owner=os.environ.get("DAGSHUB_USERNAME", "Selim-Abouleila"), repo_name="ClimaSentinel", mlflow=True)
+            dagshub.init(
+                repo_owner=os.environ.get(
+                    "DAGSHUB_USERNAME",
+                    "Selim-Abouleila",
+                ),
+                repo_name="ClimaSentinel",
+                mlflow=True,
+            )
         import mlflow.sklearn
         from mlflow.tracking import MlflowClient
 
@@ -195,67 +219,185 @@ def _get_ml_model():
         return None
 
 
-def _is_production() -> bool:
-    return settings.ENVIRONMENT.strip().lower() == "production"
+def _environment_name() -> str:
+    return settings.ENVIRONMENT.strip().lower()
 
 
-def _heuristic_predictions(row: dict[str, Any], horizon_days: int):
-    """Return the existing temporary non-production fallback and its spread."""
-    base = float(
-        row.get("real_current_tipping_score")
-        or row.get("current_tipping_score")
-        or 50.0
+def _is_deployed_environment() -> bool:
+    return _environment_name() in {"staging", "production"}
+
+
+def _allow_development_fallback() -> bool:
+    return _environment_name() in {"development", "dev", "local", "test"}
+
+
+def _finite_float(value: Any) -> float | None:
+    if value is None:
+        return None
+    try:
+        numeric_value = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(numeric_value):
+        return None
+    return numeric_value
+
+
+def _clip_score(value: float) -> float:
+    return round(float(np.clip(value, 0.0, 100.0)), 1)
+
+
+def _development_heat_rain_estimates(
+    row: dict[str, Any],
+    horizon_days: int,
+) -> np.ndarray:
+    """Return explicit local-only rule estimates for Heat and Rain.
+
+    This path exists so a developer can render the page without registry
+    credentials. It is intentionally disabled in staging and production and is
+    never presented as an observation-validated model prediction.
+    """
+    temperature = _finite_float(
+        row.get(f"temp_forecast_plus_{horizon_days}d")
     )
-    t_max = float(row.get(f"temp_forecast_plus_{horizon_days}d") or 25.0)
-    p_sum = float(row.get(f"precip_forecast_plus_{horizon_days}d") or 0.0)
-    w_max = float(row.get(f"wind_forecast_plus_{horizon_days}d") or 20.0)
-    river_disc = float(row.get("river_discharge_m3s") or 0.0)
-
-    scores = np.asarray(
-        [
-            min(100.0, max(0.0, base * 0.4 + (t_max - 20.0) * 2.5)),
-            min(
-                100.0,
-                max(0.0, (w_max - 30.0) * 2.0 if w_max > 30 else base * 0.2),
-            ),
-            min(100.0, max(0.0, p_sum * 5.0 if p_sum > 0 else base * 0.2)),
-            min(100.0, max(0.0, base * 0.8)),
-            min(100.0, max(0.0, base * 0.5 if river_disc > 0 else 0.0)),
-        ],
-        dtype=float,
+    next_temperature = _finite_float(
+        row.get(f"temp_forecast_plus_{horizon_days + 1}d")
     )
-    standard_deviations = np.where(scores > 0, scores * 0.12, 0.0)
-    return scores, standard_deviations
+    normal_temperature = _finite_float(row.get("normal_temperature_2m_max"))
+    precipitation = _finite_float(
+        row.get(f"precip_forecast_plus_{horizon_days}d")
+    )
+    if None in (
+        temperature,
+        next_temperature,
+        normal_temperature,
+        precipitation,
+    ):
+        raise ModelCompatibilityError(
+            "Development fallback requires complete same-vintage Heat/Rain inputs"
+        )
+
+    heat_score = (
+        (temperature - normal_temperature) * 5.0
+        + max(0.0, next_temperature - temperature) * 5.0
+    )
+    rain_score = precipitation * 2.0
+    return np.asarray([_clip_score(heat_score), _clip_score(rain_score)])
 
 
-def _build_forecast_statistics(predictions, standard_deviations):
-    """Apply the existing interval formula to five validated sub-scores."""
+def _build_learned_components(
+    predictions: Any,
+    standard_deviations: Any,
+) -> dict[str, dict[str, Any]]:
+    """Build uncalibrated tree-spread bands for learned Heat/Rain outputs."""
     predictions = np.asarray(predictions, dtype=float)
     standard_deviations = np.asarray(standard_deviations, dtype=float)
-    expected_shape = (len(SUB_SCORE_NAMES),)
-    if predictions.shape != expected_shape or standard_deviations.shape != expected_shape:
+    expected_shape = (len(LEARNED_SUB_SCORE_NAMES),)
+    if (
+        predictions.shape != expected_shape
+        or standard_deviations.shape != expected_shape
+    ):
         raise ModelCompatibilityError(
-            "Forecast prediction and spread must each contain exactly five values"
+            "Forecast prediction and spread must each contain exactly two values"
         )
-    if not np.isfinite(predictions).all() or not np.isfinite(standard_deviations).all():
+    if (
+        not np.isfinite(predictions).all()
+        or not np.isfinite(standard_deviations).all()
+    ):
         raise ModelCompatibilityError("Forecast prediction and spread must be finite")
 
-    clipped_predictions = np.clip(predictions, 0.0, 100.0)
-    confidence_intervals = {}
-    for index, name in enumerate(SUB_SCORE_NAMES):
-        mean_value = clipped_predictions[index]
-        margin = 1.96 * standard_deviations[index]
-        confidence_intervals[name] = {
-            "estimated_score": round(float(mean_value), 1),
-            "ci_lower": round(float(max(0.0, mean_value - margin)), 1),
-            "ci_upper": round(float(min(100.0, mean_value + margin)), 1),
-            "confidence_margin": round(float(margin), 1),
+    components: dict[str, dict[str, Any]] = {}
+    for index, name in enumerate(LEARNED_SUB_SCORE_NAMES):
+        score = _clip_score(predictions[index])
+        margin = round(float(1.96 * max(0.0, standard_deviations[index])), 1)
+        components[name] = {
+            "estimated_score": score,
+            "ci_lower": round(max(0.0, score - margin), 1),
+            "ci_upper": round(min(100.0, score + margin), 1),
+            "confidence_margin": margin,
+            "available": True,
+            "method": "learned_model",
+            "validation_status": "era5_realized_validated",
+            "uncertainty_method": "tree_spread_not_calibrated",
+            "unavailable_reason": None,
         }
+    return components
 
-    driver_index = int(np.argmax(clipped_predictions))
-    total_estimated = round(float(clipped_predictions[driver_index]), 1)
-    total_margin = round(float(1.96 * standard_deviations[driver_index]), 1)
-    return confidence_intervals, total_estimated, total_margin
+
+def _build_development_components(
+    predictions: Any,
+) -> dict[str, dict[str, Any]]:
+    """Build explicitly unvalidated local Heat/Rain fallback components."""
+    predictions = np.asarray(predictions, dtype=float)
+    if predictions.shape != (len(LEARNED_SUB_SCORE_NAMES),):
+        raise ModelCompatibilityError(
+            "Development fallback must contain exactly two values"
+        )
+    if not np.isfinite(predictions).all():
+        raise ModelCompatibilityError("Development fallback values must be finite")
+
+    return {
+        name: {
+            "estimated_score": _clip_score(predictions[index]),
+            "ci_lower": None,
+            "ci_upper": None,
+            "confidence_margin": None,
+            "available": True,
+            "method": "development_fallback_rule",
+            "validation_status": "not_observation_validated",
+            "uncertainty_method": "none",
+            "unavailable_reason": None,
+        }
+        for index, name in enumerate(LEARNED_SUB_SCORE_NAMES)
+    }
+
+
+def _build_rule_components(
+    row: dict[str, Any],
+    horizon_days: int,
+) -> dict[str, dict[str, Any]]:
+    estimates = forecast_rule_estimates(row, horizon_days)
+    return {
+        name: {
+            "estimated_score": estimate.score,
+            "ci_lower": None,
+            "ci_upper": None,
+            "confidence_margin": None,
+            "available": estimate.available,
+            "method": "forecast_rule",
+            "validation_status": "not_observation_validated",
+            "uncertainty_method": "none",
+            "unavailable_reason": estimate.unavailable_reason,
+        }
+        for name, estimate in estimates.items()
+    }
+
+
+def _summarize_components(
+    components: dict[str, dict[str, Any]],
+) -> tuple[str, str, float, float | None, float | None, float | None, str]:
+    available_components = {
+        name: component
+        for name, component in components.items()
+        if component["available"] and component["estimated_score"] is not None
+    }
+    if not available_components:
+        raise ModelCompatibilityError("Forecast produced no available components")
+
+    driver_name, driver = max(
+        available_components.items(),
+        key=lambda item: float(item[1]["estimated_score"]),
+    )
+    total = float(driver["estimated_score"])
+    return (
+        DRIVER_LABELS[driver_name],
+        driver["method"],
+        total,
+        driver["confidence_margin"],
+        driver["ci_lower"],
+        driver["ci_upper"],
+        driver["uncertainty_method"],
+    )
 
 
 # ── Lifespan (startup / shutdown) ────────────────────────────────────────
@@ -437,32 +579,35 @@ def get_city_scores(city_id: str):
         raise HTTPException(status_code=500, detail="Failed to retrieve city scores")
 
 
-@app.get("/data/city/{city_id}/forecast", tags=["Data"])
+@app.get(
+    "/data/city/{city_id}/forecast",
+    tags=["Data"],
+    response_model=CityForecastResponse,
+)
 def get_city_forecast(
     city_id: str,
     horizon_days: int = Query(default=3, ge=1, le=3, description="Forecast horizon in days (1-3)")
 ):
     """
-    Returns the N-day future climate tipping forecast for a single city.
-    Selects the genuine horizon-specific outputs trained for Day +1, +2, or +3.
-    Fetches the pre-computed weather trajectory from `mart_ml_feature_store`,
-    runs inference via the Multi-Output Random Forest model, and calculates
-    individual sub-scores, total tipping risk, and 95% confidence intervals.
+    Return the hybrid Day +1, +2 or +3 forecast for one city.
+
+    Heat and Rain come from an ERA5-realized-label model. Wind, Air Quality and
+    River/Flood remain deterministic indicators calculated from the same exact
+    forecast vintage. Missing optional sources remain unavailable rather than
+    being reported as zero. Only learned components expose an uncalibrated
+    tree-spread band.
     """
     try:
         client = get_bq_client()
         query = f"""
-            SELECT 
-                m.*, 
-                c.current_tipping_score AS real_current_tipping_score,
-                c.current_primary_driver AS real_primary_driver
-            FROM `{settings.GCP_PROJECT_ID}.{settings.BQ_DATASET}.mart_ml_feature_store` m
-            INNER JOIN `{settings.GCP_PROJECT_ID}.{settings.BQ_DATASET}.mart_city_score_current` c
-                ON m.city_id = c.city_id
-            WHERE m.city_id = @city_id
-              AND m.date = CURRENT_DATE('UTC')
-              AND m.temp_forecast_plus_3d IS NOT NULL
-            ORDER BY m.date DESC
+            SELECT *
+            FROM `{settings.GCP_PROJECT_ID}.{settings.BQ_DATASET}.mart_ml_serving_features_current`
+            WHERE city_id = @city_id
+              AND forecast_age_days = 0
+              AND is_canonical_daily_vintage
+              AND has_expected_horizon_dates
+              AND has_complete_weather_feature_window
+            ORDER BY ingested_at_utc DESC, ingestion_run_id DESC
             LIMIT 1
         """
         job_config = bigquery.QueryJobConfig(
@@ -476,15 +621,16 @@ def get_city_forecast(
         if not rows:
             raise HTTPException(
                 status_code=404,
-                detail=f"City '{city_id}' not found in mart_ml_feature_store"
+                detail=(
+                    f"City '{city_id}' has no current complete point-in-time "
+                    "serving feature row"
+                ),
             )
 
         row = dict(rows[0])
-        
-        # ── ML Model Inference & Confidence Intervals ──
-        feature_row = dict(row)
-        feature_row["current_tipping_score"] = row["real_current_tipping_score"]
-        
+
+        # Heat/Rain inference. The mart row is already the authoritative raw
+        # feature contract; do not overwrite it from another operational mart.
         try:
             loaded_model = _get_ml_model()
             if loaded_model is None:
@@ -492,20 +638,22 @@ def get_city_forecast(
 
             all_predictions, all_standard_deviations = predict_with_ensemble_spread(
                 loaded_model.estimator,
-                feature_row,
+                row,
                 horizon_days=horizon_days,
             )
             predictions = all_predictions[0]
             standard_deviations = all_standard_deviations[0]
             prediction_source = loaded_model.prediction_source
             model_version = loaded_model.model_version
-            conf_intervals, total_estimated, total_margin = (
-                _build_forecast_statistics(predictions, standard_deviations)
+            learned_components = _build_learned_components(
+                predictions,
+                standard_deviations,
             )
         except Exception:
-            if _is_production():
+            if _is_deployed_environment():
                 log.error(
-                    "ML forecast failed in production for city '%s'.",
+                    "ML forecast failed in %s for city '%s'.",
+                    _environment_name(),
                     city_id,
                     exc_info=True,
                 )
@@ -516,45 +664,79 @@ def get_city_forecast(
 
             log.warning(
                 "ML forecast failed for city '%s'; using the explicit "
-                "non-production heuristic fallback.",
+                "local-development Heat/Rain rule fallback.",
                 city_id,
                 exc_info=True,
             )
-            predictions, standard_deviations = _heuristic_predictions(
+            if not _allow_development_fallback():
+                raise HTTPException(
+                    status_code=503,
+                    detail="ML forecast model is temporarily unavailable",
+                )
+            fallback_predictions = _development_heat_rain_estimates(
                 row,
                 horizon_days,
             )
-            prediction_source = "heuristic_fallback"
+            prediction_source = "development_fallback_rule"
             model_version = None
-            conf_intervals, total_estimated, total_margin = (
-                _build_forecast_statistics(predictions, standard_deviations)
+            learned_components = _build_development_components(
+                fallback_predictions
             )
 
-        driver_map = {0: 'Heat', 1: 'Wind', 2: 'Rain', 3: 'Air Quality', 4: 'River/Flood'}
-        best_driver = driver_map[np.argmax([conf_intervals[n]["estimated_score"] for n in SUB_SCORE_NAMES])]
+        components = {
+            **learned_components,
+            **_build_rule_components(row, horizon_days),
+        }
+        # Keep the stable API key order while excluding unavailable components
+        # only from total/driver selection.
+        components = {name: components[name] for name in SUB_SCORE_NAMES}
+        (
+            best_driver,
+            best_driver_method,
+            total_estimated,
+            total_margin,
+            total_ci_lower,
+            total_ci_upper,
+            total_uncertainty_method,
+        ) = _summarize_components(components)
 
         # ── Build weather trajectory for the selected horizon ──
         weather_trajectory = {}
         for d in range(1, horizon_days + 1):
-            weather_trajectory[f"temp_max_plus_{d}d"] = float(row.get(f'temp_forecast_plus_{d}d') or 0.0)
+            weather_trajectory[f"temp_max_plus_{d}d"] = _finite_float(
+                row.get(f"temp_forecast_plus_{d}d")
+            )
         # Include precip and wind for the target day
-        weather_trajectory[f"precip_plus_{horizon_days}d"] = float(row.get(f'precip_forecast_plus_{horizon_days}d') or 0.0)
-        weather_trajectory[f"wind_plus_{horizon_days}d"] = float(row.get(f'wind_forecast_plus_{horizon_days}d') or 0.0)
+        weather_trajectory[f"precip_plus_{horizon_days}d"] = _finite_float(
+            row.get(f"precip_forecast_plus_{horizon_days}d")
+        )
+        weather_trajectory[f"wind_plus_{horizon_days}d"] = _finite_float(
+            row.get(f"wind_forecast_plus_{horizon_days}d")
+        )
 
         return {
             "city_id": city_id,
             "horizon_days": horizon_days,
-            "prediction_date": str(row['date']),
-            "current_tipping_score": round(float(row.get('real_current_tipping_score') or row.get('current_tipping_score') or 0.0), 1),
+            "prediction_date": str(row["forecast_origin_date"]),
+            "current_tipping_score": round(float(row["current_tipping_score"]), 1),
             "estimated_total_tipping_score": total_estimated,
             "total_confidence_margin": total_margin,
-            "total_ci_lower": round(float(max(0.0, total_estimated - total_margin)), 1),
-            "total_ci_upper": round(float(min(100.0, total_estimated + total_margin)), 1),
+            "total_ci_lower": total_ci_lower,
+            "total_ci_upper": total_ci_upper,
+            "total_uncertainty_method": total_uncertainty_method,
             "forecast_primary_driver": best_driver,
-            "sub_scores_forecast": conf_intervals,
+            "forecast_primary_driver_method": best_driver_method,
+            "sub_scores_forecast": components,
             "weather_trajectory": weather_trajectory,
             "prediction_source": prediction_source,
             "model_version": model_version,
+            "forecast_method": "hybrid_ml_and_forecast_rules",
+            "model_target_components": list(TARGET_SCORE_NAMES),
+            "rule_based_components": list(RULE_BASED_SCORE_NAMES),
+            "feature_schema_version": FEATURE_SCHEMA_VERSION,
+            "feature_ingestion_run_id": str(row["ingestion_run_id"]),
+            "feature_ingested_at_utc": str(row["ingested_at_utc"]),
+            "forecast_origin_time_zone": str(row["forecast_origin_time_zone"]),
         }
 
     except HTTPException:

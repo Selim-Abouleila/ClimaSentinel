@@ -44,11 +44,27 @@ export async function fetchCityScores(city_id: string): Promise<CityDetail | nul
   }
 }
 
+export type ForecastComponentMethod =
+  | 'learned_model'
+  | 'forecast_rule'
+  | 'development_fallback_rule';
+
+export type ForecastValidationStatus =
+  | 'era5_realized_validated'
+  | 'not_observation_validated';
+
+export type ForecastUncertaintyMethod = 'tree_spread_not_calibrated' | 'none';
+
 export interface SubScoreForecast {
-  estimated_score: number;
-  ci_lower: number;
-  ci_upper: number;
-  confidence_margin: number;
+  estimated_score: number | null;
+  ci_lower: number | null;
+  ci_upper: number | null;
+  confidence_margin: number | null;
+  available: boolean;
+  method: ForecastComponentMethod;
+  validation_status: ForecastValidationStatus;
+  uncertainty_method: ForecastUncertaintyMethod;
+  unavailable_reason: string | null;
 }
 
 export interface CityForecast {
@@ -57,12 +73,21 @@ export interface CityForecast {
   prediction_date: string;
   prediction_source: string;
   model_version: string | null;
+  forecast_method: 'hybrid_ml_and_forecast_rules';
+  model_target_components: string[];
+  rule_based_components: string[];
+  feature_schema_version: string;
+  feature_ingestion_run_id: string;
+  feature_ingested_at_utc: string;
+  forecast_origin_time_zone: string;
   current_tipping_score: number;
   estimated_total_tipping_score: number;
-  total_confidence_margin: number;
-  total_ci_lower: number;
-  total_ci_upper: number;
+  total_confidence_margin: number | null;
+  total_ci_lower: number | null;
+  total_ci_upper: number | null;
+  total_uncertainty_method: ForecastUncertaintyMethod;
   forecast_primary_driver: string;
+  forecast_primary_driver_method: ForecastComponentMethod;
   sub_scores_forecast: {
     heat_score: SubScoreForecast;
     wind_score: SubScoreForecast;
@@ -70,7 +95,7 @@ export interface CityForecast {
     air_score: SubScoreForecast;
     river_score: SubScoreForecast;
   };
-  weather_trajectory: Record<string, number>;
+  weather_trajectory: Record<string, number | null>;
 }
 
 export async function fetchCityForecast(city_id: string, horizonDays: number = 3): Promise<CityForecast | null> {

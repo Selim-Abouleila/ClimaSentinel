@@ -92,7 +92,8 @@ flowchart LR
         stg.city_monthly_normals (seed)
         stg.stg_latest_*
         stg.stg_city_daily_*
-        stg.stg_city_signal_input"]
+        stg.stg_city_signal_input
+        stg.stg_city_signal_vintage"]
 
         BQ_MART["🗄️ BigQuery (Gold)
         ─────────────
@@ -100,7 +101,8 @@ flowchart LR
         mart.mart_city_score_history
         mart.mart_city_zone_current
         mart.mart_city_score_detail
-        mart.mart_ml_feature_store"]
+        mart.mart_ml_training_examples
+        mart.mart_ml_serving_features_current"]
 
         SCH -->|"HTTP POST (OAuth2)"| CRJ
         CRJ -->|"Streaming inserts"| BQ_RAW
@@ -136,7 +138,7 @@ flowchart LR
         direction TB
         BACKEND["🚀 Backend API
         ─────────────
-        FastAPI · Cloud Run
+        FastAPI · Railway
         /data/current-scores
         /data/city/·/scores
         /data/city/·/forecast
@@ -152,7 +154,8 @@ flowchart LR
         direction TB
         ML["🤖 ML Model
         ─────────────
-        Multi-Output Random Forest
+        6-output Heat/Rain Random Forest
+        Wind/AQ/River forecast rules
         MLflow + DagsHub registry
         model/train.py"]
     end
@@ -185,10 +188,10 @@ flowchart LR
     FL -->|"river_enabled cities only"| CRJ
     HW --> CRJ
     CP -->|"1st of month only"| CRJ
-    BQ_MART -->|"SQL queries"| BACKEND
+    BQ_MART -->|"Current exact-vintage features"| BACKEND
     BACKEND -->|"REST API (JSON)"| FRONTEND
-    BQ_MART -->|"Feature store"| ML
-    ML -->|"Pickle / MLflow"| BACKEND
+    BQ_MART -->|"Point-in-time training examples"| ML
+    ML -->|"Pinned MLflow version"| BACKEND
     PROM -->|"Scrapes /metrics"| BACKEND
 ```
 
@@ -211,8 +214,8 @@ flowchart LR
 | Layer | Dataset | Purpose | Key Tables | Status |
 |---|---|---|---|---|
 | 🥉 Bronze | `raw` | Raw API loads — append-only, partitioned by day | `weather_forecast_hourly`, `air_quality_hourly`, `flood_daily`, `historical_weather_daily`, `climate_projections_daily` | ✅ Live |
-| 🥈 Silver | `stg` | Static seeds and harmonized daily views (dbt) | `city_monthly_normals` (seed/table), `stg_latest_*` (4 dedup views), `stg_city_daily_weather`, `stg_city_daily_air_quality`, `stg_city_signal_input` | ✅ Live |
-| 🥇 Gold | `mart` | Tipping scores, city ranking, driver attribution, ML features | `mart_city_score_history` (table), `mart_ml_feature_store` (table), `mart_city_score_current` (view), `mart_city_score_detail` (view), `mart_city_zone_current` (view) | ✅ Live |
+| 🥈 Silver | `stg` | Static seeds, operational daily views, and exact forecast vintages (dbt) | `city_monthly_normals`, `stg_latest_*`, `stg_city_signal_input`, `stg_city_signal_vintage` | ✅ Live |
+| 🥇 Gold | `mart` | Operational scores plus point-in-time-safe ML training and serving contracts | `mart_city_score_history`, `mart_city_score_current`, `mart_ml_training_examples`, `mart_ml_serving_features_current` | ✅ Live |
 
 > **Bronze** tables are auto-created by the ingest job. **Silver** and **Gold** models are managed by dbt and deployed via `make deploy`.
 
@@ -240,8 +243,8 @@ flowchart LR
 ClimaSentinel uses a strict 4-tier branching strategy (`feature/*` → `dev` → `staging` → `main`) enforced by GitHub Actions to ensure code quality and safe MLOps deployments:
 
 1. **Continuous Integration (`dev`):** Runs the full Python `pytest` suite (unit + integration tests) and verifies Docker builds.
-2. **Staging Environment (`staging`):** Deploys the application to Railway and executes our **End-to-End (E2E) Playwright tests** against the live UI to validate the candidate ML model.
-3. **Model Promotion & Production (`main`):** Executes our strict mathematical quality gate script (`model/promote.py`). The script connects to the DagsHub MLflow registry and verifies that the candidate model achieves **R² ≥ 0.45** and **MAE ≤ 7.0**. If passed, the model is automatically promoted to the `Production` stage, and the live application is deployed.
+2. **Staging Environment (`staging`):** Extracts a point-in-time snapshot, trains the six-output realized Heat/Rain model, gates and aliases its exact registry version, deploys it to Railway, then runs **Playwright E2E tests** against all three horizons and the hybrid API contract.
+3. **Model Promotion & Production (`main`):** Repeats the provenance and quality gates before moving the exact candidate version. Learned Heat/Rain outputs require **R² ≥ 0.35**; aggregate horizon MAE must be ≤ 7, with component limits of 10 for Heat and 7 for Rain. Wind, AQ and River are excluded from model metrics because they remain explicitly unvalidated forecast-rule indicators.
 
 *For full details on our pipelines and quality gates, please see [Doc 7: CI/CD and Branching Strategy](docs/7-cicd-and-branching.md).*
 
@@ -264,14 +267,14 @@ This project is built to be 100% reproducible from end-to-end:
 |---|---|
 | [1. Bootstrap Initialization](docs/1-bootstrap-initialization.md) | How to clone this project in GCP Cloud Shell and initialize the Terraform remote state backend |
 | [2. Ingestion Pipeline](docs/2-ingestion-pipeline.md) | Details on the Cloud Run and BigQuery pipeline architecture and the 5 Open-Meteo APIs fetched |
-| [3. Staging Layer](docs/3-staging-layer.md) | Silver layer: dbt deduplication, daily aggregation, and the unified `city_signal_input` view |
-| [4. Mart Layer](docs/4-mart-layer.md) | Gold layer: Tipping Score mathematical logic, velocity math, and ranking views in the `mart` dataset |
+| [3. Staging Layer](docs/3-staging-layer.md) | Silver layer: operational latest views plus exact-run weather, AQ, flood and unified signal vintages |
+| [4. Mart Layer](docs/4-mart-layer.md) | Gold layer: operational scores plus point-in-time-safe ML feature, realized-label, training, and serving marts |
 | [5. Guide Power BI](docs/5-guide-powerbi.md) | Guide en français pour connecter Power BI Desktop aux tables `mart` et configurer le rafraîchissement automatique |
 | [6. Guide Streamlit](docs/6-guide-streamlit.md) | Guide en français pour créer un dashboard Python Streamlit connecté à BigQuery avec le même compte de service |
 | [7. CI/CD and Branching Strategy](docs/7-cicd-and-branching.md) | Explanation of the strict Git branching model and the GitHub Actions deployment pipelines |
-| [8. Backend Architecture](docs/8-backend.md) | Details on the Python FastAPI architecture, BigQuery connection, and Dockerization |
-| [9. Frontend Architecture](docs/9-frontend.md) | Overview of the Next.js Glassmorphism dashboard and data fetching mechanism |
+| [8. Backend Architecture](docs/8-backend.md) | FastAPI, exact-vintage serving, MLflow model pinning, forecast rules, and Dockerization |
+| [9. Frontend Architecture](docs/9-frontend.md) | Next.js dashboard and transparent learned-versus-rule forecast presentation |
 | [10. Monitoring Dashboard](docs/10-monitoring-dashboard.md) | Prometheus + Grafana observability stack: metrics scraping, dashboards, and Docker Compose setup |
-| [11. Machine Learning Model](docs/11-machine-learning-model.md) | Multi-Output Random Forest tipping-score forecaster: training pipeline, MLflow tracking, DagsHub registry |
+| [11. Machine Learning Model](docs/11-machine-learning-model.md) | Six-output realized Heat/Rain model, purged validation, hybrid serving, MLflow, and DagsHub registry |
 | [12. API Swagger Documentation](docs/12-api-swagger-documentation.md) | Interactive Swagger UI reference for all FastAPI endpoints, request/response schemas, and examples |
 | [13. End-to-End Testing](docs/13-end-to-end-testing.md) | Details on Playwright E2E test suite running in staging CI pipeline |
