@@ -225,3 +225,17 @@ def test_promotion_rejects_model_version_that_is_not_ready():
     assert error.value.code == 1
     client.get_run.assert_not_called()
     client.transition_model_version_stage.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "workflow_name",
+    ("ci-staging.yml", "ci-production.yml"),
+)
+def test_deployment_workflows_run_promoter_as_package(workflow_name):
+    """Keep sibling backend/model packages importable in GitHub Actions."""
+    workflow = (
+        REPOSITORY_ROOT / ".github" / "workflows" / workflow_name
+    ).read_text(encoding="utf-8")
+
+    assert "run: python -m model.promote" in workflow
+    assert "run: python model/promote.py" not in workflow
