@@ -1268,13 +1268,6 @@ body {
   border-radius: 2px;
 }
 
-.confidence-key span:last-child i {
-  background: rgba(188, 207, 220, 0.22);
-  border-right: 1px solid #8295a7;
-  border-left: 1px solid #8295a7;
-  border-radius: 0;
-}
-
 .forecast-factor-grid {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
@@ -1342,22 +1335,10 @@ body {
   white-space: nowrap;
 }
 
-.forecast-factor-card__method--learned {
-  color: #79d4df;
-  background: rgba(50, 191, 210, 0.07);
-  border-color: rgba(50, 191, 210, 0.24);
-}
-
 .forecast-factor-card__method--rule {
   color: #d5b96e;
   background: rgba(223, 180, 81, 0.07);
   border-color: rgba(223, 180, 81, 0.24);
-}
-
-.forecast-factor-card__method--fallback {
-  color: #df8f76;
-  background: rgba(237, 135, 77, 0.07);
-  border-color: rgba(237, 135, 77, 0.25);
 }
 
 .forecast-factor-card__score {
@@ -1405,7 +1386,6 @@ body {
 }
 
 .forecast-factor-card__fill,
-.forecast-factor-card__interval,
 .forecast-factor-card__meter > i {
   position: absolute;
   top: 0;
@@ -1416,12 +1396,6 @@ body {
   left: 0;
   background: var(--risk-color);
   border-radius: inherit;
-}
-
-.forecast-factor-card__interval {
-  background: rgba(220, 232, 239, 0.2);
-  border-right: 1px solid rgba(225, 238, 245, 0.7);
-  border-left: 1px solid rgba(225, 238, 245, 0.7);
 }
 
 .forecast-factor-card__meter > i {

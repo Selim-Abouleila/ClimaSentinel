@@ -1,7 +1,6 @@
 """Focused offline tests for shared training and forecast inference behavior."""
 
 from datetime import date, datetime, timezone
-from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import numpy as np
@@ -17,7 +16,6 @@ from app.ml_pipeline import (
     NUMERIC_FEATURE_COLUMNS,
     TARGET_COLUMNS,
     TARGET_COLUMNS_BY_HORIZON,
-    REGISTERED_MODEL_NAME,
     build_model_pipeline,
     chronological_purged_split,
     predict_with_ensemble_spread,
@@ -264,306 +262,158 @@ def test_legacy_day_three_only_artifact_is_rejected(synthetic_training_data):
         )
 
 
-@pytest.mark.parametrize("horizon_days", (1, 2))
-def test_endpoint_does_not_forward_fill_short_horizon_features(
+@pytest.mark.parametrize("environment", ["development", "staging", "production"])
+@pytest.mark.parametrize("horizon_days", FORECAST_HORIZONS)
+def test_endpoint_serves_explicit_rules_without_a_registry_model(
     synthetic_training_data,
+    environment,
     horizon_days,
 ):
     row = _mock_serving_feature_row(synthetic_training_data)
+    row["target_normal_temperature_2m_max"] = 25.0
     bq_client = _mock_bigquery_client(row)
-    captured_features = {}
 
-    def capture_prediction(_model, raw_features, horizon_days):
-        captured_features.update(raw_features)
-        return np.full((1, 2), 10.0), np.zeros((1, 2))
-
-    loaded_model = main.LoadedModel(
-        estimator=object(),
-        prediction_source="mlflow_registry",
-        model_version="20",
-    )
     with (
         patch("app.main.get_bq_client", return_value=bq_client),
-        patch("app.main._get_ml_model", return_value=loaded_model),
-        patch(
-            "app.main.predict_with_ensemble_spread",
-            side_effect=capture_prediction,
-        ),
-        patch.object(main.settings, "ENVIRONMENT", "production"),
+        patch.object(main.settings, "ENVIRONMENT", environment),
     ):
         response = TestClient(main.app).get(
             f"/data/city/paris_fr/forecast?horizon_days={horizon_days}"
         )
 
     assert response.status_code == 200
+    body = response.json()
+    assert body["horizon_days"] == horizon_days
+    assert body["prediction_source"] == "same_vintage_forecast_rules"
+    assert body["forecast_method"] == "forecast_rules_baseline"
+    assert body["model_version"] is None
+    assert body["model_target_components"] == []
+    assert body["rule_based_components"] == [
+        "heat",
+        "wind",
+        "rain",
+        "air",
+        "river",
+    ]
+    assert body["feature_ingestion_run_id"] == "run-2026-07-17"
+
+    components = body["sub_scores_forecast"]
+    assert list(components) == list(main.SUB_SCORE_NAMES)
+    for component in components.values():
+        assert component["method"] == "forecast_rule"
+        assert component["ci_lower"] is None
+        assert component["ci_upper"] is None
+        assert component["confidence_margin"] is None
+        assert component["uncertainty_method"] == "none"
+        assert component["provenance"]
+        assert component["method_reason"]
+    assert components["heat_score"]["validation_status"] == (
+        "era5_backtested_limited"
+    )
+    assert components["rain_score"]["validation_status"] == (
+        "era5_backtested_insufficient_skill"
+    )
+    for name in ("wind_score", "air_score", "river_score"):
+        assert components[name]["validation_status"] == (
+            "not_observation_validated"
+        )
+
     submitted_query = bq_client.query.call_args.args[0]
     assert "mart_ml_serving_features_current" in submitted_query
+    assert (
+        f"`{main.settings.GCP_PROJECT_ID}."
+        f"{main.settings.BQ_STAGING_DATASET}.city_monthly_normals`"
+        in submitted_query
+    )
+    assert "target_normal_temperature_2m_max" in submitted_query
     assert "mart_ml_feature_store" not in submitted_query
-    assert "mart_city_score_current" not in submitted_query
-    for prefix in ("temp_forecast_plus_", "precip_forecast_plus_", "wind_forecast_plus_"):
-        for day in range(1, 4):
-            column = f"{prefix}{day}d"
-            assert captured_features[column] == row[column]
+    query_parameters = {
+        parameter.name: parameter.value
+        for parameter in bq_client.query.call_args.kwargs[
+            "job_config"
+        ].query_parameters
+    }
+    assert query_parameters == {
+        "city_id": "paris_fr",
+        "horizon_days": horizon_days,
+    }
 
 
-@pytest.mark.parametrize("environment", [" production ", "staging"])
-def test_deployed_model_failure_returns_503_without_fallback(
+def test_endpoint_uses_target_month_normal_for_heat(synthetic_training_data):
+    row = _mock_serving_feature_row(synthetic_training_data)
+    row.update(
+        {
+            "normal_temperature_2m_max": -50.0,
+            "target_normal_temperature_2m_max": 25.0,
+            "temp_forecast_plus_1d": 30.0,
+            "temp_forecast_plus_2d": 32.0,
+            "precip_forecast_plus_1d": 1.5,
+        }
+    )
+
+    with patch(
+        "app.main.get_bq_client",
+        return_value=_mock_bigquery_client(row),
+    ):
+        response = TestClient(main.app).get(
+            "/data/city/paris_fr/forecast?horizon_days=1"
+        )
+
+    assert response.status_code == 200
+    components = response.json()["sub_scores_forecast"]
+    assert components["heat_score"]["estimated_score"] == 35.0
+    assert components["rain_score"]["estimated_score"] == 3.0
+
+
+def test_missing_optional_sources_remain_unavailable_in_endpoint(
     synthetic_training_data,
-    environment,
 ):
     row = _mock_serving_feature_row(synthetic_training_data)
-    bq_client = _mock_bigquery_client(row)
+    row["target_normal_temperature_2m_max"] = 25.0
+    row["has_air_quality_forecast_plus_2d"] = False
+    row["aqi_forecast_plus_2d"] = None
+    row["has_flood_forecast_plus_2d"] = False
+    row["river_forecast_plus_2d"] = None
 
-    with (
-        patch("app.main.get_bq_client", return_value=bq_client),
-        patch("app.main._get_ml_model", return_value=None),
-        patch("app.main._development_heat_rain_estimates") as fallback,
-        patch.object(main.settings, "ENVIRONMENT", environment),
+    with patch(
+        "app.main.get_bq_client",
+        return_value=_mock_bigquery_client(row),
     ):
-        response = TestClient(main.app).get("/data/city/paris_fr/forecast")
+        response = TestClient(main.app).get(
+            "/data/city/paris_fr/forecast?horizon_days=2"
+        )
 
-    assert response.status_code == 503
-    assert response.json() == {
-        "detail": "ML forecast model is temporarily unavailable"
-    }
-    fallback.assert_not_called()
+    assert response.status_code == 200
+    components = response.json()["sub_scores_forecast"]
+    for name in ("air_score", "river_score"):
+        assert components[name]["available"] is False
+        assert components[name]["estimated_score"] is None
+        assert components[name]["unavailable_reason"]
+    assert components["heat_score"]["available"] is True
+    assert components["rain_score"]["available"] is True
 
 
-def test_local_development_fallback_reports_provenance(synthetic_training_data):
+def test_rule_driver_never_reports_a_model_uncertainty_band(
+    synthetic_training_data,
+):
     row = _mock_serving_feature_row(synthetic_training_data)
-    bq_client = _mock_bigquery_client(row)
+    row["target_normal_temperature_2m_max"] = 25.0
+    row["wind_gusts_forecast_plus_1d"] = 80.0
 
-    with (
-        patch("app.main.get_bq_client", return_value=bq_client),
-        patch("app.main._get_ml_model", return_value=None),
-        patch.object(main.settings, "ENVIRONMENT", "development"),
+    with patch(
+        "app.main.get_bq_client",
+        return_value=_mock_bigquery_client(row),
     ):
-        response = TestClient(main.app).get("/data/city/paris_fr/forecast")
+        response = TestClient(main.app).get(
+            "/data/city/paris_fr/forecast?horizon_days=1"
+        )
 
     assert response.status_code == 200
     body = response.json()
-    assert body["prediction_source"] == "development_fallback_rule"
-    assert body["model_version"] is None
-    assert (
-        body["sub_scores_forecast"]["heat_score"]["method"]
-        == "development_fallback_rule"
-    )
-    assert body["sub_scores_forecast"]["heat_score"]["ci_lower"] is None
-
-
-def test_rule_driver_does_not_inherit_a_model_uncertainty_band():
-    learned = main._build_learned_components([20.0, 10.0], [2.0, 1.0])
-    rule = {
-        "wind_score": {
-            "estimated_score": 80.0,
-            "ci_lower": None,
-            "ci_upper": None,
-            "confidence_margin": None,
-            "available": True,
-            "method": "forecast_rule",
-            "validation_status": "not_observation_validated",
-            "uncertainty_method": "none",
-            "unavailable_reason": None,
-        },
-        "air_score": {
-            "estimated_score": None,
-            "ci_lower": None,
-            "ci_upper": None,
-            "confidence_margin": None,
-            "available": False,
-            "method": "forecast_rule",
-            "validation_status": "not_observation_validated",
-            "uncertainty_method": "none",
-            "unavailable_reason": "source missing",
-        },
-        "river_score": {
-            "estimated_score": 0.0,
-            "ci_lower": None,
-            "ci_upper": None,
-            "confidence_margin": None,
-            "available": True,
-            "method": "forecast_rule",
-            "validation_status": "not_observation_validated",
-            "uncertainty_method": "none",
-            "unavailable_reason": None,
-        },
-    }
-
-    summary = main._summarize_components({**learned, **rule})
-
-    assert summary == ("Wind", "forecast_rule", 80.0, None, None, None, "none")
-
-
-def test_registry_alias_resolves_to_exact_version_without_latest_apis():
-    client = MagicMock()
-    client.get_model_version_by_alias.return_value = SimpleNamespace(
-        version="7",
-        status="READY",
-    )
-
-    with (
-        patch.object(main.settings, "MLFLOW_MODEL_VERSION", None),
-        patch.object(main.settings, "MLFLOW_MODEL_ALIAS", "champion"),
-    ):
-        reference = main._resolve_registry_model_reference(client)
-
-    assert reference == main.ResolvedModelReference(
-        model_uri=f"models:/{REGISTERED_MODEL_NAME}/7",
-        model_version="7",
-        model_alias="champion",
-    )
-    client.get_model_version_by_alias.assert_called_once_with(
-        REGISTERED_MODEL_NAME,
-        "champion",
-    )
-    client.search_model_versions.assert_not_called()
-    client.get_latest_versions.assert_not_called()
-
-
-def test_explicit_version_pin_overrides_alias():
-    client = MagicMock()
-    client.get_model_version.return_value = SimpleNamespace(
-        version="8",
-        status="READY",
-    )
-
-    with (
-        patch.object(main.settings, "MLFLOW_MODEL_VERSION", " 8 "),
-        patch.object(main.settings, "MLFLOW_MODEL_ALIAS", "champion"),
-    ):
-        reference = main._resolve_registry_model_reference(client)
-
-    assert reference == main.ResolvedModelReference(
-        model_uri=f"models:/{REGISTERED_MODEL_NAME}/8",
-        model_version="8",
-        model_alias=None,
-    )
-    client.get_model_version.assert_called_once_with(
-        REGISTERED_MODEL_NAME,
-        "8",
-    )
-    client.get_model_version_by_alias.assert_not_called()
-    client.search_model_versions.assert_not_called()
-    client.get_latest_versions.assert_not_called()
-
-
-@pytest.mark.parametrize("configured_version", ["not-a-number", "0", "-1"])
-def test_invalid_explicit_version_pin_is_rejected(configured_version):
-    client = MagicMock()
-
-    with (
-        patch.object(main.settings, "MLFLOW_MODEL_VERSION", configured_version),
-        pytest.raises(ValueError, match="positive integer string"),
-    ):
-        main._resolve_registry_model_reference(client)
-
-    client.get_model_version.assert_not_called()
-    client.get_model_version_by_alias.assert_not_called()
-
-
-def test_blank_version_pin_uses_configured_alias():
-    client = MagicMock()
-    client.get_model_version_by_alias.return_value = SimpleNamespace(
-        version="9",
-        status="READY",
-    )
-
-    with (
-        patch.object(main.settings, "MLFLOW_MODEL_VERSION", "   "),
-        patch.object(main.settings, "MLFLOW_MODEL_ALIAS", "candidate-approved"),
-    ):
-        reference = main._resolve_registry_model_reference(client)
-
-    assert reference.model_version == "9"
-    assert reference.model_alias == "candidate-approved"
-    client.get_model_version_by_alias.assert_called_once_with(
-        REGISTERED_MODEL_NAME,
-        "candidate-approved",
-    )
-
-
-def test_blank_alias_defaults_to_champion():
-    client = MagicMock()
-    client.get_model_version_by_alias.return_value = SimpleNamespace(
-        version="10",
-        status="READY",
-    )
-
-    with (
-        patch.object(main.settings, "MLFLOW_MODEL_VERSION", None),
-        patch.object(main.settings, "MLFLOW_MODEL_ALIAS", "  "),
-    ):
-        reference = main._resolve_registry_model_reference(client)
-
-    assert reference.model_alias == "champion"
-    client.get_model_version_by_alias.assert_called_once_with(
-        REGISTERED_MODEL_NAME,
-        "champion",
-    )
-
-
-def test_missing_alias_raises_clear_compatibility_error():
-    client = MagicMock()
-    client.get_model_version_by_alias.side_effect = RuntimeError("missing alias")
-
-    with (
-        patch.object(main.settings, "MLFLOW_MODEL_VERSION", None),
-        patch.object(main.settings, "MLFLOW_MODEL_ALIAS", "missing"),
-        pytest.raises(ValueError, match="Registry alias 'missing' could not be resolved"),
-    ):
-        main._resolve_registry_model_reference(client)
-
-    client.search_model_versions.assert_not_called()
-    client.get_latest_versions.assert_not_called()
-
-
-def test_successful_ml_forecast_reports_loaded_model_provenance(
-    synthetic_training_data,
-):
-    row = _mock_serving_feature_row(synthetic_training_data)
-    bq_client = _mock_bigquery_client(row)
-    loaded_model = main.LoadedModel(
-        estimator=_fit_tiny_pipeline(synthetic_training_data),
-        prediction_source="mlflow_registry",
-        model_version="18",
-    )
-
-    with (
-        patch("app.main.get_bq_client", return_value=bq_client),
-        patch("app.main._get_ml_model", return_value=loaded_model),
-        patch("app.main._development_heat_rain_estimates") as fallback,
-        patch.object(main.settings, "ENVIRONMENT", "production"),
-    ):
-        responses = [
-            TestClient(main.app).get(
-                f"/data/city/paris_fr/forecast?horizon_days={horizon}"
-            )
-            for horizon in FORECAST_HORIZONS
-        ]
-
-    assert all(response.status_code == 200 for response in responses)
-    bodies = [response.json() for response in responses]
-    assert [body["horizon_days"] for body in bodies] == list(FORECAST_HORIZONS)
-    assert all(body["prediction_source"] == "mlflow_registry" for body in bodies)
-    assert all(body["model_version"] == "18" for body in bodies)
-    assert all(
-        body["forecast_method"] == "hybrid_ml_and_forecast_rules"
-        for body in bodies
-    )
-    for body in bodies:
-        components = body["sub_scores_forecast"]
-        assert components["heat_score"]["method"] == "learned_model"
-        assert (
-            components["rain_score"]["validation_status"]
-            == "era5_realized_validated"
-        )
-        assert components["wind_score"]["method"] == "forecast_rule"
-        assert components["air_score"]["ci_lower"] is None
-        assert components["river_score"]["uncertainty_method"] == "none"
-        assert body["feature_ingestion_run_id"] == "run-2026-07-17"
-    assert (
-        bodies[0]["estimated_total_tipping_score"]
-        < bodies[1]["estimated_total_tipping_score"]
-        < bodies[2]["estimated_total_tipping_score"]
-    )
-    fallback.assert_not_called()
+    assert body["forecast_primary_driver"] == "Wind"
+    assert body["forecast_primary_driver_method"] == "forecast_rule"
+    assert body["estimated_total_tipping_score"] == 100.0
+    assert body["total_confidence_margin"] is None
+    assert body["total_ci_lower"] is None
+    assert body["total_ci_upper"] is None
+    assert body["total_uncertainty_method"] == "none"

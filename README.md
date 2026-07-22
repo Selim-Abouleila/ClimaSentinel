@@ -152,10 +152,10 @@ flowchart LR
 
     subgraph MLOPS["MLOps Pipeline"]
         direction TB
-        ML["🤖 ML Model
+        ML["🧪 ML Challenger
         ─────────────
         6-output Heat/Rain Random Forest
-        Wind/AQ/River forecast rules
+        Offline baseline comparison
         MLflow + DagsHub registry
         model/train.py"]
     end
@@ -191,7 +191,6 @@ flowchart LR
     BQ_MART -->|"Current exact-vintage features"| BACKEND
     BACKEND -->|"REST API (JSON)"| FRONTEND
     BQ_MART -->|"Point-in-time training examples"| ML
-    ML -->|"Pinned MLflow version"| BACKEND
     PROM -->|"Scrapes /metrics"| BACKEND
 ```
 
@@ -243,8 +242,8 @@ flowchart LR
 ClimaSentinel uses a strict 4-tier branching strategy (`feature/*` → `dev` → `staging` → `main`) enforced by GitHub Actions to ensure code quality and safe MLOps deployments:
 
 1. **Continuous Integration (`dev`):** Runs the full Python `pytest` suite (unit + integration tests) and verifies Docker builds.
-2. **Staging Environment (`staging`):** Extracts a point-in-time snapshot, trains the six-output realized Heat/Rain model, gates and aliases its exact registry version, deploys it to Railway, then runs **Playwright E2E tests** against all three horizons and the hybrid API contract.
-3. **Model Promotion & Production (`main`):** Repeats the provenance and quality gates before moving the exact candidate version. Learned Heat/Rain outputs require **R² ≥ 0.35**; aggregate horizon MAE must be ≤ 7, with component limits of 10 for Heat and 7 for Rain. Wind, AQ and River are excluded from model metrics because they remain explicitly unvalidated forecast-rule indicators.
+2. **Staging Environment (`staging`):** Extracts a point-in-time snapshot, trains and evaluates the six-output Heat/Rain challenger, then deploys the transparent all-rule baseline and runs **Playwright E2E tests** across all three horizons. A normal challenger quality rejection is reported but does not make the operational page unavailable.
+3. **Challenger Evaluation & Production (`main`):** A candidate must have non-negative component R², beat the exact matching rule MAE by at least 5%, and satisfy horizon-aware absolute MAE ceilings. Only a complete pass can move `champion`; authentication, provenance or artifact-contract failures remain fatal. The currently enabled operational response still serves all five same-vintage rules and claims no model interval.
 
 *For full details on our pipelines and quality gates, please see [Doc 7: CI/CD and Branching Strategy](docs/7-cicd-and-branching.md).*
 
@@ -272,9 +271,9 @@ This project is built to be 100% reproducible from end-to-end:
 | [5. Guide Power BI](docs/5-guide-powerbi.md) | Guide en français pour connecter Power BI Desktop aux tables `mart` et configurer le rafraîchissement automatique |
 | [6. Guide Streamlit](docs/6-guide-streamlit.md) | Guide en français pour créer un dashboard Python Streamlit connecté à BigQuery avec le même compte de service |
 | [7. CI/CD and Branching Strategy](docs/7-cicd-and-branching.md) | Explanation of the strict Git branching model and the GitHub Actions deployment pipelines |
-| [8. Backend Architecture](docs/8-backend.md) | FastAPI, exact-vintage serving, MLflow model pinning, forecast rules, and Dockerization |
-| [9. Frontend Architecture](docs/9-frontend.md) | Next.js dashboard and transparent learned-versus-rule forecast presentation |
+| [8. Backend Architecture](docs/8-backend.md) | FastAPI, exact-vintage rule serving, offline challenger boundary, and Dockerization |
+| [9. Frontend Architecture](docs/9-frontend.md) | Next.js dashboard and transparent rule/validation presentation |
 | [10. Monitoring Dashboard](docs/10-monitoring-dashboard.md) | Prometheus + Grafana observability stack: metrics scraping, dashboards, and Docker Compose setup |
-| [11. Machine Learning Model](docs/11-machine-learning-model.md) | Six-output realized Heat/Rain model, purged validation, hybrid serving, MLflow, and DagsHub registry |
+| [11. Machine Learning Model](docs/11-machine-learning-model.md) | Six-output realized Heat/Rain challenger, purged validation, rule baselines, MLflow, and DagsHub registry |
 | [12. API Swagger Documentation](docs/12-api-swagger-documentation.md) | Interactive Swagger UI reference for all FastAPI endpoints, request/response schemas, and examples |
 | [13. End-to-End Testing](docs/13-end-to-end-testing.md) | Details on Playwright E2E test suite running in staging CI pipeline |

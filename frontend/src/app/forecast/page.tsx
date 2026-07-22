@@ -5,7 +5,6 @@ import type {
   CityForecast,
   ForecastComponentMethod,
   ForecastValidationStatus,
-  SubScoreForecast,
 } from "@/lib/api";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
@@ -56,40 +55,21 @@ function clampScore(score: number) {
 }
 
 function getMethodLabel(method: ForecastComponentMethod) {
-  if (method === "learned_model") return "Learned model";
-  if (method === "development_fallback_rule") return "Development fallback";
+  void method;
   return "Forecast rule";
 }
 
 function getMethodTone(method: ForecastComponentMethod) {
-  if (method === "learned_model") return "learned";
-  if (method === "development_fallback_rule") return "fallback";
+  void method;
   return "rule";
 }
 
 function getValidationLabel(status: ForecastValidationStatus) {
-  return status === "era5_realized_validated"
-    ? "ERA5-realized validation"
-    : "Not observation-validated";
-}
-
-function hasModelSpread(
-  component: SubScoreForecast,
-): component is SubScoreForecast & {
-  estimated_score: number;
-  ci_lower: number;
-  ci_upper: number;
-  confidence_margin: number;
-} {
-  return (
-    component.available &&
-    component.method === "learned_model" &&
-    component.uncertainty_method === "tree_spread_not_calibrated" &&
-    component.estimated_score !== null &&
-    component.ci_lower !== null &&
-    component.ci_upper !== null &&
-    component.confidence_margin !== null
-  );
+  if (status === "era5_backtested_limited") return "Limited ERA5 backtest";
+  if (status === "era5_backtested_insufficient_skill") {
+    return "ERA5 backtest · insufficient skill";
+  }
+  return "Not observation-validated";
 }
 
 const COMPONENT_LABELS: Record<string, string> = {
@@ -164,34 +144,21 @@ export default function ForecastPage() {
   const targetWind = forecast
     ? forecast.weather_trajectory[`wind_plus_${horizonDays}d`]
     : null;
-  const totalSpread =
-    forecast &&
-    forecast.total_uncertainty_method === "tree_spread_not_calibrated" &&
-    forecast.total_ci_lower !== null &&
-    forecast.total_ci_upper !== null &&
-    forecast.total_confidence_margin !== null
-      ? {
-          lower: forecast.total_ci_lower,
-          upper: forecast.total_ci_upper,
-          margin: forecast.total_confidence_margin,
-        }
-      : null;
-
   return (
     <main className="subpage-shell forecast-page">
       <div className="subpage-container">
         <header className="subpage-hero">
           <div className="dashboard-eyebrow">
             <span className="dashboard-eyebrow__dot" aria-hidden="true" />
-            Hybrid outlook · 1–3 days · explicit provenance
+            Rule-based outlook · 1–3 days · explicit provenance
           </div>
           <div className="subpage-hero__title-row">
-            <h1>AI Tipping Forecast</h1>
-            <span className="model-status">Hybrid beta</span>
+            <h1>Climate Risk Forecast</h1>
+            <span className="model-status">Baseline policy</span>
           </div>
           <p>
-            Explore projected climate stress using learned Heat and Rain estimates
-            alongside forecast-rule Wind, Air-quality, and River indicators.
+            Explore projected climate stress using transparent, same-vintage
+            forecast rules for every component.
           </p>
         </header>
 
@@ -260,10 +227,12 @@ export default function ForecastPage() {
         >
           <strong>Validation scope</strong>
           <p>
-            Heat and rainfall are learned from realized ERA5 outcomes. Wind,
-            air-quality, and river-risk values are forecast-rule estimates and
-            are not yet validated against observed outcomes. Missing source
-            forecasts are shown as unavailable, never as zero risk.
+            Heat uses a same-vintage forecast rule with a limited ERA5 backtest;
+            the historical evidence is promising but not yet mature.
+            Rain has ERA5 backtest evidence but showed insufficient predictive
+            skill. Wind, air-quality, and river-risk lack observed-label
+            validation. Missing source forecasts are shown as unavailable, never
+            as zero risk. No model confidence interval is claimed.
           </p>
         </aside>
 
@@ -275,7 +244,7 @@ export default function ForecastPage() {
             <span className="section-kicker">Awaiting input</span>
             <h2 id="forecast-empty-title">Select a Region</h2>
             <p>
-              Choose a city to calculate its Day +{horizonDays} hybrid risk
+              Choose a city to calculate its Day +{horizonDays} rule-based risk
               estimate and factor-level outlook.
             </p>
           </section>
@@ -284,11 +253,11 @@ export default function ForecastPage() {
         {loading && selectedCity && (
           <section className="forecast-state" role="status" aria-live="polite">
             <span className="forecast-loader" aria-hidden="true" />
-            <span className="section-kicker">Hybrid inference</span>
+            <span className="section-kicker">Forecast rules</span>
             <h2>Calculating Forecast</h2>
             <p>
-              Evaluating {currentCity?.name} at Day +{horizonDays} with the
-              learned model and same-vintage forecast rules.
+              Evaluating {currentCity?.name} at Day +{horizonDays} from one
+              complete same-vintage forecast feature row.
             </p>
           </section>
         )}
@@ -332,14 +301,7 @@ export default function ForecastPage() {
                   <strong>{forecast.estimated_total_tipping_score.toFixed(1)}</strong>
                   <span>/ 100</span>
                 </div>
-                {totalSpread ? (
-                  <p>
-                    Uncalibrated model spread <b>{totalSpread.lower.toFixed(1)}–{totalSpread.upper.toFixed(1)}</b>
-                    <span>±{totalSpread.margin.toFixed(1)}</span>
-                  </p>
-                ) : (
-                  <p>Mixed-method maximum · no aggregate model band</p>
-                )}
+                <p>Maximum available rule estimate · no model band</p>
               </article>
 
               <article className={`forecast-summary-card risk-${baselineBand.tone}`}>
@@ -397,13 +359,13 @@ export default function ForecastPage() {
             <section className="forecast-factors" aria-labelledby="forecast-factors-title">
               <div className="forecast-factors__header">
                 <div>
-                  <span className="section-kicker">Hybrid components</span>
+                  <span className="section-kicker">Forecast components</span>
                   <h2 id="forecast-factors-title">Factor-level outlook</h2>
-                  <p>Learned estimates and same-vintage forecast-rule indicators.</p>
+                  <p>Same-vintage forecast-rule estimates with explicit validation scope.</p>
                 </div>
                 <div className="confidence-key">
                   <span><i /> Point estimate</span>
-                  <span><i /> Model spread · Heat / Rain only</span>
+                  <span>No model confidence intervals</span>
                 </div>
               </div>
 
@@ -419,13 +381,6 @@ export default function ForecastPage() {
                   const score = estimatedScore === null
                     ? null
                     : clampScore(estimatedScore);
-                  const modelSpread = hasModelSpread(factorData)
-                    ? {
-                        start: clampScore(factorData.ci_lower),
-                        end: clampScore(factorData.ci_upper),
-                        margin: factorData.confidence_margin,
-                      }
-                    : null;
                   const methodTone = getMethodTone(factorData.method);
 
                   return (
@@ -443,7 +398,10 @@ export default function ForecastPage() {
                         </strong>
                       </div>
                       <h3>{factor.title}</h3>
-                      <div className={`forecast-factor-card__method forecast-factor-card__method--${methodTone}`}>
+                      <div
+                        className={`forecast-factor-card__method forecast-factor-card__method--${methodTone}`}
+                        title={factorData.method_reason}
+                      >
                         {getMethodLabel(factorData.method)}
                       </div>
                       <div className={`forecast-factor-card__score ${score === null ? "is-unavailable" : ""}`}>
@@ -457,15 +415,6 @@ export default function ForecastPage() {
                         {score !== null && (
                           <>
                             <span className="forecast-factor-card__fill" style={{ width: `${score}%` }} />
-                            {modelSpread && (
-                              <span
-                                className="forecast-factor-card__interval"
-                                style={{
-                                  left: `${modelSpread.start}%`,
-                                  width: `${Math.max(0, modelSpread.end - modelSpread.start)}%`,
-                                }}
-                              />
-                            )}
                             <i style={{ left: `${score}%` }} />
                           </>
                         )}
@@ -475,11 +424,6 @@ export default function ForecastPage() {
                           <>
                             <span>Availability</span>
                             <strong>Unavailable</strong>
-                          </>
-                        ) : modelSpread ? (
-                          <>
-                            <span>Model spread band</span>
-                            <strong>{modelSpread.start.toFixed(1)}–{modelSpread.end.toFixed(1)}</strong>
                           </>
                         ) : (
                           <>
@@ -491,11 +435,7 @@ export default function ForecastPage() {
                       <p className="forecast-factor-card__context">
                         {score === null
                           ? factorData.unavailable_reason ?? "Required source forecast is unavailable"
-                          : modelSpread
-                            ? `${getValidationLabel(factorData.validation_status)} · tree spread ±${modelSpread.margin.toFixed(1)} · not a calibrated interval`
-                            : factorData.method === "development_fallback_rule"
-                              ? `Development-only fallback · ${getValidationLabel(factorData.validation_status)}`
-                              : `Same-vintage rule · ${getValidationLabel(factorData.validation_status)}`}
+                          : `Same-vintage rule · ${getValidationLabel(factorData.validation_status)} · ${factorData.provenance}`}
                       </p>
                     </article>
                   );
@@ -507,10 +447,14 @@ export default function ForecastPage() {
               <span>Forecast provenance</span>
               <div>
                 <p>
-                  Learned: {formatComponentList(forecast.model_target_components)} · {humanizeSource(forecast.prediction_source)}
-                  {forecast.model_version ? ` v${forecast.model_version}` : ""}
+                  Operational policy: {humanizeSource(forecast.prediction_source)}
                 </p>
                 <p>Forecast rules: {formatComponentList(forecast.rule_based_components)}</p>
+                <p>
+                  Learned components deployed: {forecast.model_target_components.length === 0
+                    ? "None — challengers must first beat their rule baselines"
+                    : formatComponentList(forecast.model_target_components)}
+                </p>
                 <p>
                   Feature schema {forecast.feature_schema_version} · run{" "}
                   <code title={forecast.feature_ingestion_run_id}>

@@ -161,13 +161,13 @@ The Python integration now uses this contract directly:
 
 1. `model/extract_data.py` snapshots `mart_ml_training_examples` without
    reconstructing labels or filling optional forecast sources;
-2. schema-v3 training learns only the six realized Heat/Rain targets (two
-   components for each of Day +1, Day +2 and Day +3);
-3. the backend queries `mart_ml_serving_features_current` and validates the
-   ordered feature contract before inference; and
-4. Wind, Air Quality and River are calculated from the requested horizon's raw
-   same-vintage forecast values, never from observed-label claims or another
-   horizon's values.
+2. schema-v3 challenger training learns only the six realized Heat/Rain targets
+   (two components for each of Day +1, Day +2 and Day +3);
+3. the backend queries `mart_ml_serving_features_current` and calculates all
+   five operational rules from the requested horizon's raw same-vintage values;
+   and
+4. challenger metrics are compared with Heat/Rain rule baselines calculated on
+   the exact same chronological holdout rows.
 
 The fitted artifact is registered as `ClimaSentinel_HeatRainForecaster`. A
 four-day purge separates training and evaluation dates because the Day +3 Heat
@@ -192,17 +192,17 @@ as observations merely to obtain five target columns. Doing so would train the
 model to reproduce another forecast and would make validation metrics
 misleading.
 
-Until observed gust, AQ and river-discharge sources are ingested, the three-day
-forecast page must distinguish validated model outputs from forecast/rule-based
-indicators. Recommended user-facing copy:
+Until more evidence and the missing observed sources are available, the
+three-day forecast page must expose the operational policy honestly.
+Recommended user-facing copy:
 
-> Model validation currently covers heat and rainfall only. Wind, air-quality
-> and river-risk values are forecast-based indicators and are not yet validated
-> against observed outcomes.
+> Heat uses a same-vintage forecast rule with a limited ERA5 backtest. Rain was
+> backtested against realized ERA5 but showed insufficient predictive skill.
+> Wind, air-quality and river-risk still lack observed-label validation.
 
-That disclaimer ships on the three-day forecast page with this change. It must
-remain visible until observed Wind, Air Quality and River labels are ingested
-and those components have passed outcome-based validation.
+That disclaimer ships on the three-day forecast page. It must remain visible
+until each component has sufficient observed evidence and passes
+baseline-relative outcome validation.
 
 ## Dependency graph
 
@@ -216,8 +216,8 @@ stg_city_signal_input
 Point-in-time ML path
 stg_city_signal_vintage
     └──► mart_ml_forecast_features_vintage
-             ├──► mart_ml_serving_features_current ──► hybrid backend forecast
-             └──► mart_ml_training_examples ──► DVC snapshot ──► Heat/Rain model
+             ├──► mart_ml_serving_features_current ──► all-rule backend forecast
+             └──► mart_ml_training_examples ──► DVC snapshot ──► Heat/Rain challenger
                         ▲
 stg_latest_historical_daily
     └──► mart_city_realized_weather_daily
@@ -250,15 +250,17 @@ passing cannot compensate for a failed same-vintage staging lineage test.
    maturity by horizon.
 5. Extract and DVC-track a deterministic `mart_ml_training_examples` snapshot.
 6. Train and register a schema-v3 `ClimaSentinel_HeatRainForecaster` candidate.
-7. Promote the exact candidate version only if every learned Heat/Rain horizon
-   passes its quality gates.
-8. Deploy the backend and frontend together, then verify the hybrid response in
-   staging E2E tests.
+7. Evaluate the exact candidate against the same-vintage rule baselines and move
+   `champion` only if every Heat/Rain horizon passes.
+8. Deploy the backend and frontend rule policy together, then verify the
+   `forecast_rules_baseline` response in staging E2E tests even when the
+   challenger is rejected.
 
 The MLOps workflow publishes the DVC object and commits its pointer only after
 extraction, contract validation, training and registry logging succeed. Model
 promotion remains a separate downstream gate; a registered version that fails
-quality thresholds does not receive the `champion` alias or deploy.
+quality thresholds does not receive the `champion` alias. That rejection does
+not block deployment of the explicitly declared operational rule policy.
 
 At the current scale these marts intentionally use straightforward full-refresh
 tables plus one serving view. Incremental materialization can be introduced when
