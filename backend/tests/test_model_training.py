@@ -9,6 +9,7 @@ from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pandas as pd
+import pytest
 
 from app.ml_pipeline import (
     ALL_CITIES,
@@ -140,6 +141,19 @@ def test_training_logs_realized_contract_and_exports_exact_registered_version(
 
     with (
         patch.object(train.pd, "read_csv", return_value=_training_frame()),
+        patch.object(
+            train,
+            "load_city_monthly_heat_normals",
+            return_value=pd.DataFrame(
+                {
+                    "city_id": [
+                        city for city in ALL_CITIES for _ in range(12)
+                    ],
+                    "month": list(range(1, 13)) * len(ALL_CITIES),
+                    "normal_temperature_2m_max": 20.0,
+                }
+            ),
+        ),
         patch.object(train, "build_model_pipeline", side_effect=tiny_builder),
         patch.object(train, "get_git_commit", return_value="a" * 40),
         patch.object(train, "get_dvc_hash", return_value="b" * 32),
@@ -157,8 +171,6 @@ def test_training_logs_realized_contract_and_exports_exact_registered_version(
             "log_model",
             return_value=SimpleNamespace(registered_model_version="77"),
         ) as log_model,
-        patch.object(train.joblib, "dump"),
-        patch.object(train.os, "makedirs"),
         patch.dict(
             "os.environ",
             {
@@ -174,10 +186,12 @@ def test_training_logs_realized_contract_and_exports_exact_registered_version(
     assert logged_params["target_schema_version"] == TARGET_SCHEMA_VERSION
     assert logged_params["training_data_contract"] == TRAINING_DATA_CONTRACT
     assert logged_params["registered_model_name"] == REGISTERED_MODEL_NAME
+    assert logged_params["model_role"] == "challenger"
     assert logged_params["target_columns"] == ",".join(TARGET_COLUMNS)
     assert logged_params["supported_target_components"] == "heat,rain"
     assert logged_params["unsupported_target_components"] == "wind,air,river"
     assert logged_params["purge_gap_days"] == str(MAX_LABEL_LOOKAHEAD_DAYS)
+    assert logged_params["rule_baseline_contract"] == train.RULE_BASELINE_CONTRACT
     assert logged_params["train_rows"] == "80"
     assert logged_params["test_rows"] == "30"
     assert logged_params["test_distinct_origin_dates"] == "3"
@@ -191,7 +205,10 @@ def test_training_logs_realized_contract_and_exports_exact_registered_version(
             )
             assert f"r2_{score_name}_d{horizon}" in logged_metrics
             assert f"mae_{score_name}_d{horizon}" in logged_metrics
+            assert f"rule_r2_{score_name}_d{horizon}" in logged_metrics
+            assert f"rule_mae_{score_name}_d{horizon}" in logged_metrics
             assert logged_metrics[f"test_count_{score_name}_d{horizon}"] == 30
+            assert logged_metrics[f"rule_test_count_{score_name}_d{horizon}"] == 30
             assert logged_metrics[f"test_std_{score_name}_d{horizon}"] > 0
 
     logged_estimator = log_model.call_args.kwargs["sk_model"]
@@ -199,3 +216,149 @@ def test_training_logs_realized_contract_and_exports_exact_registered_version(
     assert log_model.call_args.kwargs["registered_model_name"] == REGISTERED_MODEL_NAME
     assert log_model.call_args.kwargs["name"] == "random_forest_model"
     assert github_output.read_text() == "model_version=77\n"
+
+
+def test_same_vintage_rule_baseline_uses_exact_horizon_without_labels():
+    features = pd.DataFrame(
+        {
+            # The origin-month model feature must not override the explicit
+            # target-date normal supplied to the rule evaluator.
+            "normal_temperature_2m_max": [99.0, 99.0],
+            "temp_forecast_plus_1d": [30.0, 20.0],
+            "temp_forecast_plus_2d": [32.0, 35.0],
+            "temp_forecast_plus_3d": [40.0, 15.0],
+            "temp_forecast_plus_4d": [39.0, 30.0],
+            "precip_forecast_plus_1d": [1.25, 80.0],
+            "precip_forecast_plus_2d": [3.0, 0.0],
+            "precip_forecast_plus_3d": [0.0, 2.25],
+        }
+    )
+
+    target_normals = np.asarray([20.0, 25.0])
+    assert train.same_vintage_rule_predictions(
+        features,
+        1,
+        target_normal_temperature=target_normals,
+    ).tolist() == [
+        [60.0, 2.5],
+        [50.0, 100.0],
+    ]
+    assert train.same_vintage_rule_predictions(
+        features,
+        2,
+        target_normal_temperature=target_normals,
+    ).tolist() == [
+        [100.0, 6.0],
+        [50.0, 0.0],
+    ]
+    assert train.same_vintage_rule_predictions(
+        features,
+        3,
+        target_normal_temperature=target_normals,
+    ).tolist() == [
+        [100.0, 0.0],
+        [25.0, 4.5],
+    ]
+
+
+def test_same_vintage_rule_baseline_rejects_missing_inputs():
+    with pytest.raises(ValueError, match="complete finite"):
+        train.same_vintage_rule_predictions(
+            pd.DataFrame(
+                {
+                    "normal_temperature_2m_max": [20.0],
+                    "temp_forecast_plus_1d": [30.0],
+                    "temp_forecast_plus_2d": [np.nan],
+                    "precip_forecast_plus_1d": [1.0],
+                }
+            ),
+            1,
+            target_normal_temperature=np.asarray([20.0]),
+        )
+
+
+def test_heat_baseline_uses_target_month_normal_across_month_boundary():
+    evaluation_rows = pd.DataFrame(
+        {
+            "city_id": ["paris_fr"],
+            "forecast_origin_date": ["2026-01-31"],
+        }
+    )
+    normals = pd.DataFrame(
+        {
+            "city_id": ["paris_fr", "paris_fr"],
+            "month": [1, 2],
+            "normal_temperature_2m_max": [10.0, 20.0],
+        }
+    )
+    features = pd.DataFrame(
+        {
+            "temp_forecast_plus_1d": [25.0],
+            "temp_forecast_plus_2d": [25.0],
+            "precip_forecast_plus_1d": [0.0],
+        }
+    )
+
+    target_normals = train.target_date_heat_normals(
+        evaluation_rows,
+        1,
+        normals,
+    )
+
+    assert target_normals.tolist() == [20.0]
+    assert train.same_vintage_rule_predictions(
+        features,
+        1,
+        target_normal_temperature=target_normals,
+    ).tolist() == [[25.0, 0.0]]
+
+
+def test_heat_normal_lookup_rejects_duplicate_or_missing_target_key():
+    evaluation_rows = pd.DataFrame(
+        {
+            "city_id": ["paris_fr"],
+            "forecast_origin_date": ["2026-01-31"],
+        }
+    )
+    duplicates = pd.DataFrame(
+        {
+            "city_id": ["paris_fr", "paris_fr"],
+            "month": [2, 2],
+            "normal_temperature_2m_max": [20.0, 21.0],
+        }
+    )
+    with pytest.raises(ValueError, match="must be unique"):
+        train.target_date_heat_normals(evaluation_rows, 1, duplicates)
+
+    missing = pd.DataFrame(
+        {
+            "city_id": ["paris_fr"],
+            "month": [1],
+            "normal_temperature_2m_max": [10.0],
+        }
+    )
+    with pytest.raises(ValueError, match="incomplete"):
+        train.target_date_heat_normals(evaluation_rows, 1, missing)
+
+
+def test_heat_normal_seed_loader_rejects_duplicate_and_missing_keys(tmp_path):
+    complete = pd.DataFrame(
+        {
+            "city_id": [city for city in ALL_CITIES for _ in range(12)],
+            "month": list(range(1, 13)) * len(ALL_CITIES),
+            "normal_temperature_2m_max": 20.0,
+        }
+    )
+
+    duplicate_path = tmp_path / "duplicate.csv"
+    pd.concat([complete, complete.iloc[[0]]], ignore_index=True).to_csv(
+        duplicate_path,
+        index=False,
+    )
+    with pytest.raises(ValueError, match="duplicate city/month"):
+        train.load_city_monthly_heat_normals(duplicate_path)
+
+    missing_path = tmp_path / "missing.csv"
+    complete.iloc[1:].to_csv(missing_path, index=False)
+    with pytest.raises(ValueError, match="missing city/month"):
+        train.load_city_monthly_heat_normals(missing_path)

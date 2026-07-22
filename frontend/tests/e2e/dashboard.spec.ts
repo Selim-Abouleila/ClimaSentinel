@@ -1,15 +1,22 @@
 import { test, expect } from '@playwright/test';
 
 test.describe('ClimaSentinel Forecast E2E', () => {
-  test('should display honest learned and forecast-rule outputs for every horizon', async ({ page }) => {
-    const expectedModelVersion = process.env.EXPECTED_MODEL_VERSION;
+  test('should display the honest forecast-rule baseline for every horizon', async ({ page }) => {
+    test.setTimeout(240_000);
+
     // 1. Navigate to the forecast page
     await page.goto('/forecast');
 
     // 2. Verify the hero title loaded
-    await expect(page.getByRole('heading', { name: 'AI Tipping Forecast' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Climate Risk Forecast' })).toBeVisible();
     await expect(page.getByLabel('Forecast validation scope')).toContainText(
-      'Heat and rainfall are learned from realized ERA5 outcomes'
+      'Heat uses a same-vintage forecast rule with a limited ERA5 backtest'
+    );
+    await expect(page.getByLabel('Forecast validation scope')).toContainText(
+      'Rain has ERA5 backtest evidence but showed insufficient predictive skill'
+    );
+    await expect(page.getByLabel('Forecast validation scope')).toContainText(
+      'Wind, air-quality, and river-risk lack observed-label validation'
     );
     await expect(page.getByLabel('Forecast validation scope')).toContainText(
       'Missing source forecasts are shown as unavailable, never as zero risk'
@@ -19,10 +26,28 @@ test.describe('ClimaSentinel Forecast E2E', () => {
     const bodyText = await page.locator('body').textContent();
     expect(bodyText).not.toContain('500 Internal Server Error');
 
-    // 4. Select the City
-    await page.click('text=Paris, FR');
+    // 4. Wait for the backend rollout to expose this release's explicit rule
+    // contract. Railway deployments are detached, so an HTTP-ready frontend
+    // can briefly coexist with the previous backend release.
+    await expect.poll(async () => {
+      const responsePromise = page.waitForResponse(
+        (response) => response.url().includes(
+          '/data/city/paris_fr/forecast?horizon_days=3'
+        ),
+        { timeout: 15_000 },
+      );
+      await page.click('text=Paris, FR');
+      const response = await responsePromise;
+      if (!response.ok()) return `http-${response.status()}`;
+      const responseBody = await response.json();
+      return `${responseBody.forecast_method}:${responseBody.prediction_source}`;
+    }, {
+      message: 'waiting for the staging backend rule-baseline release',
+      timeout: 180_000,
+      intervals: [5_000],
+    }).toBe('forecast_rules_baseline:same_vintage_forecast_rules');
 
-    // 5. Exercise each horizon and verify the hybrid method contract end to end.
+    // 5. Exercise each horizon and verify the rule-policy contract end to end.
     for (const horizon of [
       { button: '+1 Day Tomorrow', day: 1 },
       { button: '+2 Days 48 hours', day: 2 },
@@ -38,10 +63,13 @@ test.describe('ClimaSentinel Forecast E2E', () => {
       const responseBody = await apiResponse.json();
       expect(responseBody).toMatchObject({
         horizon_days: horizon.day,
-        prediction_source: 'mlflow_registry',
-        forecast_method: 'hybrid_ml_and_forecast_rules',
-        model_target_components: expect.arrayContaining(['heat', 'rain']),
+        prediction_source: 'same_vintage_forecast_rules',
+        model_version: null,
+        forecast_method: 'forecast_rules_baseline',
+        model_target_components: [],
         rule_based_components: expect.arrayContaining([
+          'heat',
+          'rain',
           'wind',
           'air',
           'river',
@@ -51,42 +79,41 @@ test.describe('ClimaSentinel Forecast E2E', () => {
       expect(responseBody.feature_ingestion_run_id).toEqual(expect.any(String));
       expect(responseBody.feature_ingested_at_utc).toEqual(expect.any(String));
       expect(responseBody.forecast_origin_time_zone).toEqual(expect.any(String));
-      expect(['learned_model', 'forecast_rule']).toContain(
-        responseBody.forecast_primary_driver_method
-      );
+      expect(responseBody.forecast_primary_driver_method).toBe('forecast_rule');
+      expect(responseBody.total_uncertainty_method).toBe('none');
+      expect(responseBody.total_ci_lower).toBeNull();
+      expect(responseBody.total_ci_upper).toBeNull();
+      expect(responseBody.total_confidence_margin).toBeNull();
 
-      if (responseBody.total_uncertainty_method === 'tree_spread_not_calibrated') {
-        expect(responseBody.forecast_primary_driver_method).toBe('learned_model');
-        expect(responseBody.total_ci_lower).toEqual(expect.any(Number));
-        expect(responseBody.total_ci_upper).toEqual(expect.any(Number));
-        expect(responseBody.total_confidence_margin).toEqual(expect.any(Number));
-      } else {
-        expect(responseBody.total_uncertainty_method).toBe('none');
-        expect(responseBody.total_ci_lower).toBeNull();
-        expect(responseBody.total_ci_upper).toBeNull();
-        expect(responseBody.total_confidence_margin).toBeNull();
-      }
-
-      if (expectedModelVersion) {
-        expect(responseBody.model_version).toBe(expectedModelVersion);
-      } else {
-        expect(responseBody.model_version).toMatch(/^\d+$/);
-      }
-
-      for (const component of ['heat_score', 'rain_score']) {
-        const learnedForecast = responseBody.sub_scores_forecast[component];
-        expect(learnedForecast).toMatchObject({
+      const heatForecast = responseBody.sub_scores_forecast.heat_score;
+      expect(heatForecast).toMatchObject({
           available: true,
-          method: 'learned_model',
-          validation_status: 'era5_realized_validated',
-          uncertainty_method: 'tree_spread_not_calibrated',
+          method: 'forecast_rule',
+          validation_status: 'era5_backtested_limited',
+          uncertainty_method: 'none',
+          ci_lower: null,
+          ci_upper: null,
+          confidence_margin: null,
           unavailable_reason: null,
-        });
-        expect(learnedForecast.estimated_score).toEqual(expect.any(Number));
-        expect(learnedForecast.ci_lower).toEqual(expect.any(Number));
-        expect(learnedForecast.ci_upper).toEqual(expect.any(Number));
-        expect(learnedForecast.confidence_margin).toEqual(expect.any(Number));
-      }
+      });
+      expect(heatForecast.estimated_score).toEqual(expect.any(Number));
+      expect(heatForecast.provenance).toEqual(expect.any(String));
+      expect(heatForecast.method_reason).toContain('Reviewed operational baseline');
+
+      const rainForecast = responseBody.sub_scores_forecast.rain_score;
+      expect(rainForecast).toMatchObject({
+        available: true,
+        method: 'forecast_rule',
+        validation_status: 'era5_backtested_insufficient_skill',
+        uncertainty_method: 'none',
+        ci_lower: null,
+        ci_upper: null,
+        confidence_margin: null,
+        unavailable_reason: null,
+      });
+      expect(rainForecast.estimated_score).toEqual(expect.any(Number));
+      expect(rainForecast.provenance).toEqual(expect.any(String));
+      expect(rainForecast.method_reason).toContain('insufficient predictive skill');
 
       for (const component of ['wind_score', 'air_score', 'river_score']) {
         const ruleForecast = responseBody.sub_scores_forecast[component];
@@ -98,6 +125,8 @@ test.describe('ClimaSentinel Forecast E2E', () => {
           ci_upper: null,
           confidence_margin: null,
         });
+        expect(ruleForecast.provenance).toEqual(expect.any(String));
+        expect(ruleForecast.method_reason).toEqual(expect.any(String));
         expect(ruleForecast.available).toEqual(expect.any(Boolean));
         if (ruleForecast.available) {
           expect(ruleForecast.estimated_score).toEqual(expect.any(Number));
@@ -113,14 +142,7 @@ test.describe('ClimaSentinel Forecast E2E', () => {
       ).toBeVisible({ timeout: 15000 });
       await expect(page.getByText(`Est. Total Risk (Day +${horizon.day})`)).toBeVisible();
 
-      for (const label of ['Heat', 'Rain']) {
-        const learnedCard = page.getByRole('article', { name: `${label} forecast` });
-        await expect(learnedCard.getByText('Learned model', { exact: true })).toBeVisible();
-        await expect(learnedCard.getByText('Model spread band', { exact: true })).toBeVisible();
-        await expect(learnedCard).toContainText('not a calibrated interval');
-      }
-
-      for (const label of ['Wind', 'Air quality', 'River / flood']) {
+      for (const label of ['Heat', 'Rain', 'Wind', 'Air quality', 'River / flood']) {
         const ruleCard = page.getByRole('article', { name: `${label} forecast` });
         await expect(ruleCard.getByText('Forecast rule', { exact: true })).toBeVisible();
         await expect(ruleCard.getByText('Model spread band', { exact: true })).toHaveCount(0);
@@ -128,10 +150,13 @@ test.describe('ClimaSentinel Forecast E2E', () => {
 
       await expect(page.getByText('95% Confidence Interval')).toHaveCount(0);
       await expect(page.getByLabel('Forecast provenance')).toContainText(
-        'Learned: Heat, Rain'
+        'Operational policy: same vintage forecast rules'
       );
       await expect(page.getByLabel('Forecast provenance')).toContainText(
-        'Forecast rules: Wind, Air quality, River / flood'
+        'Forecast rules: Heat, Wind, Rain, Air quality, River / flood'
+      );
+      await expect(page.getByLabel('Forecast provenance')).toContainText(
+        'Learned components deployed: None'
       );
     }
   });

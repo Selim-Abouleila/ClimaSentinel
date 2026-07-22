@@ -34,36 +34,36 @@ a shorter horizon by reusing Day +3 output.
 
 The result page renders method and validation provenance per factor:
 
-- Heat and Rain are learned predictions trained against realized ERA5 outcomes;
-- Wind, Air Quality and River are deterministic indicators calculated from the
-  selected horizon's same-vintage forecasts;
+- all five factors are deterministic indicators calculated from the selected
+  horizon's same-vintage forecasts;
+- Heat is labelled as having only a limited backtest against realized ERA5;
+- Rain is labelled as ERA5-backtested with insufficient predictive skill;
+- Wind, Air Quality and River are labelled as lacking observed-label validation;
 - a source gap is displayed as unavailable, not as a green zero-risk value; and
-- model-spread bounds appear only for learned Heat/Rain outputs.
+- no component or aggregate model-confidence interval is displayed.
 
-The tree-spread display is explicitly described as uncalibrated model
-disagreement, not as a guaranteed 95% confidence interval. Rule-derived cards do
-not display a confidence interval. If a rule-derived factor is the total's
-primary driver, the total interval is also omitted.
+The frontend does not turn formula outputs into pseudo-confidence bounds. API
+interval fields are required to be null and the page explicitly states that no
+model confidence interval is claimed.
 
 The following disclaimer remains visible until observed gust, AQ and river
 outcomes are ingested and validated:
 
-> Model validation currently covers heat and rainfall only. Wind, air-quality
-> and river-risk values are forecast-based indicators and are not yet validated
-> against observed outcomes.
+> Heat uses a same-vintage forecast rule with a limited ERA5 backtest. Rain was
+> backtested against realized ERA5 but showed insufficient predictive skill.
+> Wind, air-quality and river-risk still lack observed-label validation.
 
 ## Loading and failure states
 
 The forecast page distinguishes among initial selection, loading, a successful
-hybrid result and a connection/model error. A 503 from the backend produces a
-retryable “Forecast unavailable” state. It does not substitute a production
-model failure with fabricated scores. Individual optional-source gaps can still
+rule-baseline result and a connection/data error. A backend failure produces a
+retryable “Forecast unavailable” state. Individual optional-source gaps can still
 produce a successful response; only the affected rule cards are unavailable.
 
 ## Deployment compatibility
 
-The hybrid API adds method, availability and validation fields and makes rule
+The API exposes method, availability and validation fields and keeps all model
 uncertainty nullable. Backend and frontend should therefore be promoted as one
-release. The staging Playwright test verifies the concrete promoted model
-version and the distinction between learned and rule-derived components before
-production promotion.
+release. The staging Playwright test verifies the `forecast_rules_baseline`
+contract across all three horizons; it does not require a rejected challenger
+to be deployed.

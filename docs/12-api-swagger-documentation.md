@@ -69,16 +69,19 @@ realized-label model validation.
 }
 ```
 
-## Hybrid forecast endpoint
+## Rule-baseline forecast endpoint
 
 ### `GET /data/city/{city_id}/forecast`
 
-Returns one genuine horizon from the schema-v3 hybrid forecaster.
+Returns one genuine horizon from the point-in-time same-vintage rule policy.
 
 - Path: `city_id`, for example `paris_fr`
 - Query: `horizon_days`, default `3`, accepted values `1`, `2`, `3`
-- Learned outputs: Heat and Rain from `ClimaSentinel_HeatRainForecaster`
-- Rule outputs: Wind, Air Quality and River from same-vintage forecasts
+- Rule outputs: Heat, Rain, Wind, Air Quality and River from same-vintage
+  forecasts
+- Validation scope: limited ERA5 backtest for Heat; an ERA5 backtest with
+  insufficient predictive skill for Rain; no observed-label validation yet for
+  Wind, Air Quality and River
 
 Example response where Heat is the primary driver and AQ is unavailable:
 
@@ -89,33 +92,37 @@ Example response where Heat is the primary driver and AQ is unavailable:
   "prediction_date": "2026-07-18",
   "current_tipping_score": 25.0,
   "estimated_total_tipping_score": 61.2,
-  "total_confidence_margin": 5.4,
-  "total_ci_lower": 55.8,
-  "total_ci_upper": 66.6,
-  "total_uncertainty_method": "tree_spread_not_calibrated",
+  "total_confidence_margin": null,
+  "total_ci_lower": null,
+  "total_ci_upper": null,
+  "total_uncertainty_method": "none",
   "forecast_primary_driver": "Heat",
-  "forecast_primary_driver_method": "learned_model",
+  "forecast_primary_driver_method": "forecast_rule",
   "sub_scores_forecast": {
     "heat_score": {
       "estimated_score": 61.2,
-      "ci_lower": 55.8,
-      "ci_upper": 66.6,
-      "confidence_margin": 5.4,
+      "ci_lower": null,
+      "ci_upper": null,
+      "confidence_margin": null,
       "available": true,
-      "method": "learned_model",
-      "validation_status": "era5_realized_validated",
-      "uncertainty_method": "tree_spread_not_calibrated",
+      "method": "forecast_rule",
+      "validation_status": "era5_backtested_limited",
+      "uncertainty_method": "none",
+      "provenance": "same-vintage weather forecast plus target-month city climatology",
+      "method_reason": "Reviewed operational baseline; offline challenger promotion does not change serving without a separate integration decision",
       "unavailable_reason": null
     },
     "rain_score": {
       "estimated_score": 4.0,
-      "ci_lower": 2.1,
-      "ci_upper": 5.9,
-      "confidence_margin": 1.9,
+      "ci_lower": null,
+      "ci_upper": null,
+      "confidence_margin": null,
       "available": true,
-      "method": "learned_model",
-      "validation_status": "era5_realized_validated",
-      "uncertainty_method": "tree_spread_not_calibrated",
+      "method": "forecast_rule",
+      "validation_status": "era5_backtested_insufficient_skill",
+      "uncertainty_method": "none",
+      "provenance": "same-vintage daily precipitation forecast",
+      "method_reason": "Reviewed operational baseline; its ERA5 backtest showed insufficient predictive skill, and challenger promotion does not change serving without a separate integration decision",
       "unavailable_reason": null
     },
     "wind_score": {
@@ -127,6 +134,8 @@ Example response where Heat is the primary driver and AQ is unavailable:
       "method": "forecast_rule",
       "validation_status": "not_observation_validated",
       "uncertainty_method": "none",
+      "provenance": "same-vintage wind-gust forecast",
+      "method_reason": "Deterministic forecast rule; observed historical gust labels are not currently ingested",
       "unavailable_reason": null
     },
     "air_score": {
@@ -138,6 +147,8 @@ Example response where Heat is the primary driver and AQ is unavailable:
       "method": "forecast_rule",
       "validation_status": "not_observation_validated",
       "uncertainty_method": "none",
+      "provenance": "same-vintage air-quality forecast",
+      "method_reason": "Deterministic forecast rule; observed historical air-quality labels are not currently ingested",
       "unavailable_reason": "Same-vintage air-quality forecast is unavailable"
     },
     "river_score": {
@@ -149,6 +160,8 @@ Example response where Heat is the primary driver and AQ is unavailable:
       "method": "forecast_rule",
       "validation_status": "not_observation_validated",
       "uncertainty_method": "none",
+      "provenance": "same-vintage river-discharge forecast",
+      "method_reason": "Deterministic forecast rule; observed historical river discharge labels are not currently ingested",
       "unavailable_reason": null
     }
   },
@@ -159,11 +172,11 @@ Example response where Heat is the primary driver and AQ is unavailable:
     "precip_plus_3d": 2.0,
     "wind_plus_3d": 18.8
   },
-  "prediction_source": "mlflow_registry",
-  "model_version": "42",
-  "forecast_method": "hybrid_ml_and_forecast_rules",
-  "model_target_components": ["heat", "rain"],
-  "rule_based_components": ["wind", "air", "river"],
+  "prediction_source": "same_vintage_forecast_rules",
+  "model_version": null,
+  "forecast_method": "forecast_rules_baseline",
+  "model_target_components": [],
+  "rule_based_components": ["heat", "wind", "rain", "air", "river"],
   "feature_schema_version": "3",
   "feature_ingestion_run_id": "3b6f30d3-6ad2-45c4-a941-f5b606e1e88e",
   "feature_ingested_at_utc": "2026-07-18T05:30:00+00:00",
@@ -175,12 +188,14 @@ Example response where Heat is the primary driver and AQ is unavailable:
 
 | Field | Meaning |
 |---|---|
-| `method` | `learned_model`, `forecast_rule`, or an explicitly identified development fallback |
-| `validation_status` | Whether the component was validated against realized ERA5 outcomes |
+| `method` | `forecast_rule` for every component in the current operational policy |
+| `validation_status` | `era5_backtested_limited` for Heat; `era5_backtested_insufficient_skill` for Rain; `not_observation_validated` for Wind, Air Quality and River |
 | `available` | Whether all inputs required for that component and horizon are present |
-| `uncertainty_method` | `tree_spread_not_calibrated` for learned outputs, otherwise `none` |
-| `prediction_source` | Provenance of the Heat/Rain estimator, retained for client compatibility |
-| `model_version` | Concrete registry version actually loaded, even when selected through an alias |
+| `uncertainty_method` | `none`; the formulas do not claim model uncertainty |
+| `provenance` | The exact same-vintage source inputs used by the component rule |
+| `method_reason` | Why the operational policy uses that rule instead of claiming a learned output |
+| `prediction_source` | `same_vintage_forecast_rules` for this operational policy |
+| `model_version` | `null`; offline challenger registration is not serving provenance |
 | `prediction_date` | City-local forecast origin date for the exact serving vintage |
 | `feature_ingestion_run_id` | Exact same-vintage feature run used by the response |
 
@@ -189,9 +204,9 @@ calculation genuinely evaluated to zero. `estimated_score: null` plus
 `available: false` means the source contract was not satisfied. Clients must not
 render those states as equivalent.
 
-The tree-spread fields are not calibrated 95% confidence intervals. When the
-primary driver is a forecast rule, all top-level interval fields are null and
-`total_uncertainty_method` is `none`.
+All component and top-level interval fields are null and
+`total_uncertainty_method` is `none`. A deterministic formula is not a
+statistical confidence interval.
 
 ### Error responses
 
@@ -200,4 +215,3 @@ primary driver is a forecast rule, all top-level interval fields are null and
 | `404` | No current eligible point-in-time serving row exists for the city |
 | `422` | `horizon_days` is outside `1..3` or another request value is invalid |
 | `500` | BigQuery or unexpected application failure |
-| `503` | Registered model selection, loading, schema validation or inference failed in a protected environment |
