@@ -9,17 +9,23 @@ test.describe('ClimaSentinel Forecast E2E', () => {
 
     // 2. Verify the hero title loaded
     await expect(page.getByRole('heading', { name: 'Climate Risk Forecast' })).toBeVisible();
-    await expect(page.getByLabel('Forecast validation scope')).toContainText(
-      'Heat uses a same-vintage forecast rule with a limited ERA5 backtest'
+    const betaBadge = page.getByLabel('Forecast feature is in beta');
+    await expect(betaBadge).toBeVisible();
+    await expect(betaBadge).toHaveText('Beta');
+    await expect(page.getByLabel('Forecast note')).toContainText(
+      'Heat has limited backtest evidence'
     );
-    await expect(page.getByLabel('Forecast validation scope')).toContainText(
-      'Rain has ERA5 backtest evidence but showed insufficient predictive skill'
+    await expect(page.getByLabel('Forecast note')).toContainText(
+      'Rain performed poorly in backtests'
     );
-    await expect(page.getByLabel('Forecast validation scope')).toContainText(
-      'Wind, air-quality, and river-risk lack observed-label validation'
+    await expect(page.getByLabel('Forecast note')).toContainText(
+      'Wind, air quality and river lack observed validation'
     );
-    await expect(page.getByLabel('Forecast validation scope')).toContainText(
-      'Missing source forecasts are shown as unavailable, never as zero risk'
+    await expect(page.getByLabel('Forecast note')).toContainText(
+      'Missing inputs are marked unavailable'
+    );
+    await expect(page.getByLabel('Forecast note')).toContainText(
+      'Scores are point estimates without confidence bands'
     );
 
     // 3. Verify there are no 500 errors
@@ -144,20 +150,11 @@ test.describe('ClimaSentinel Forecast E2E', () => {
 
       for (const label of ['Heat', 'Rain', 'Wind', 'Air quality', 'River / flood']) {
         const ruleCard = page.getByRole('article', { name: `${label} forecast` });
-        await expect(ruleCard.getByText('Forecast rule', { exact: true })).toBeVisible();
+        await expect(ruleCard).toBeVisible();
         await expect(ruleCard.getByText('Model spread band', { exact: true })).toHaveCount(0);
       }
 
       await expect(page.getByText('95% Confidence Interval')).toHaveCount(0);
-      await expect(page.getByLabel('Forecast provenance')).toContainText(
-        'Operational policy: same vintage forecast rules'
-      );
-      await expect(page.getByLabel('Forecast provenance')).toContainText(
-        'Forecast rules: Heat, Wind, Rain, Air quality, River / flood'
-      );
-      await expect(page.getByLabel('Forecast provenance')).toContainText(
-        'Learned components deployed: None'
-      );
     }
   });
 });

@@ -1,11 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import type {
-  CityForecast,
-  ForecastComponentMethod,
-  ForecastValidationStatus,
-} from "@/lib/api";
+import type { CityForecast } from "@/lib/api";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
 
@@ -52,45 +48,6 @@ function getRiskBand(score: number): RiskBand {
 
 function clampScore(score: number) {
   return Math.min(100, Math.max(0, score));
-}
-
-function getMethodLabel(method: ForecastComponentMethod) {
-  void method;
-  return "Forecast rule";
-}
-
-function getMethodTone(method: ForecastComponentMethod) {
-  void method;
-  return "rule";
-}
-
-function getValidationLabel(status: ForecastValidationStatus) {
-  if (status === "era5_backtested_limited") return "Limited ERA5 backtest";
-  if (status === "era5_backtested_insufficient_skill") {
-    return "ERA5 backtest · insufficient skill";
-  }
-  return "Not observation-validated";
-}
-
-const COMPONENT_LABELS: Record<string, string> = {
-  heat: "Heat",
-  heat_score: "Heat",
-  wind: "Wind",
-  wind_score: "Wind",
-  rain: "Rain",
-  rain_score: "Rain",
-  air: "Air quality",
-  air_score: "Air quality",
-  river: "River / flood",
-  river_score: "River / flood",
-};
-
-function formatComponentList(components: string[]) {
-  return components.map((component) => COMPONENT_LABELS[component] ?? component).join(", ");
-}
-
-function humanizeSource(source: string) {
-  return source.replaceAll("_", " ");
 }
 
 export default function ForecastPage() {
@@ -150,16 +107,18 @@ export default function ForecastPage() {
         <header className="subpage-hero">
           <div className="dashboard-eyebrow">
             <span className="dashboard-eyebrow__dot" aria-hidden="true" />
-            Rule-based outlook · 1–3 days · explicit provenance
+            Rule-based outlook · 1–3 days
           </div>
           <div className="subpage-hero__title-row">
             <h1>Climate Risk Forecast</h1>
-            <span className="model-status">Baseline policy</span>
+            <span
+              className="model-status model-status--beta"
+              aria-label="Forecast feature is in beta"
+            >
+              Beta
+            </span>
           </div>
-          <p>
-            Explore projected climate stress using transparent, same-vintage
-            forecast rules for every component.
-          </p>
+          <p>Explore projected climate risk by city and horizon.</p>
         </header>
 
         <section className="forecast-controls" aria-label="Forecast controls">
@@ -223,16 +182,14 @@ export default function ForecastPage() {
 
         <aside
           className="forecast-validation-note"
-          aria-label="Forecast validation scope"
+          aria-label="Forecast note"
         >
-          <strong>Validation scope</strong>
+          <strong>About the scores</strong>
           <p>
-            Heat uses a same-vintage forecast rule with a limited ERA5 backtest;
-            the historical evidence is promising but not yet mature.
-            Rain has ERA5 backtest evidence but showed insufficient predictive
-            skill. Wind, air-quality, and river-risk lack observed-label
-            validation. Missing source forecasts are shown as unavailable, never
-            as zero risk. No model confidence interval is claimed.
+            Heat has limited backtest evidence; Rain performed poorly in
+            backtests; Wind, air quality and river lack observed validation.
+            Scores are point estimates without confidence bands. Missing inputs
+            are marked unavailable.
           </p>
         </aside>
 
@@ -242,23 +199,17 @@ export default function ForecastPage() {
               <i />
             </span>
             <span className="section-kicker">Awaiting input</span>
-            <h2 id="forecast-empty-title">Select a Region</h2>
-            <p>
-              Choose a city to calculate its Day +{horizonDays} rule-based risk
-              estimate and factor-level outlook.
-            </p>
+            <h2 id="forecast-empty-title">Select a city</h2>
+            <p>Choose a city to view its Day +{horizonDays} forecast.</p>
           </section>
         )}
 
         {loading && selectedCity && (
           <section className="forecast-state" role="status" aria-live="polite">
             <span className="forecast-loader" aria-hidden="true" />
-            <span className="section-kicker">Forecast rules</span>
+            <span className="section-kicker">Forecast</span>
             <h2>Calculating Forecast</h2>
-            <p>
-              Evaluating {currentCity?.name} at Day +{horizonDays} from one
-              complete same-vintage forecast feature row.
-            </p>
+            <p>Calculating {currentCity?.name} at Day +{horizonDays}.</p>
           </section>
         )}
 
@@ -301,7 +252,7 @@ export default function ForecastPage() {
                   <strong>{forecast.estimated_total_tipping_score.toFixed(1)}</strong>
                   <span>/ 100</span>
                 </div>
-                <p>Maximum available rule estimate · no model band</p>
+                <p>Rule-based estimate</p>
               </article>
 
               <article className={`forecast-summary-card risk-${baselineBand.tone}`}>
@@ -324,9 +275,7 @@ export default function ForecastPage() {
                   <small>03</small>
                 </div>
                 <h3>{forecast.forecast_primary_driver}</h3>
-                <p>
-                  Highest projected factor · {getMethodLabel(forecast.forecast_primary_driver_method)}
-                </p>
+                <p>Highest projected factor</p>
               </article>
 
               <article className="forecast-summary-card forecast-summary-card--weather">
@@ -361,11 +310,7 @@ export default function ForecastPage() {
                 <div>
                   <span className="section-kicker">Forecast components</span>
                   <h2 id="forecast-factors-title">Factor-level outlook</h2>
-                  <p>Same-vintage forecast-rule estimates with explicit validation scope.</p>
-                </div>
-                <div className="confidence-key">
-                  <span><i /> Point estimate</span>
-                  <span>No model confidence intervals</span>
+                  <p>Projected score by climate factor.</p>
                 </div>
               </div>
 
@@ -381,7 +326,6 @@ export default function ForecastPage() {
                   const score = estimatedScore === null
                     ? null
                     : clampScore(estimatedScore);
-                  const methodTone = getMethodTone(factorData.method);
 
                   return (
                     <article
@@ -398,12 +342,6 @@ export default function ForecastPage() {
                         </strong>
                       </div>
                       <h3>{factor.title}</h3>
-                      <div
-                        className={`forecast-factor-card__method forecast-factor-card__method--${methodTone}`}
-                        title={factorData.method_reason}
-                      >
-                        {getMethodLabel(factorData.method)}
-                      </div>
                       <div className={`forecast-factor-card__score ${score === null ? "is-unavailable" : ""}`}>
                         <strong>{estimatedScore === null ? "—" : estimatedScore.toFixed(1)}</strong>
                         {estimatedScore !== null && <span>/ 100</span>}
@@ -419,51 +357,20 @@ export default function ForecastPage() {
                           </>
                         )}
                       </div>
-                      <div className="forecast-factor-card__ci">
-                        {score === null ? (
-                          <>
-                            <span>Availability</span>
-                            <strong>Unavailable</strong>
-                          </>
-                        ) : (
-                          <>
-                            <span>Forecast-rule estimate</span>
-                            <strong>No model band</strong>
-                          </>
-                        )}
-                      </div>
-                      <p className="forecast-factor-card__context">
-                        {score === null
-                          ? factorData.unavailable_reason ?? "Required source forecast is unavailable"
-                          : `Same-vintage rule · ${getValidationLabel(factorData.validation_status)} · ${factorData.provenance}`}
-                      </p>
+                      {score === null && (
+                        <p
+                          className="forecast-factor-card__context"
+                          title={factorData.unavailable_reason ?? undefined}
+                        >
+                          Source data unavailable
+                        </p>
+                      )}
                     </article>
                   );
                 })}
               </div>
             </section>
 
-            <footer className="dashboard-data-note forecast-provenance" aria-label="Forecast provenance">
-              <span>Forecast provenance</span>
-              <div>
-                <p>
-                  Operational policy: {humanizeSource(forecast.prediction_source)}
-                </p>
-                <p>Forecast rules: {formatComponentList(forecast.rule_based_components)}</p>
-                <p>
-                  Learned components deployed: {forecast.model_target_components.length === 0
-                    ? "None — challengers must first beat their rule baselines"
-                    : formatComponentList(forecast.model_target_components)}
-                </p>
-                <p>
-                  Feature schema {forecast.feature_schema_version} · run{" "}
-                  <code title={forecast.feature_ingestion_run_id}>
-                    {forecast.feature_ingestion_run_id}
-                  </code>{" "}
-                  · ingested {forecast.feature_ingested_at_utc} · {forecast.forecast_origin_time_zone}
-                </p>
-              </div>
-            </footer>
           </div>
         )}
       </div>
