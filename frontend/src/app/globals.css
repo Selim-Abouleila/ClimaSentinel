@@ -804,6 +804,22 @@ body {
   text-transform: uppercase;
 }
 
+.forecast-page .model-status--beta {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 6px 10px;
+  color: #fff;
+  background: #be123c;
+  border-color: #fb7185;
+  box-shadow: 0 0 18px rgba(190, 18, 60, 0.22);
+  font-size: 0.66rem;
+  font-weight: 750;
+  line-height: 1;
+  letter-spacing: 0.12em;
+  white-space: nowrap;
+}
+
 .subpage-back-link {
   display: inline-flex;
   align-items: center;

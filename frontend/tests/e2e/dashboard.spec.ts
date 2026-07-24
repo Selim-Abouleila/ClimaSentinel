@@ -9,7 +9,9 @@ test.describe('ClimaSentinel Forecast E2E', () => {
 
     // 2. Verify the hero title loaded
     await expect(page.getByRole('heading', { name: 'Climate Risk Forecast' })).toBeVisible();
-    await expect(page.getByText('Rule-based', { exact: true })).toBeVisible();
+    const betaBadge = page.getByLabel('Forecast feature is in beta');
+    await expect(betaBadge).toBeVisible();
+    await expect(betaBadge).toHaveText('Beta');
     await expect(page.getByLabel('Forecast note')).toContainText(
       'Heat has limited backtest evidence'
     );

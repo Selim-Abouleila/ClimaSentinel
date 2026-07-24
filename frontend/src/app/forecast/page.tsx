@@ -111,7 +111,12 @@ export default function ForecastPage() {
           </div>
           <div className="subpage-hero__title-row">
             <h1>Climate Risk Forecast</h1>
-            <span className="model-status">Rule-based</span>
+            <span
+              className="model-status model-status--beta"
+              aria-label="Forecast feature is in beta"
+            >
+              Beta
+            </span>
           </div>
           <p>Explore projected climate risk by city and horizon.</p>
         </header>
