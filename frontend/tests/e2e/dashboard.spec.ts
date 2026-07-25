@@ -9,9 +9,15 @@ test.describe('ClimaSentinel Forecast E2E', () => {
 
     // 2. Verify the hero title loaded
     await expect(page.getByRole('heading', { name: 'Climate Risk Forecast' })).toBeVisible();
-    const betaBadge = page.getByLabel('Forecast feature is in beta');
+    const betaBadge = page.getByLabel('Forecast feature is in beta', { exact: true });
     await expect(betaBadge).toBeVisible();
-    await expect(betaBadge).toHaveText('Beta');
+    await expect(betaBadge).toHaveText('Beta forecast');
+    await expect(
+      page.getByText(
+        'Experimental, rule-based climate risk projections by city for the next 1–3 days.',
+        { exact: true },
+      )
+    ).toBeVisible();
     await expect(page.getByLabel('Forecast note')).toContainText(
       'Heat has limited backtest evidence'
     );
@@ -32,9 +38,8 @@ test.describe('ClimaSentinel Forecast E2E', () => {
     const bodyText = await page.locator('body').textContent();
     expect(bodyText).not.toContain('500 Internal Server Error');
 
-    // 4. Wait for the backend rollout to expose this release's explicit rule
-    // contract. Railway deployments are detached, so an HTTP-ready frontend
-    // can briefly coexist with the previous backend release.
+    // 4. Verify the deployed backend exposes this release's explicit rule
+    // contract. The bounded poll also tolerates brief Railway routing propagation.
     await expect.poll(async () => {
       const responsePromise = page.waitForResponse(
         (response) => response.url().includes(
@@ -42,7 +47,7 @@ test.describe('ClimaSentinel Forecast E2E', () => {
         ),
         { timeout: 15_000 },
       );
-      await page.click('text=Paris, FR');
+      await page.getByRole('button', { name: 'Paris, FR', exact: true }).click();
       const response = await responsePromise;
       if (!response.ok()) return `http-${response.status()}`;
       const responseBody = await response.json();
