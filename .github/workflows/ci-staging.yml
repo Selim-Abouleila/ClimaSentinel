@@ -11,6 +11,10 @@ on:
   push:
     branches: [staging]
 
+concurrency:
+  group: climasentinel-model-promotion
+  cancel-in-progress: false
+
 jobs:
   test:
     name: Full Test Suite
@@ -48,36 +52,63 @@ jobs:
       - name: Build Docker image
         run: docker build -f backend/Dockerfile -t climasentinel-backend:staging .
 
+  train-model:
+    name: Train and Register Heat/Rain Challenger
+    needs: test
+    permissions:
+      contents: write
+    uses: ./.github/workflows/ci-mlops.yml
+    secrets: inherit
+
   deploy-staging:
-    name: Deploy to Staging
+    name: Evaluate Challenger and Deploy Rule Baseline to Staging
     runs-on: ubuntu-latest
-    needs: docker-build
+    needs: [docker-build, train-model]
     environment: staging
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install model promotion dependencies
+        run: python -m pip install -r backend/requirements.txt
+
+      - name: Evaluate Heat/Rain challenger and promote only if qualified
+        run: python -m model.promote --allow-rejected
+        env:
+          DAGSHUB_USERNAME: ${{ secrets.DAGSHUB_USERNAME }}
+          DAGSHUB_USER_TOKEN: ${{ secrets.DAGSHUB_USER_TOKEN || secrets.DAGSHUB_TOKEN }}
+          MLFLOW_MODEL_ALIAS: champion
+          MLFLOW_MODEL_VERSION: ${{ needs.train-model.outputs.model_version }}
+
       - name: Install Railway CLI
         run: npm install -g @railway/cli
 
       - name: Deploy Backend to Railway
-        run: railway up --environment staging --service ${{ secrets.RAILWAY_SERVICE_ID }} --detach
+        run: railway up --environment staging --service ${{ secrets.RAILWAY_SERVICE_ID }}
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
           RAILWAY_PROJECT_ID: ${{ secrets.RAILWAY_PROJECT_ID }}
           RAILWAY_SERVICE_ID: ${{ secrets.RAILWAY_SERVICE_ID }}
 
+      - name: Stamp Frontend Release
+        run: |
+          release_id="${GITHUB_SHA}-${GITHUB_RUN_ID}"
+          mkdir -p frontend/public/releases
+          printf '%s\n' "${release_id}" \
+            > "frontend/public/releases/${release_id}.txt"
+
       - name: Deploy Frontend to Railway
-        run: railway up --environment staging --service ${{ secrets.RAILWAY_FRONTEND_SERVICE_ID }} --detach
+        run: railway up --environment staging --service ${{ secrets.RAILWAY_FRONTEND_SERVICE_ID }}
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
           RAILWAY_PROJECT_ID: ${{ secrets.RAILWAY_PROJECT_ID }}
           RAILWAY_SERVICE_ID: ${{ secrets.RAILWAY_FRONTEND_SERVICE_ID }}
-
-      # TODO: Deploy candidate model from MLflow registry
-      - name: Deploy candidate model (placeholder)
-        run: echo "🤖 Deploy candidate model from MLflow registry to staging"
 
   e2e-test:
     name: E2E Playwright Test
@@ -90,6 +121,38 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
+      - name: Verify the deployed staging frontend release
+        env:
+          STAGING_FRONTEND_URL: ${{ secrets.STAGING_FRONTEND_URL }}
+        run: |
+          : "${STAGING_FRONTEND_URL:?STAGING_FRONTEND_URL is required}"
+          release_id="${GITHUB_SHA}-${GITHUB_RUN_ID}"
+          release_url="${STAGING_FRONTEND_URL%/}/releases/${release_id}.txt"
+          response_file="${RUNNER_TEMP}/climasentinel-${release_id}.txt"
+
+          for attempt in {1..36}; do
+            if curl \
+              --fail \
+              --silent \
+              --show-error \
+              --location \
+              --connect-timeout 5 \
+              --max-time 10 \
+              --header "Cache-Control: no-cache" \
+              --header "Pragma: no-cache" \
+              --output "${response_file}" \
+              "${release_url}?attempt=${attempt}" \
+              && grep --fixed-strings --line-regexp --quiet \
+                "${release_id}" "${response_file}"; then
+              echo "Staging frontend is serving release ${release_id}."
+              exit 0
+            fi
+            echo "Waiting for staging frontend release ${release_id} (${attempt}/36)..."
+            sleep 10
+          done
+          echo "Staging frontend did not serve release ${release_id} after 36 attempts."
+          exit 1
 
       - name: Setup Node
         uses: actions/setup-node@v4

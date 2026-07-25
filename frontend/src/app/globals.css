@@ -804,6 +804,22 @@ body {
   text-transform: uppercase;
 }
 
+.forecast-page .model-status--beta {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 6px 10px;
+  color: #fff;
+  background: #be123c;
+  border-color: #fb7185;
+  box-shadow: 0 0 18px rgba(190, 18, 60, 0.22);
+  font-size: 0.66rem;
+  font-weight: 750;
+  line-height: 1;
+  letter-spacing: 0.12em;
+  white-space: nowrap;
+}
+
 .subpage-back-link {
   display: inline-flex;
   align-items: center;
@@ -847,6 +863,29 @@ body {
   background: var(--color-surface);
   border: 1px solid var(--color-border-subtle);
   border-radius: 12px;
+}
+
+.forecast-validation-note {
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+  margin-top: 12px;
+  padding: 11px 14px;
+  color: #8999a8;
+  background: rgba(223, 180, 81, 0.06);
+  border: 1px solid rgba(223, 180, 81, 0.2);
+  border-radius: 8px;
+  font-size: 0.7rem;
+  line-height: 1.55;
+}
+
+.forecast-validation-note strong {
+  flex: 0 0 auto;
+  color: var(--risk-monitoring);
+  font-size: 0.62rem;
+  font-weight: 650;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
 }
 
 .forecast-control-divider {
@@ -1224,34 +1263,6 @@ body {
   margin-bottom: 17px;
 }
 
-.confidence-key {
-  display: flex;
-  align-items: center;
-  gap: 17px;
-  color: #708297;
-  font-size: 0.62rem;
-}
-
-.confidence-key span {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.confidence-key i {
-  width: 14px;
-  height: 4px;
-  background: #6f8497;
-  border-radius: 2px;
-}
-
-.confidence-key span:last-child i {
-  background: rgba(188, 207, 220, 0.22);
-  border-right: 1px solid #8295a7;
-  border-left: 1px solid #8295a7;
-  border-radius: 0;
-}
-
 .forecast-factor-grid {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
@@ -1260,10 +1271,16 @@ body {
 
 .forecast-factor-card {
   min-width: 0;
+  display: flex;
+  flex-direction: column;
   padding: 18px;
   background: var(--color-surface);
   border: 1px solid var(--color-border-subtle);
   border-radius: 12px;
+}
+
+.forecast-factor-card.is-unavailable {
+  --risk-color: #718397;
 }
 
 .forecast-factor-card__topline {
@@ -1317,6 +1334,10 @@ body {
   font-size: 0.56rem;
 }
 
+.forecast-factor-card__score.is-unavailable strong {
+  color: #718397;
+}
+
 .forecast-factor-card__meter {
   position: relative;
   height: 5px;
@@ -1325,8 +1346,17 @@ body {
   border-radius: 3px;
 }
 
+.forecast-factor-card__meter.is-unavailable {
+  background: repeating-linear-gradient(
+    135deg,
+    #121f2e,
+    #121f2e 5px,
+    #182636 5px,
+    #182636 10px
+  );
+}
+
 .forecast-factor-card__fill,
-.forecast-factor-card__interval,
 .forecast-factor-card__meter > i {
   position: absolute;
   top: 0;
@@ -1339,43 +1369,20 @@ body {
   border-radius: inherit;
 }
 
-.forecast-factor-card__interval {
-  background: rgba(220, 232, 239, 0.2);
-  border-right: 1px solid rgba(225, 238, 245, 0.7);
-  border-left: 1px solid rgba(225, 238, 245, 0.7);
-}
-
 .forecast-factor-card__meter > i {
   width: 1px;
   background: #f2f7fa;
   transform: translateX(-1px);
 }
 
-.forecast-factor-card__ci {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  margin-top: 15px;
-  padding-top: 13px;
-  border-top: 1px solid #182738;
-}
-
-.forecast-factor-card__ci span,
-.forecast-factor-card > p {
+.forecast-factor-card__context {
+  min-height: 2.4em;
+  margin-top: 14px;
+  padding-top: 12px;
   color: #607388;
+  border-top: 1px solid #182738;
   font-size: 0.58rem;
-}
-
-.forecast-factor-card__ci strong {
-  color: #9cadbb;
-  font-family: var(--font-geist-mono), monospace;
-  font-size: 0.61rem;
-  font-weight: 570;
-}
-
-.forecast-factor-card > p {
-  margin-top: 6px;
+  line-height: 1.45;
 }
 
 /* Individual city detail */
@@ -1800,6 +1807,12 @@ body {
     border-radius: 10px;
   }
 
+  .forecast-validation-note {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 4px;
+  }
+
   .forecast-control-group__header {
     align-items: flex-start;
     flex-direction: column;
@@ -1837,12 +1850,6 @@ body {
   .forecast-weather-list {
     grid-template-columns: repeat(3, minmax(0, 1fr));
     row-gap: 14px;
-  }
-
-  .confidence-key {
-    align-items: flex-start;
-    flex-direction: column;
-    gap: 8px;
   }
 
   .subpage-back-link {

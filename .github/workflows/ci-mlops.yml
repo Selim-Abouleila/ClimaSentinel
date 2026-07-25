@@ -1,15 +1,19 @@
-name: MLOps Training Pipeline
+name: MLOps Heat/Rain Training Pipeline
 
 on:
-  push:
-    branches:
-      - main
-      - staging
+  workflow_call:
+    outputs:
+      model_version:
+        description: Exact registered model version produced by this run
+        value: ${{ jobs.train-and-register.outputs.model_version }}
   workflow_dispatch:
 
 jobs:
   train-and-register:
+    name: Train and Register Heat/Rain Model
     runs-on: ubuntu-latest
+    outputs:
+      model_version: ${{ steps.train-model.outputs.model_version }}
     permissions:
       contents: write
     steps:
@@ -19,12 +23,14 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
           
-      - name: Install ML Dependencies
-        run: pip install dvc scikit-learn mlflow dagshub pandas pyarrow db-dtypes google-cloud-bigquery pyyaml
+      - name: Install Backend and MLOps Dependencies
+        run: python -m pip install -r backend/requirements.txt dvc pyyaml
         
       - name: Authenticate with Google Cloud
         uses: google-github-actions/auth@v2
@@ -41,20 +47,10 @@ jobs:
         env:
           GCP_PROJECT_ID: clima-sentinel
           BQ_DATASET: mart
-        run: python model/extract_data.py
+        run: python -m model.extract_data
         
-      - name: Track with DVC & Push to DagsHub
-        run: |
-          dvc add model/data/training_snapshot.csv
-          dvc push
-          
-      - name: Commit DVC Version to Git
-        run: |
-          git config --global user.name 'github-actions'
-          git config --global user.email 'github-actions@github.com'
-          git add model/data/training_snapshot.csv.dvc model/data/.gitignore
-          git commit -m "chore: auto-update DVC training data snapshot [skip ci]" || echo "No data changes"
-          git push
+      - name: Track Extracted Snapshot with DVC
+        run: dvc add model/data/training_snapshot.csv
 
       - name: Validate MLflow Secrets
         run: |
@@ -67,8 +63,23 @@ jobs:
           MLFLOW_TRACKING_URI: ${{ secrets.MLFLOW_TRACKING_URI }}
 
       - name: Train Model & Log to MLflow
+        id: train-model
         env:
           DAGSHUB_USERNAME: ${{ secrets.DAGSHUB_USERNAME }}
           DAGSHUB_USER_TOKEN: ${{ secrets.DAGSHUB_TOKEN }}
           MLFLOW_ALLOW_FILE_STORE: "true"
-        run: python model/train.py
+        run: python -m model.train
+
+      # Publish the data object and its Git pointer only after extraction,
+      # training and registration have all succeeded. Promotion remains a
+      # separate downstream quality gate.
+      - name: Push Successful Training Snapshot to DagsHub
+        run: dvc push
+
+      - name: Commit Successful DVC Version to Git
+        run: |
+          git config --global user.name 'github-actions'
+          git config --global user.email 'github-actions@github.com'
+          git add model/data/training_snapshot.csv.dvc model/data/.gitignore
+          git commit -m "chore: auto-update DVC training data snapshot [skip ci]" || echo "No data changes"
+          git push

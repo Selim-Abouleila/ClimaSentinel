@@ -4,12 +4,22 @@ The staging layer transforms raw, append-only ingested data into clean, deduplic
 
 ## Purpose
 
-The `raw.*` tables accumulate overlapping data on every ingestion run (e.g., 168 hourly weather rows per city per day, with 6 days of overlap between consecutive runs). Before computing tipping scores, we need to:
+The `raw.*` tables accumulate overlapping data on every ingestion run (e.g., 168 hourly weather rows per city per day, with 6 days of overlap between consecutive runs). The layer now exposes two intentionally different paths: the existing `stg_latest_*` path supports the operational dashboard, while the parallel `*_vintage` path preserves what was available at each ingestion run for point-in-time ML training and serving.
+
+Before computing operational tipping scores, we need to:
 
 1. **Deduplicate** — Keep only the freshest forecast for each `(city_id, timestamp)` pair
 2. **Handle nulls** — Coalesce missing sensor readings to avoid downstream errors
 3. **Harmonize grain** — Roll hourly tables down to daily summaries so all signals share the same `(city_id, date)` key
 4. **Unify** — JOIN all signals into a single `stg.city_signal_input` table for the mart layer
+
+For point-in-time ML inputs, we instead:
+
+1. **Preserve forecast runs** — Retain `ingestion_run_id` and `ingested_at_utc`
+2. **Aggregate within a run** — Never mix forecast revisions in one daily row
+3. **Use city-local calendar horizons** — Convert the UTC ingestion timestamp with the city's IANA timezone, then derive `horizon_days` with `DATE_DIFF`
+4. **Preserve missingness** — Keep NULL measurements and expose reading counts
+5. **Join coherently** — Join weather, AQ, and flood only from the exact same run
 
 ---
 
@@ -25,6 +35,13 @@ raw.historical_weather_daily ──→ stg_latest_historical_daily ────�
                                                                                         │
                                                                                         ▼
                                                                               (mart layer — next)
+
+raw.weather_forecast_hourly ──→ stg_weather_forecast_hourly_vintage ──→ stg_city_daily_weather_vintage ──┐
+raw.air_quality_hourly ────────→ stg_air_quality_hourly_vintage ───────→ stg_city_daily_air_quality_vintage ┤
+raw.flood_daily ───────────────→ stg_flood_daily_vintage ──────────────────────────────────────────────────┤
+                                                                                                           ▼
+                                                                                         stg_city_signal_vintage
+                                                                                         (future ML marts)
 ```
 
 ---
@@ -72,6 +89,36 @@ These views roll up deduplicated hourly data into daily summaries.
 
 > **Note:** CMIP6 climate projections are intentionally excluded from `city_signal_input`. They have a different grain (10-year window, monthly refresh) and will be consumed separately in the mart layer as a long-term deviation baseline.
 
+### Forecast-Vintage Views (6)
+
+These views preserve every ingestion run. `ingested_at_utc` is the ingestion-run start timestamp used as ClimaSentinel's availability proxy; it is not Open-Meteo's model issue or initialization timestamp. `forecast_origin_time_zone` records the IANA timezone used to convert that UTC timestamp into the city's local `forecast_origin_date`.
+
+| Model | Grain | Purpose |
+|---|---|---|
+| `stg_weather_forecast_hourly_vintage` | `(ingestion_run_id, city_id, valid_ts_utc)` | Retains every hourly weather forecast revision |
+| `stg_city_daily_weather_vintage` | `(ingestion_run_id, city_id, valid_date)` | Aggregates weather inside one retrieval only |
+| `stg_air_quality_hourly_vintage` | `(ingestion_run_id, city_id, valid_ts_utc)` | Retains every hourly AQ forecast revision |
+| `stg_city_daily_air_quality_vintage` | `(ingestion_run_id, city_id, valid_date)` | Aggregates AQ inside one retrieval only |
+| `stg_flood_daily_vintage` | `(ingestion_run_id, city_id, valid_date)` | Retains every river-discharge forecast revision |
+| `stg_city_signal_vintage` | `(ingestion_run_id, city_id, valid_date)` | Same-run weather/AQ/flood signal view anchored on weather |
+
+The vintage path does not join ERA5. ERA5 is published later and belongs to a future realized-outcome/label path, not to the forecast snapshot that was available at prediction time.
+
+**Vintage nullability and coverage rules:**
+
+- Missing measurements remain NULL; staging never turns missing AQ, rain, wind, or river values into zero.
+- Per-variable reading counts and source-presence flags make partial responses observable.
+- AQ and flood never fall back to a different run after a partial ingestion failure.
+- Flood is legitimately absent for non-river-enabled cities.
+- AQ has a five-day window while weather and flood have seven-day windows.
+- Unknown city IDs fail during vintage-model evaluation until an IANA timezone is configured; they never silently fall back to UTC.
+
+> **Timestamp caveat:** the current fetcher requests city-local timestamps and stores the offset-free strings in `valid_ts_utc`. Calendar-day horizons are now anchored to the city-local ingestion date, including off-schedule runs that cross local midnight. Precise lead-hour and DST calculations still require the separate ingestion change that preserves the provider timestamp offset. When that field is corrected to contain a true UTC instant, `valid_date` must also change to `DATE(valid_ts_utc, forecast_origin_time_zone)` so the calendar contract remains local.
+
+`ingested_at_utc` is currently one timestamp captured at the start of the whole ingestion run. If an unusually long run begins before a city's local midnight but fetches that city after midnight, the raw schema cannot reconstruct the later per-city request date. Normal scheduled runs are short enough to avoid this edge case; a future ingestion revision should persist provider issue time or a per-city request timestamp.
+
+The local-origin rule matters for retries and manual runs. For example, an ingestion at `23:31 UTC` on July 4 is already July 5 in the configured European cities. Its weather window must remain Day `0–6`, not be mislabeled as Day `1–7`. Flood rows whose provider date is already in the local past remain visible in the flood ledger with a negative horizon, but cannot join the weather-anchored unified view unless their local valid date and horizon match.
+
 ---
 
 ## Materialization
@@ -118,6 +165,8 @@ gcloud auth application-default login
 cd transform
 dbt run --profiles-dir . --select stg        # Build staging views
 dbt test --profiles-dir . --select stg       # Run staging tests
+dbt run --profiles-dir . --select tag:forecast_vintage
+dbt test --profiles-dir . --select tag:forecast_vintage
 dbt docs generate --profiles-dir . && dbt docs serve --profiles-dir .
 ```
 
@@ -125,10 +174,16 @@ dbt docs generate --profiles-dir . && dbt docs serve --profiles-dir .
 
 ## Schema Tests
 
-The following tests are defined in `_stg_models.yml`:
+Core schema tests are defined in `_stg_models.yml` and `_stg_vintage_models.yml`. Singular tests in `transform/tests` validate the composite vintage grains, city-local origin/horizon derivation, one timestamp per run, raw retry-payload consistency, and the weather-anchored unified key set. The unified lineage test validates exact-vintage source presence, timestamps, coverage metadata, and nullable-value propagation. Coverage anomalies are warnings during the initial raw-history audit rather than filters or hard failures.
+
+The hard lineage test deliberately does not compare `AVG`/`SUM`-derived `FLOAT64` values by independently rereading the daily views. All staging relations are views, so BigQuery can expand those reductions separately through `stg_city_signal_vintage` and through the test's source references; floating-point reduction and the final two-decimal rounding can then depend on the query plan. Deterministic `MAX`/`MIN` and direct-value projections remain hard-checked. Raw conflicting payloads also fail `assert_forecast_vintage_raw_payloads_consistent`, while aggregate NULL propagation remains part of the lineage contract.
 
 | Model | Column | Test |
 |---|---|---|
 | All 7 models | `city_id` | `not_null` |
 | Hourly models | `valid_ts_utc` | `not_null` |
 | Daily models | `date` | `not_null` |
+| Vintage models | Lineage and grain columns | `not_null` |
+| All vintage models | Composite run/city/valid key | Singular uniqueness test |
+
+For staging approval, all hard vintage tests must pass. The coverage audit may warn for preserved historical partial responses, older AQ windows, DST days, or off-schedule source-window differences; every warning must be explainable rather than removed or imputed in staging.

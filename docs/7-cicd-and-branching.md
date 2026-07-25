@@ -38,6 +38,7 @@ This pipeline is the first quality gate. It validates that new feature code does
 | **Install dependencies** | `pip install -r requirements.txt` |
 | **Run unit tests** | `pytest tests/ -v -k "not integration"` — runs all tests *not* marked as integration |
 | **Run integration tests** | `pytest tests/ -v -m integration` — runs only tests marked `@pytest.mark.integration` |
+| **Validate frontend** | `npm ci`, `npm run lint` and `npm run build` validate the typed rule-baseline client and production bundle |
 | **Build Docker image** | `docker build -f backend/Dockerfile -t climasentinel-backend:test .` — verifies the image compiles but does **not** push to any registry |
 
 > If any step fails, the PR is blocked from merging.
@@ -56,7 +57,10 @@ This pipeline re-runs the full test suite, builds the Docker image, and deploys 
 | **Build Docker image** | Builds `climasentinel-backend:staging` |
 | **Deploy backend to Railway** | Uses `railway up --environment staging` with service-specific secrets |
 | **Deploy frontend to Railway** | Uses `railway up --environment staging` for the frontend service |
-| **Deploy candidate model** | Deploys the latest candidate model version from the MLflow registry to the staging environment for validation |
+| **Train and register Heat/Rain challenger** | Calls the reusable MLOps workflow and returns the exact schema-v3 `ClimaSentinel_HeatRainForecaster` version for offline evaluation |
+| **Evaluate candidate** | Runs per-horizon gates against same-vintage rule baselines. A passing challenger may receive `champion`; an ordinary quality rejection is reported without blocking the operational rule release. |
+| **Deploy rule baseline** | Deploys the backend and frontend using transparent same-vintage rules for all five components, independently of challenger acceptance. |
+| **Live E2E** | Confirms that every horizon returns the rule-baseline contract, null model intervals, honest validation labels and nullable optional-source behavior. |
 
 **Railway secrets used:** `RAILWAY_TOKEN`, `RAILWAY_PROJECT_ID`, `RAILWAY_SERVICE_ID`, `RAILWAY_FRONTEND_SERVICE_ID` — all injected from the `staging` GitHub environment.
 
@@ -66,15 +70,19 @@ This pipeline re-runs the full test suite, builds the Docker image, and deploys 
 
 **Trigger:** Push to the `main` branch (i.e., a PR from `staging` is merged).
 
-This is the final deployment gate. It runs model promotion quality gates before deploying to production.
+This pipeline evaluates a new challenger before the production release. The
+operational forecast policy remains the rule baseline unless a future release
+explicitly integrates an accepted challenger into serving.
 
 | Step | Description |
 |---|---|
-| **Model promotion gates** | Executes `model/promote.py` which connects to DagsHub MLflow, fetches the latest model metrics, and validates that **R2 >= 0.45** and **MAE <= 7.0**. If passed, the script automatically promotes the model to the `Production` stage in the registry. |
-| **Deploy backend to Railway** | `railway up --environment production` — only runs if the quality gates pass. |
-| **Deploy frontend to Railway** | `railway up --environment production` for the frontend service. |
+| **Challenger evaluation** | Trains first, then executes `python -m model.promote --allow-rejected` against the exact returned version. A candidate must satisfy provenance/support checks and beat the matching same-vintage Heat/Rain rule baselines before `champion` moves. A quality rejection leaves the alias unchanged but permits the rule-baseline release to continue. |
+| **Production deploy** | The repository currently leaves Railway production deployment disabled. Re-enabling it may depend on successful evaluation execution, but must not require challenger acceptance while rules are the declared operational policy. |
 
-> **Guard gate behavior:** If any quality gate fails, the deployment is aborted and the production environment remains unchanged. The model stays in `Staging` stage in the registry.
+> **Failure semantics:** `--allow-rejected` makes only a completed quality-gate
+> rejection nonfatal. Authentication, registry access, missing candidate,
+> artifact-contract, invalid metadata and unexpected execution failures still
+> fail the workflow. A rejected candidate never moves the `champion` alias.
 
 **Railway secrets used:** Same structure as staging, scoped to the `production` GitHub environment.
 
@@ -82,64 +90,55 @@ This is the final deployment gate. It runs model promotion quality gates before 
 
 ### Pipeline 4 — MLOps Training Pipeline (`ci-mlops.yml`)
 
-**Trigger:** Push to `main` *or* manual dispatch (`workflow_dispatch`).
+**Trigger:** Reusable calls from staging/production deployment workflows, or manual dispatch (`workflow_dispatch`).
 
 This pipeline handles the full ML lifecycle: data extraction, versioning, training, and model registration.
 
 | Step | Description |
 |---|---|
 | **Checkout code** | With `contents: write` permission for auto-committing DVC files |
-| **Set up Python 3.11** | Installs ML stack: `scikit-learn`, `mlflow`, `dagshub`, `dvc`, `pandas`, etc. |
+| **Set up Python 3.11** | Installs the repository's backend requirements plus DVC so training, serving validation and CI use one dependency contract. |
 | **Authenticate with GCP** | Uses `google-github-actions/auth@v2` with `GCP_SA_KEY` secret |
 | **Configure DVC remote** | Sets up DagsHub DVC remote with basic auth (`DAGSHUB_USERNAME`, `DAGSHUB_TOKEN`) |
-| **Extract data from BigQuery** | Runs `python model/extract_data.py` to snapshot the latest mart data |
-| **Track with DVC & push** | `dvc add model/data/training_snapshot.csv` → `dvc push` to DagsHub storage |
-| **Commit DVC version** | Auto-commits the updated `.dvc` file back to Git with `[skip ci]` to avoid infinite loops |
+| **Extract data from BigQuery** | Runs `python -m model.extract_data` against `mart_ml_training_examples` |
+| **Stage DVC metadata** | Runs `dvc add model/data/training_snapshot.csv` locally so the candidate logs the exact snapshot hash |
 | **Validate MLflow secrets** | Checks that `MLFLOW_TRACKING_URI` is set before training |
-| **Train & register model** | Runs `python model/train.py` which trains a `RandomForestRegressor` and registers it in the MLflow Model Registry on DagsHub |
+| **Train & register challenger** | Trains six independent outputs (realized Heat and Rain × Day +1/+2/+3), validates schema v3, registers one atomic `ClimaSentinel_HeatRainForecaster` challenger, and returns its exact concrete version |
+| **Publish successful data version** | Only after training and registration succeed, runs `dvc push`, commits the updated `.dvc` pointer with `[skip ci]`, and pushes it to Git |
 
 **Every training run is traceable to:**
 - A **DVC data version** (MD5 hash read from the `.dvc` metadata file)
 - A **Git commit hash** (`git rev-parse HEAD`)
 
-Both are logged as MLflow parameters alongside model metrics (`mse`, `mae`, `r2`) and hyperparameters.
+Both are logged as MLflow parameters alongside model metrics (`mse`, `mae`,
+`r2`), the ordered target contract, feature schema v3, the three horizons and the
+four-day purge gap. Publishing the DVC pointer after successful registration
+prevents failed extraction, contract-validation or training runs from advancing
+the versioned snapshot. Challenger evaluation remains downstream and does not
+change the operational rule policy merely because a model was registered.
 
 ---
 
 ## Testing Strategy
 
-All tests are located in `backend/tests/` and run automatically in CI. The test suite uses **pytest** with the `@pytest.mark.integration` marker to separate test types.
+All backend tests live in `backend/tests/` and run automatically in CI. Pytest's
+`integration` marker separates tests that exercise multiple real components
+from isolated unit/contract tests.
 
-### Unit Tests (3)
-
-Unit tests validate isolated endpoint behavior using the FastAPI `TestClient` without external dependencies:
-
-| Test | What it validates |
+| Test module | Main contract covered |
 |---|---|
-| `test_root_returns_service_info` | `GET /` returns correct service name and version |
-| `test_health_returns_healthy` | `GET /health` returns `{"status": "healthy"}` |
-| `test_health_contains_uptime` | `GET /health` includes a non-negative `uptime_seconds` field |
+| `test_health.py` | Health, operational endpoints, middleware and OpenAPI generation |
+| `test_forecast_rules.py` | All five rule formulas, clipping, source coverage, target-month Heat normal and Day +3 use of same-vintage Day +4 context |
+| `test_model_extraction.py` | Direct training-mart extraction, exact schema/provenance and absence of leaky filling |
+| `test_ml_pipeline.py` | Schema-v3 challenger preprocessing, six-output order, horizon slicing, four-day purge and endpoint rule semantics |
+| `test_model_training.py` | Heat/Rain challenger metrics, identical-row rule baselines, MLflow/DVC provenance and registered artifact contract |
+| `test_model_promotion.py` | Baseline-relative gates, horizon-specific ceilings, exact registry-artifact validation, evidence/contract failures and explicit nonfatal quality rejection |
+| `test_model_serving_integration.py` | Registry-independent rule policy, null model provenance/intervals and all three horizons |
 
-### Mock Data Tests (3)
-
-These tests use `unittest.mock.patch` to mock the BigQuery client and validate endpoint logic in isolation:
-
-| Test | What it validates |
-|---|---|
-| `test_get_current_scores_mocked` | `/data/current-scores` correctly parses and returns mocked BigQuery rows |
-| `test_get_city_scores_not_found` | `/data/city/{id}/scores` returns `404` when BigQuery returns empty results |
-| `test_get_history_scores_db_error` | `/data/history-scores` returns a clean `500` when BigQuery throws an exception |
-
-### Integration Tests (4)
-
-Integration tests validate cross-cutting concerns and real middleware behavior *without* mocking:
-
-| Test | What it validates |
-|---|---|
-| `test_cors_headers_present` | CORS middleware injects `access-control-allow-origin` headers |
-| `test_openapi_schema_generation` | OpenAPI JSON schema generates with correct title |
-| `test_integration_metrics_endpoint` | Prometheus Instrumentator middleware correctly exposes `GET /metrics` |
-| `test_integration_bq_auth_failure_handling` | Real BigQuery call without credentials is caught gracefully as a `500` error (not a crash) |
+The staging Playwright suite adds a live deployment check after challenger
+evaluation and Railway deployment. It verifies the rule-baseline API rather
+than assuming that the newly registered candidate passed. See
+[End-to-End Testing](13-end-to-end-testing.md).
 
 ---
 
@@ -149,7 +148,10 @@ Following the [12-Factor App](https://12factor.net/) methodology, all configurat
 
 ### Configuration Loading
 
-The backend uses **Pydantic Settings** (`backend/app/config.py`) to load all config from env vars with sensible defaults for local development:
+The backend uses **Pydantic Settings** (`backend/app/config.py`) to load its
+runtime BigQuery configuration from environment variables with sensible local
+defaults. The final two MLflow variables below are consumed only by
+`model/promote.py`; request-time serving does not read them.
 
 | Variable | Description | Default |
 |---|---|---|
@@ -157,7 +159,10 @@ The backend uses **Pydantic Settings** (`backend/app/config.py`) to load all con
 | `GCP_PROJECT_ID` | Google Cloud project ID | `clima-sentinel` |
 | `GCP_CREDENTIALS_JSON` | Minified JSON service account key | `None` (uses ADC locally) |
 | `BQ_DATASET` | BigQuery dataset to query | `mart` |
+| `BQ_STAGING_DATASET` | BigQuery dataset containing dbt seeds such as `city_monthly_normals` | `stg` |
 | `BQ_LOCATION` | BigQuery dataset region | `europe-west9` |
+| `MLFLOW_MODEL_ALIAS` | Alias updated only by a challenger that passes every gate | `champion` |
+| `MLFLOW_MODEL_VERSION` | Exact candidate version evaluated by the promotion command | unset |
 
 ### Environment Isolation
 

@@ -51,17 +51,27 @@ transform/
 │   └── stg/                         # Silver layer — staging views
 │       ├── _stg_sources.yml         # Source definitions (raw.* tables)
 │       ├── _stg_models.yml          # Model docs + schema tests
+│       ├── _stg_vintage_models.yml  # Vintage model docs + schema tests
 │       ├── stg_latest_weather_hourly.sql
 │       ├── stg_latest_air_quality_hourly.sql
 │       ├── stg_latest_flood_daily.sql
 │       ├── stg_latest_historical_daily.sql
 │       ├── stg_city_daily_weather.sql
 │       ├── stg_city_daily_air_quality.sql
-│       └── stg_city_signal_input.sql     ← ⭐ Unified input for mart layer
-├── macros/                          # (future) Shared SQL macros
-├── seeds/                           # (future) Static lookup CSVs
+│       ├── stg_city_signal_input.sql     ← ⭐ Operational mart input
+│       ├── stg_weather_forecast_hourly_vintage.sql
+│       ├── stg_city_daily_weather_vintage.sql
+│       ├── stg_air_quality_hourly_vintage.sql
+│       ├── stg_city_daily_air_quality_vintage.sql
+│       ├── stg_flood_daily_vintage.sql
+│       └── stg_city_signal_vintage.sql   ← Point-in-time ML staging input
+├── macros/
+│   ├── forecast_origin_time_zone.sql # City ID → IANA timezone contract
+│   └── generate_schema_name.sql      # Preserve explicit stg/mart datasets
+├── seeds/
+│   └── city_monthly_normals.csv      # Static monthly climate baselines
 ├── snapshots/                       # (future) SCD Type-2 snapshots
-└── tests/                           # (future) Custom data tests
+└── tests/                           # Singular lineage, grain, and coverage tests
 ```
 
 ---
@@ -78,6 +88,20 @@ raw.historical_weather_daily ──→ stg_latest_historical_daily ────�
                                                                                         │
                                                                                         ▼
                                                                               (mart layer — next)
+
+raw.weather_forecast_hourly ──→ stg_weather_forecast_hourly_vintage ──→ stg_city_daily_weather_vintage ──┐
+raw.air_quality_hourly ────────→ stg_air_quality_hourly_vintage ───────→ stg_city_daily_air_quality_vintage ┤
+raw.flood_daily ───────────────→ stg_flood_daily_vintage ──────────────────────────────────────────────────┤
+                                                                                                           ▼
+                                                                                         stg_city_signal_vintage
+                                                                                         (future ML marts)
+```
+
+The vintage path keeps `ingestion_run_id` in its grain and joins sources only within the same run. It exposes `forecast_origin_time_zone` and derives `forecast_origin_date` from the UTC ingestion timestamp in each city's IANA timezone, so late or manual runs retain the correct local Day `0–6` weather trajectory. Build and validate it independently with:
+
+```bash
+dbt run --profiles-dir . --select tag:forecast_vintage
+dbt test --profiles-dir . --select tag:forecast_vintage
 ```
 
 ---

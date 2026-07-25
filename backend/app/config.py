@@ -14,11 +14,12 @@ class Settings(BaseSettings):
     APP_NAME: str = "ClimaSentinel Backend"
     APP_VERSION: str = "1.0.0"
     ENVIRONMENT: str = "development"
-    
+
     # GCP / BigQuery
     GCP_PROJECT_ID: str = "clima-sentinel"
     GCP_CREDENTIALS_JSON: Optional[str] = None
     BQ_DATASET: str = "mart"
+    BQ_STAGING_DATASET: str = "stg"
     BQ_LOCATION: str = "europe-west9" 
     model_config = {"env_file": ".env"}
 

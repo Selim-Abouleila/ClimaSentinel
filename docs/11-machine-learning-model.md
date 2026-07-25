@@ -1,189 +1,253 @@
-# 🤖 Module 11: Machine Learning & MLOps Pipeline (`ClimaSentinel_RiskForecaster`)
+# 11. Machine Learning and MLOps
 
-This document details the complete end-to-end architecture, mathematics, data engineering, model training, tracking, and serving infrastructure for the **ClimaSentinel Multi-Output Random Forest Risk Forecaster**. 
+ClimaSentinel trains `ClimaSentinel_HeatRainForecaster` as an **offline
+challenger** for realized Heat and Rain risk at Day +1, Day +2 and Day +3. The
+operational endpoint currently serves deterministic same-vintage rules for all
+five factors. A registered candidate is not production evidence: it must beat
+the corresponding rule baseline before it can receive `champion`, and serving
+requires a separate reviewed integration decision.
 
----
+This boundary avoids both training/serving skew and false claims. Training a
+five-component model against later forecasts would teach it to reproduce
+another forecast, not validate it against reality.
 
-## 📐 1. Architectural Overview & Objectives
+## End-to-end architecture
 
-While the primary ClimaSentinel dashboard provides real-time situational awareness ($t_0$) based on factual, validated environmental signals, the **AI Tipping Forecast** module serves as an advanced predictive extension ($t_{+3\text{ days}}$). 
-
-```
-┌─────────────────────────────────────────────────────────────────────────┐
-│                           1. FEATURE INGESTION                          │
-│   BigQuery Feature Store (`mart_ml_feature_store`) via dbt Materialization│
-└────────────────────────────────────┬────────────────────────────────────┘
-                                     ▼
-┌─────────────────────────────────────────────────────────────────────────┐
-│                      2. EXTRACTION & DVC VERSIONING                     │
-│    `model/extract_data.py` ──► `training_snapshot.csv` (DVC Hashed)     │
-└────────────────────────────────────┬────────────────────────────────────┘
-                                     ▼
-┌─────────────────────────────────────────────────────────────────────────┐
-│                     3. TRAINING & MLFLOW TRACKING                       │
-│    `model/train.py` ──► MultiOutputRegressor(RandomForestRegressor)     │
-│    Logs metrics (MAE, MSE, R2), DVC Hash, & Artifacts to DagsHub        │
-└────────────────────────────────────┬────────────────────────────────────┘
-                                     ▼
-┌─────────────────────────────────────────────────────────────────────────┐
-│                    4. IN-MEMORY CACHED MODEL SERVING                    │
-│    FastAPI (`main.py`) loads once from DagsHub Registry / Pickle Fallback│
-│    Computes 95% Confidence Intervals using Tree Estimator Variance       │
-└────────────────────────────────────┬────────────────────────────────────┘
-                                     ▼
-┌─────────────────────────────────────────────────────────────────────────┐
-│                    5. ON-DEMAND CLIENT INFERENCE UI                     │
-│    Next.js (`/forecast`) triggers real-time calculation with loading UX  │
-└─────────────────────────────────────────────────────────────────────────┘
-```
-
-### Key Design Principles:
-1. **Predictive Granularity**: Predicting a single global tipping score obscures the specific operational threats. The model utilizes a `MultiOutputRegressor` to simultaneously forecast 5 distinct sub-scores: `heat_score`, `wind_score`, `rain_score`, `air_score`, and `river_score`.
-2. **True MLflow MLOps Integration**: Full experiment tracking, DVC data versioning, hyperparameter logging, and model registry via **DagsHub**.
-3. **Uncertainty Quantification**: Decision makers need to know when a model is confident vs. uncertain. Instead of point estimates, the backend inspects all $N=100$ individual tree estimators in the Random Forest to dynamically compute 95% Confidence Intervals (CI).
-4. **Serverless & Sleeping Optimization**: To prevent high latency and high cloud costs in ephemeral/sleeping environments (Railway/Cloud Run), the model artifact is downloaded exactly once on app startup and cached globally in memory.
-
----
-
-## 💾 2. BigQuery Feature Store & Data Extraction
-
-### 2.1 The dbt Materialized Feature Store (`mart_ml_feature_store`)
-To prevent data leakage and ensure training-serving skew elimination, all features are pre-joined and materialized daily in BigQuery via dbt. The table combines:
-* **Historical Baselines**: `current_tipping_score` ($t_0$).
-* **Observed Realities**: `temperature_2m_max`, `temperature_2m_min`, `precipitation_sum_mm`, `wind_speed_10m_max`, `european_aqi_max`, `river_discharge_m3s`.
-* **Meteorological Forecast Horizon**: 3-day trajectory projections (`temp_forecast_plus_1d`, `temp_forecast_plus_2d`, `temp_forecast_plus_3d`, `precip_forecast_plus_1d`, `wind_forecast_plus_1d`, etc.).
-* **Entity Identifiers**: `city_id` (one-hot encoded during training).
-
-### 2.2 Extraction Logic (`model/extract_data.py`)
-The extraction script connects to BigQuery via Google Cloud Python SDK and runs rigorous validation checks before writing the training snapshot:
-
-```python
-# Handle missing river discharge gracefully (impute 0 for non-river cities)
-df['river_discharge_m3s'] = df['river_discharge_m3s'].fillna(0).infer_objects(copy=False)
-
-# Strict dropna across ALL target variables to prevent corrupting MultiOutput training
-df = df.dropna(subset=[
-    'current_tipping_score', 
-    'future_tipping_score_3d', 
-    'future_heat_score_3d', 
-    'future_wind_score_3d',
-    'future_rain_score_3d',
-    'future_air_score_3d',
-    'future_river_score_3d',
-    'temp_forecast_plus_3d'
-])
-```
-
-The resulting `model/data/training_snapshot.csv` is tracked by **DVC** (`.dvc` file committed to Git), ensuring that every model run can be traced back to the precise immutable data snapshot it was trained on.
-
----
-
-## 🧠 3. Model Architecture & Training Pipeline (`model/train.py`)
-
-### 3.1 Multi-Output Random Forest Regressor
-Because the sub-scores represent distinct environmental dynamics (e.g., thermal velocity vs. hydrological flow), we wrap a Scikit-Learn `RandomForestRegressor` inside a `MultiOutputRegressor`.
-
-$$\mathbf{y} = \begin{bmatrix} y_{\text{heat}} \\ y_{\text{wind}} \\ y_{\text{rain}} \\ y_{\text{air}} \\ y_{\text{river}} \end{bmatrix} = \mathbf{f}(\mathbf{X})$$
-
-* **Hyperparameters**: `n_estimators=100`, `max_depth=10`, `random_state=42`.
-* **Categorical Encoding**: `city_id` is converted to categorical dummies (`pd.get_dummies(..., drop_first=True)`). A fixed list of the 10 monitored European cities ensures identical dummy dimensions between training and real-time inference.
-
-### 3.2 MLflow & DagsHub Experiment Tracking
-During execution, `train.py` initializes a connection to DagsHub (`https://dagshub.com/Selim-Abouleila/ClimaSentinel.mlflow`). It logs:
-* **Parameters**: `n_estimators`, `max_depth`, `random_state`, `dvc_data_hash`, `git_commit`.
-* **Global Metrics**: Overall Mean Absolute Error (`mae`), Mean Squared Error (`mse`), and Global R² (`r2`).
-* **Granular Sub-Score Metrics**: `r2_heat_score`, `r2_wind_score`, `r2_rain_score`, `r2_air_score`, `r2_river_score`.
-* **Model Artifact**: The full Scikit-Learn model pipeline is logged to the MLflow artifact repository as `random_forest_model` and registered in the Model Registry under the name **`ClimaSentinel_RiskForecaster`**.
-
----
-
-## ⚡ 4. FastAPI Model Serving & Uncertainty Mechanics
-
-### 4.1 In-Memory Module-Level Caching (`backend/app/main.py`)
-To maintain blazing-fast response times ($<50\text{ms}$) while supporting Railway's auto-sleeping container architecture, the backend avoids re-downloading the model from DagsHub on every incoming request.
-
-```python
-# ── Cached ML Model (loaded once at first request) ──────────────────────
-_cached_model = None
-
-def _get_ml_model():
-    """Load and cache the ML model. Downloads once, reuses forever."""
-    global _cached_model
-    if _cached_model is not None:
-        return _cached_model
-    
-    # 1. Try loading local fallback pickle artifact (`risk_forecaster.pkl`)
-    # 2. Try authenticating with DagsHub via DAGSHUB_USER_TOKEN and loading from Registry:
-    _cached_model = mlflow.sklearn.load_model("models:/ClimaSentinel_RiskForecaster/latest")
-    return _cached_model
-```
-
-### 4.2 Mathematical Derivation of Confidence Intervals (Tree Variance)
-A standard `.predict(X)` call on a Random Forest returns the mean prediction across all trees. However, ClimaSentinel provides true **Explainable AI** by extracting the individual predictions from all 100 decision trees to measure model variance and compute the 95% confidence interval ($1.96 \times \sigma$).
-
-```python
-# Extract individual estimator predictions across the MultiOutput structure
-all_tree_preds = []
-for est in model.estimators_: # 5 estimators (one for each sub-score)
-    # Each estimator is a RandomForestRegressor containing 100 DecisionTreeRegressors
-    sub_tree_preds = [tree.predict(X_array)[0] for tree in est.estimators_]
-    all_tree_preds.append(sub_tree_preds)
-
-# all_tree_preds is shape (5, 100)
-# For each sub-score, calculate mean, std, and 95% CI bounds:
-for i, name in enumerate(sub_score_names):
-    sub_preds = np.array(all_tree_preds[i])
-    mean_val = np.mean(sub_preds)
-    std_val = np.std(sub_preds)
-    margin = 1.96 * std_val
-    
-    ci_lower = max(0.0, round(mean_val - margin, 1))
-    ci_upper = min(100.0, round(mean_val + margin, 1))
-```
-
-* **Honest Uncertainty**: If the trees disagree heavily (e.g., high volatility in air quality or extreme storm outliers), the confidence margin expands accordingly (e.g., $\pm 36.4$). If the trees are completely aligned, the interval tightens.
-
----
-
-## 🖥️ 5. Next.js Client-Side On-Demand UI (`/forecast`)
-
-### 5.1 On-Demand Calculation UX
-To prevent unnecessary API calls and server wake-ups, the Next.js forecast page (`frontend/src/app/forecast/page.tsx`) operates as an interactive `"use client"` component with three distinct visual states:
-
-1. **Empty State (Default)**: On initial page load, no city is selected. The user is presented with a sleek prompt ("Select a Region") and a map pin icon, ensuring zero backend load until explicitly requested.
-2. **Calculating State (Active Inference)**: When a city pill is clicked, the UI enters a loading state displaying an animated spinner and contextual engineering text:
-   > *"Calculating Forecast — Running real-time inference for **Paris, FR** across 100 decision tree estimators and computing 95% confidence intervals."*
-3. **Results State**: Displays the estimated total risk score, forecasted primary driver, baseline deltas, 3-day Open-Meteo weather trajectory, and the 5 granular sub-score cards complete with visual uncertainty progress bars.
-
----
-
-## 🛠️ 6. Deployment & Operational Checklist
-
-To successfully deploy and run the ML forecast module in any environment (Local, Staging, or Production), ensure the following environment variables and configurations are set:
-
-### 6.1 Required Backend Environment Variables
-| Variable | Description | Example / Source |
-| :--- | :--- | :--- |
-| `DAGSHUB_USER_TOKEN` | Authentication token for DagsHub MLflow server | `***` (DagsHub Settings ➔ Tokens) |
-| `DAGSHUB_USERNAME` | Repository owner username | `Selim-Abouleila` |
-| `GCP_PROJECT_ID` | GCP Project ID for BigQuery Feature Store | `climasentinel` |
-| `BQ_DATASET` | Target BigQuery dataset containing mart tables | `mart` |
-
-### 6.2 Verification & Debugging Commands
-* **Run Feature Extraction**: `python -m model.extract_data`
-* **Retrain & Log Model to DagsHub**: `python -m model.train`
-* **Test FastAPI Inference Endpoint**: `curl http://127.0.0.1:8000/data/city/paris_fr/forecast`
-
-### 6.3 Audit Logs Example (Healthy Execution)
 ```text
-2026-06-28 20:19:09,879  INFO      Accessing as Selim-Abouleila
-2026-06-28 20:19:10,638  INFO      Initialized MLflow to track repo "Selim-Abouleila/ClimaSentinel"
-2026-06-28 20:19:10,638  INFO      Repository Selim-Abouleila/ClimaSentinel initialized!
-2026-06-28 20:19:11,102  INFO      ML model loaded from MLflow registry and cached.
-INFO:     100.64.0.3:42690 - "GET /data/city/paris_fr/forecast HTTP/1.1" 200 OK
+forecast vintages                         realized ERA5 weather
+        │                                          │
+        ▼                                          ▼
+mart_ml_forecast_features_vintage     mart_city_realized_weather_daily
+        │                                          │
+        ├──► mart_ml_serving_features_current      │
+        │                                          │
+        └──────────────► mart_ml_training_examples ◄┘
+                                   │
+                                   ▼
+                         DVC training snapshot
+                                   │
+                                   ▼
+                   schema-v3 multi-output Random Forest
+                                   │
+                                   ▼
+          MLflow `ClimaSentinel_HeatRainForecaster` challenger
+                                   │
+                    baseline-relative quality gates
+                                   │
+                         ┌─────────┴─────────┐
+                         │ pass             │ reject
+                         ▼                  ▼
+                 champion may move    alias unchanged
+
+mart_ml_serving_features_current
+                 │
+                 ▼
+backend response: Heat/Rain/Wind/AQ/River same-vintage rules
 ```
 
----
-*Document Version: 1.0.0*  
-*Primary Author: Selim Abouleila (Lead MLOps Engineer)*  
-*Module: ClimaSentinel AI Risk Forecaster*
+## Point-in-time training data
+
+`model/extract_data.py` reads `mart_ml_training_examples`. Each row is one
+canonical `(city_id, forecast_origin_date)` example with:
+
+- a complete weather feature window from one ingestion run;
+- the same ordered feature names used by
+  `mart_ml_serving_features_current`;
+- exact Day +1, Day +2 and Day +3 target dates;
+- six mature realized targets: Heat and Rain for each horizon; and
+- feature and label run/timestamp provenance.
+
+Labels are built only from `mart_city_realized_weather_daily`, backed by ERA5
+historical weather. A label is eligible only after its outcome has occurred and
+the corresponding reanalysis has been ingested. Air-quality and flood forecast
+features remain nullable; their upstream mart also retains explicit source
+presence/completeness flags for rule-serving decisions. Extraction does not
+forward-fill, backward-fill or replace a missing optional source with zero.
+
+The realized score definitions are clipped to `0-100`:
+
+```text
+Heat(D) = (Tmax(D) - monthly_normal) * 5
+          + max(0, Tmax(D+1) - Tmax(D)) * 5
+
+Rain(D) = precipitation_mm(D) * 2
+```
+
+Because the Day +3 Heat target depends on realized Day +4 temperature, the
+chronological evaluation split purges the four dates immediately before the
+held-out test window. Splitting is performed on complete origin dates, not on
+random city rows.
+
+## Schema-v3 model contract
+
+The shared contract lives in `backend/app/ml_pipeline.py`. Training and serving
+both call the same preprocessing and feature-order functions.
+
+The six ordered outputs are:
+
+```text
+future_heat_score_1d, future_rain_score_1d,
+future_heat_score_2d, future_rain_score_2d,
+future_heat_score_3d, future_rain_score_3d
+```
+
+Each horizon therefore selects a two-output block; Day +1 and Day +2 are genuine
+fitted outputs rather than copies of Day +3.
+
+The pipeline contains:
+
+1. a `ColumnTransformer` that median-imputes numeric model inputs, adds missing
+   indicators, and one-hot encodes the fixed monitored-city vocabulary; and
+2. a `MultiOutputRegressor(RandomForestRegressor)` with one fitted forest for
+   each ordered target.
+
+Imputation statistics are fitted on the training partition only. The raw row is
+retained separately for Wind/AQ/River rules, so an imputed model value can never
+masquerade as an available operational source.
+
+The serialized artifact embeds and validates:
+
+- `feature_schema_version = 3`;
+- `target_schema_version = realized_heat_rain_v1`;
+- `training_data_contract = mart_ml_training_examples_v1`;
+- horizons `(1, 2, 3)`;
+- exact ordered feature and target columns; and
+- learned component order `(heat, rain)`.
+
+Shape alone is insufficient: a six-output artifact with the wrong semantic
+order is rejected. Legacy 15-output `ClimaSentinel_RiskForecaster` artifacts are
+also rejected rather than partially sliced.
+
+## Training, tracking and challenger evaluation
+
+`model/train.py` logs the challenger to DagsHub MLflow under
+`ClimaSentinel_HeatRainForecaster`. Every run records:
+
+- Git commit and DVC snapshot hash;
+- schema and data-contract versions;
+- ordered targets and horizons;
+- four-day purge gap and held-out start date;
+- Random Forest hyperparameters; and
+- aggregate, per-horizon and per-component MAE/R² metrics; and
+- matching same-vintage Heat/Rain rule-baseline metrics on the identical held-out
+  rows.
+
+`model/promote.py` evaluates only the learned Heat and Rain challenger outputs.
+For every component and horizon, the candidate must:
+
+- have finite R² of at least `0`;
+- achieve MAE no greater than `95%` of the exact same-vintage rule-baseline MAE,
+  meaning at least a 5% improvement;
+- stay below Heat's absolute MAE ceilings of `10`, `11` and `12` for Day +1,
+  Day +2 and Day +3 respectively; and
+- stay below Rain's absolute MAE ceiling of `7` at every horizon.
+
+Aggregate global and per-horizon metrics remain logged for diagnosis but are no
+longer hard gates; averaging Heat with Rain previously obscured which component
+actually failed. Missing/non-finite metrics, a schema mismatch or an ordered
+contract mismatch still fail evaluation. Wind/AQ/River are not model targets.
+
+Before any alias can move, promotion also downloads the exact registered model
+version and runs the fitted-pipeline validator against the semantic contract
+embedded in the artifact itself. Matching MLflow parameters are therefore not
+enough to promote a missing, corrupt or wrongly ordered estimator.
+
+Promotion also requires at least 50 held-out rows, eight held-out origin dates,
+50 finite examples per target, at least five non-zero target values and non-zero
+target variance. These evidence checks prevent an apparently strong R² from a
+tiny or constant evaluation slice.
+
+The staging and production workflows pass the exact candidate version emitted
+by training. Only a complete pass assigns the `champion` alias. They invoke
+`python -m model.promote --allow-rejected`: this converts only a completed
+quality rejection into a successful report so the declared rule-baseline app
+can deploy. It never promotes a rejected model. Authentication, registry,
+artifact-contract, metadata and unexpected operational failures remain fatal.
+The reusable MLOps workflow publishes the DVC object and Git pointer only after
+training and registration succeed.
+
+## Operational rule policy
+
+The FastAPI endpoint does not load the latest candidate merely because training
+completed. For the requested horizon, it calculates all five rules from one
+complete row in `mart_ml_serving_features_current`, marks a factor unavailable
+when its source contract is absent, and chooses the total/driver from available
+point estimates.
+
+The response identifies `forecast_rules_baseline`, returns
+`model_version: null`, declares no deployed model targets, and identifies every
+component as `forecast_rule`. Heat is `era5_backtested_limited`; Rain, Wind, AQ
+and River are explicit about their different evidence states: Rain is
+`era5_backtested_insufficient_skill`, while Wind, AQ and River are
+`not_observation_validated` because their observed labels are not ingested.
+
+The deterministic forecast rules are:
+
+```text
+Heat = clip((Tmax[D] - monthly_normal) * 5
+            + max(0, Tmax[D+1] - Tmax[D]) * 5)
+Rain = clip(precipitation_mm[D] * 2)
+Wind = clip(max(0, gust_km_h - 40) * 2.5)
+AQ   = clip((European_AQI - 40) * 1.67)
+
+River = clip(max(0, (discharge[D+1] - discharge[D]) / discharge[D]) * 200)
+        when discharge[D] > 50 m³/s; otherwise 0
+```
+
+Heat requires selected-day and next-day same-vintage weather, so Day +3 uses
+stored Day +4 context. Rain requires complete selected-day weather. AQ requires
+same-horizon presence, 24-hour coverage and completeness. River
+always requires the requested day's same-vintage discharge and, when that value
+is above 50 m³/s, also requires the next day's value to calculate velocity. Day
++3 therefore uses the stored Day +4 context when activated. Missing required
+data is `unavailable`, not zero.
+
+## Validation evidence and uncertainty
+
+The July 2026 snapshot contained only 81 distinct forecast-origin dates. In its
+chronological holdout, the Heat rule materially outperformed the first Random
+Forest challenger, but this remains limited seasonal evidence rather than a
+mature validation claim. The Rain challenger produced negative held-out R² and
+also failed to beat the simple Rain rule. Rain is therefore described as
+observation-backtested with insufficient skill, not as lacking observations.
+Counts and metrics continue to be logged per run as the snapshot grows; product
+copy does not freeze a dynamic day count.
+
+Deterministic rules do not provide empirical prediction intervals. Every
+component and top-level confidence/interval field is therefore null and every
+uncertainty method is `none`.
+
+## Operational commands
+
+From the repository root:
+
+```bash
+python -m model.extract_data
+dvc add model/data/training_snapshot.csv
+python -m model.train
+python -m model.promote
+
+# CI/release mode: report an ordinary quality rejection without deploying it
+python -m model.promote --allow-rejected
+```
+
+For local tests:
+
+```bash
+cd backend
+pytest tests/ -v
+```
+
+Production and staging challenger evaluation requires DagsHub/MLflow
+credentials, while extraction and serving require BigQuery access. A rejected
+challenger leaves the rule endpoint and `champion` alias unchanged.
+
+## Current limitation
+
+Only Heat and Rain currently have genuine realized labels, and the available
+history is not yet sufficient to deploy the tested challenger. Supporting Wind,
+AQ and River as learned outputs requires observed gust, historical AQ and
+observed river discharge ingestion, corresponding point-in-time label marts,
+retraining and baseline-relative outcome gates. Until a challenger passes and a
+serving integration is reviewed, all five outputs remain forecast-rule
+estimates with the validation scope stated above.

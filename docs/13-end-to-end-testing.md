@@ -1,49 +1,95 @@
 # 13. End-to-End Testing
 
-To ensure the highest quality of integration across the full stack (Frontend, Backend, and ML Model), ClimaSentinel utilizes **Playwright** for Automated End-to-End (E2E) testing. 
+Playwright validates the deployed staging frontend, backend and BigQuery serving
+mart as one system. MLflow challengers are evaluated separately. Unit tests
+remain responsible for formula boundaries and failure branches; E2E proves the
+live operational rule release.
 
-## 1. What the E2E Test Evaluates
+## What the staging test verifies
 
-Unlike unit tests that evaluate isolated functions, our E2E test validates the application from the exact perspective of a human user. The automated headless browser:
-1. **Navigates to the Forecast Page:** It loads the `/forecast` route.
-2. **Validates UI Rendering:** It ensures the "AI Tipping Forecast" hero title is visible and that there are no "500 Internal Server Error" crashes.
-3. **Simulates User Interaction:** It clicks on a specific city button (e.g., "Paris, FR") and selects a forecast horizon (e.g., "+3 Days").
-4. **Validates ML Model & Database Delivery:** It waits for the BigQuery and ML Model to return the data, verifying that the granular sub-scores (e.g., "Heat Score Forecast") and "95% Confidence Interval" metrics successfully render on the screen.
+`frontend/tests/e2e/dashboard.spec.ts` opens `/forecast` and exercises each
+genuine Day +1, Day +2 and Day +3 selector. The test verifies that:
 
-## 2. CI/CD Integration Architecture
+- the page and city/horizon controls render without a server error;
+- the page labels the forecast as beta and describes the projections as
+  experimental and rule-based;
+- the API reports `forecast_rules_baseline` and
+  `same_vintage_forecast_rules`;
+- every factor is identified as a forecast rule;
+- Heat reports `era5_backtested_limited`, Rain reports
+  `era5_backtested_insufficient_skill`, and Wind, Air Quality and River report
+  `not_observation_validated`;
+- all component and aggregate interval fields are null;
+- unavailable optional-source factors remain unavailable rather than becoming
+  zero-risk values;
+- the visible validation-scope disclaimer remains present; and
+- `model_version` is null and no learned component is claimed by the
+  operational response.
 
-To ensure speed and efficiency, the E2E test runs exclusively in the **`dev → staging` CI pipeline** (`.github/workflows/ci-staging.yml`), rather than running on every pull request.
+The test must not require every optional AQ or River source to be available.
+Those feeds have an explicit nullable contract. It should require coherent
+method and availability rendering in either state.
 
-**Pipeline Flow:**
-1. Code is merged into `staging`.
-2. The CI pipeline builds the Docker image and deploys the backend and frontend to the Railway Staging environment.
-3. The `e2e-test` CI job boots up, installs Playwright, and targets the **live deployed staging URL** using the `STAGING_FRONTEND_URL` GitHub Secret.
-4. The test executes. If it fails, developers are immediately alerted that the latest release broke the staging deployment.
+## Staging workflow order
 
-## 3. Directory Structure
+The live E2E job runs only from `.github/workflows/ci-staging.yml` after:
 
-All E2E testing logic resides in the `frontend` directory:
+1. backend tests pass;
+2. a schema-v3 `ClimaSentinel_HeatRainForecaster` challenger is trained and
+   registered;
+3. the exact challenger is evaluated; quality rejection is recorded without
+   moving `champion`, while operational/contract errors still fail the job;
+4. backend and frontend services are deployed to Railway staging using the
+   rule-baseline policy; and
+5. Playwright validates the live rule response.
+
+This order proves that challenger evaluation completed and the deployed release
+remains available whether the candidate passed or was honestly rejected. The
+workflow uses a non-canceling model-promotion concurrency group to prevent two
+passing challengers from moving the alias concurrently.
+
+Railway deployments run in attached mode, so the CLI waits for each service to
+deploy successfully. The frontend build also includes a unique
+`/releases/<commit-sha>-<workflow-run-id>.txt` marker. Before Playwright starts,
+CI checks that exact marker for up to 36 attempts, including on failed-job
+reruns. The test then polls the backend API for the matching
+`forecast_rules_baseline:same_vintage_forecast_rules` contract before exercising
+all horizons. This avoids testing an old release or a rollout in progress.
+
+## Directory structure
 
 ```text
 frontend/
-├── playwright.config.ts           # Playwright configuration (baseURL, timeouts, browsers)
+├── playwright.config.ts
 └── tests/
     └── e2e/
-        └── dashboard.spec.ts      # The core UI testing script
+        └── dashboard.spec.ts
 ```
 
-## 4. Running the Tests Locally
+## Running locally
 
-You can run the Playwright tests on your local machine to verify changes before pushing them.
+Start the frontend and a compatible backend, then run:
 
-1. Ensure your local frontend is running (`npm run dev` running on `http://localhost:3000`).
-2. Open a new terminal in the `frontend/` directory.
-3. Execute the test command:
-   ```bash
-   npm run test:e2e
-   ```
-
-By default, the local test runs against `http://localhost:3000`. If you want to test against the live production or staging URL from your local machine, you can pass the environment variable:
 ```bash
-PLAYWRIGHT_TEST_BASE_URL=https://frontend-staging-3885.up.railway.app npm run test:e2e
+cd frontend
+npm install
+npx playwright install --with-deps chromium
+npm run test:e2e
 ```
+
+The default target is `http://localhost:3000`. Override it for a live target:
+
+```bash
+PLAYWRIGHT_TEST_BASE_URL=https://your-staging-frontend.example npm run test:e2e
+```
+
+## Failure interpretation
+
+- “Forecast unavailable” usually means the serving mart has no eligible current
+  vintage or the backend/data connection failed.
+- A learned method, non-null model version or non-null interval in the
+  operational response is a release-contract failure.
+- An unavailable AQ or River card by itself is not an E2E failure when the API
+  marks it unavailable with the correct rule provenance.
+- A rule card displaying model confidence bounds, or a missing validation
+  disclaimer, is a contract failure.

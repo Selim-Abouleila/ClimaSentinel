@@ -1,14 +1,46 @@
 import os
 import subprocess
+from pathlib import Path
+
+import numpy as np
 import pandas as pd
 import dagshub
 import mlflow
 import mlflow.sklearn
-import joblib
-from sklearn.ensemble import RandomForestRegressor
-from sklearn.multioutput import MultiOutputRegressor
-from sklearn.model_selection import train_test_split
+from mlflow.models import infer_signature
 from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
+
+from backend.app.ml_pipeline import (
+    FEATURE_SCHEMA_VERSION,
+    FORECAST_HORIZONS,
+    MAX_LABEL_LOOKAHEAD_DAYS,
+    REGISTERED_MODEL_NAME,
+    TARGET_SCHEMA_VERSION,
+    TARGET_SCORE_NAMES,
+    TRAINING_DATA_CONTRACT,
+    TARGET_COLUMNS,
+    TARGET_COLUMNS_BY_HORIZON,
+    build_model_pipeline,
+    chronological_purged_split,
+    output_slice_for_horizon,
+    prepare_feature_frame,
+)
+from model.extract_data import (
+    CANONICAL_VINTAGE_RULE,
+    LABEL_SOURCE,
+    SUPPORTED_TARGET_COMPONENTS,
+    UNSUPPORTED_TARGET_COMPONENTS,
+    validate_training_frame,
+)
+from model.rule_baselines import (
+    RULE_BASELINE_CONTRACT,
+    load_city_monthly_heat_normals,
+    same_vintage_rule_predictions,
+    target_date_heat_normals,
+)
+
+
+TRAINING_SNAPSHOT_PATH = Path("model/data/training_snapshot.csv")
 
 def get_git_commit():
     return subprocess.check_output(['git', 'rev-parse', 'HEAD']).decode('ascii').strip()
@@ -23,41 +55,54 @@ def get_dvc_hash():
     except Exception:
         return "unknown"
 
+
+def _single_contract_value(df: pd.DataFrame, column: str, expected: str) -> str:
+    values = set(df[column].astype(str).unique())
+    if values != {expected}:
+        raise ValueError(
+            f"Training snapshot contract field {column!r} must equal "
+            f"{expected!r}; found {sorted(values)!r}"
+        )
+    return expected
+
+
 def train_model():
     print("Loading data snapshot...")
-    df = pd.read_csv("model/data/training_snapshot.csv")
+    df = validate_training_frame(pd.read_csv(TRAINING_SNAPSHOT_PATH))
     
     # Sort chronologically to prevent future data leakage during train/test split
-    df = df.sort_values(by=['date', 'city_id']).reset_index(drop=True)
+    df = df.sort_values(
+        by=["forecast_origin_date", "city_id", "ingestion_run_id"]
+    ).reset_index(drop=True)
     
-    # One-hot encode city_id so the model learns city-specific behavior
-    # We include current_tipping_score and the full 3-day weather forecast trajectory
-    feature_cols = [
-        'current_tipping_score', 
-        'normal_temperature_2m_max',
-        'temperature_2m_max', 'temperature_2m_min', 'precipitation_sum_mm', 'wind_speed_10m_max', 'wind_gusts_10m_max', 'european_aqi_max', 'river_discharge_m3s',
-        'temp_forecast_plus_1d', 'temp_forecast_plus_2d', 'temp_forecast_plus_3d', 'temp_forecast_plus_4d',
-        'precip_forecast_plus_1d', 'precip_forecast_plus_2d', 'precip_forecast_plus_3d',
-        'wind_forecast_plus_1d', 'wind_forecast_plus_2d', 'wind_forecast_plus_3d',
-        'wind_gusts_forecast_plus_1d', 'wind_gusts_forecast_plus_2d', 'wind_gusts_forecast_plus_3d',
-        'aqi_forecast_plus_1d', 'aqi_forecast_plus_2d', 'aqi_forecast_plus_3d',
-        'river_forecast_plus_1d', 'river_forecast_plus_2d', 'river_forecast_plus_3d', 'river_forecast_plus_4d',
-        'city_id'
-    ]
-    targets = [
-        'future_heat_score_3d', 
-        'future_wind_score_3d', 
-        'future_rain_score_3d', 
-        'future_air_score_3d', 
-        'future_river_score_3d'
-    ]
+    X = prepare_feature_frame(df)
+    y = df.loc[:, list(TARGET_COLUMNS)].apply(pd.to_numeric, errors="raise")
+    if not np.isfinite(y.to_numpy(dtype=float)).all():
+        raise ValueError("Training targets must be complete and finite")
     
-    df_features = df[feature_cols].copy()
-    X = pd.get_dummies(df_features, columns=['city_id'], drop_first=True)
-    y = df[targets]
-    
-    # Time-based split (no shuffle) to strictly evaluate future generalization
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, shuffle=False)
+    # Day +3 Heat needs the following realized day to finalize its label. Purge
+    # the complete four-day dependency window before the held-out period.
+    X_train, X_test, y_train, y_test, test_start = chronological_purged_split(
+        X,
+        y,
+        df["forecast_origin_date"],
+        purge_days=MAX_LABEL_LOOKAHEAD_DAYS,
+    )
+
+    parsed_dates = pd.to_datetime(df["forecast_origin_date"], errors="raise")
+    # chronological_purged_split resets returned indexes, so derive audit date
+    # counts from the contract boundary rather than those reset indexes.
+    purge_boundary = test_start - pd.Timedelta(
+        MAX_LABEL_LOOKAHEAD_DAYS,
+        unit="D",
+    )
+    source_train_dates = parsed_dates[parsed_dates < purge_boundary]
+    source_test_dates = parsed_dates[parsed_dates >= test_start]
+    test_evaluation_rows = df.loc[
+        parsed_dates >= test_start,
+        ["city_id", "forecast_origin_date"],
+    ].reset_index(drop=True)
+    city_monthly_heat_normals = load_city_monthly_heat_normals()
     
     # Clean up any accidental newlines from GitHub Secrets
     dagshub_username = os.environ.get("DAGSHUB_USERNAME", "Selim-Abouleila").strip()
@@ -86,11 +131,50 @@ def train_model():
         
         # Log requirements
         mlflow.log_params(params)
-        mlflow.log_param("git_commit", get_git_commit())
-        mlflow.log_param("dvc_data_hash", get_dvc_hash())
+        contract_params = {
+            "git_commit": get_git_commit(),
+            "dvc_data_hash": get_dvc_hash(),
+            "feature_schema_version": FEATURE_SCHEMA_VERSION,
+            "target_schema_version": TARGET_SCHEMA_VERSION,
+            "training_data_contract": TRAINING_DATA_CONTRACT,
+            "registered_model_name": REGISTERED_MODEL_NAME,
+            "model_role": "challenger",
+            "forecast_horizons": ",".join(map(str, FORECAST_HORIZONS)),
+            "target_score_names": ",".join(TARGET_SCORE_NAMES),
+            "target_columns": ",".join(TARGET_COLUMNS),
+            "output_count": str(len(TARGET_COLUMNS)),
+            "label_source": _single_contract_value(
+                df, "label_source", LABEL_SOURCE
+            ),
+            "supported_target_components": _single_contract_value(
+                df,
+                "supported_target_components",
+                SUPPORTED_TARGET_COMPONENTS,
+            ),
+            "unsupported_target_components": _single_contract_value(
+                df,
+                "unsupported_target_components",
+                UNSUPPORTED_TARGET_COMPONENTS,
+            ),
+            "canonical_vintage_rule": _single_contract_value(
+                df, "canonical_vintage_rule", CANONICAL_VINTAGE_RULE
+            ),
+            "rule_baseline_contract": RULE_BASELINE_CONTRACT,
+            "training_grain": "city_id,forecast_origin_date",
+            "test_start_date": test_start.date().isoformat(),
+            "purge_gap_days": str(MAX_LABEL_LOOKAHEAD_DAYS),
+            "row_count": str(len(df)),
+            "distinct_origin_dates": str(parsed_dates.nunique()),
+            "train_rows": str(len(X_train)),
+            "test_rows": str(len(X_test)),
+            "train_distinct_origin_dates": str(source_train_dates.nunique()),
+            "test_distinct_origin_dates": str(source_test_dates.nunique()),
+            "first_origin_date": parsed_dates.min().date().isoformat(),
+            "last_origin_date": parsed_dates.max().date().isoformat(),
+        }
+        mlflow.log_params(contract_params)
         
-        base_model = RandomForestRegressor(**params)
-        model = MultiOutputRegressor(base_model)
+        model = build_model_pipeline(params)
         model.fit(X_train, y_train)
         
         predictions = model.predict(X_test)
@@ -98,34 +182,134 @@ def train_model():
         # Metrics
         mse = mean_squared_error(y_test, predictions)
         mae = mean_absolute_error(y_test, predictions)
-        r2_avg = r2_score(y_test, predictions) # Uniform average across all 5 targets
-        
-        # Calculate individual R2 scores for each sub-score
-        r2_raw = r2_score(y_test, predictions, multioutput='raw_values')
+        r2_avg = r2_score(y_test, predictions)  # Uniform average across six targets
         
         mlflow.log_metric("mse", mse)
         mlflow.log_metric("mae", mae)
         mlflow.log_metric("r2", r2_avg)
-        
-        for name, r2_val in zip(targets, r2_raw):
-            mlflow.log_metric(f"r2_{name.replace('future_', '').replace('_3d', '')}", r2_val)
-        
+
         print(f"Model trained! MSE: {mse:.2f}, R2 Average: {r2_avg:.2f}")
-        for name, r2_val in zip(targets, r2_raw):
-            print(f"  R2 {name}: {r2_val:.2f}")
+        for horizon in FORECAST_HORIZONS:
+            target_columns = TARGET_COLUMNS_BY_HORIZON[horizon]
+            horizon_slice = output_slice_for_horizon(horizon)
+            horizon_targets = y_test.loc[:, list(target_columns)]
+            horizon_predictions = predictions[:, horizon_slice]
+            horizon_mae = mean_absolute_error(
+                horizon_targets,
+                horizon_predictions,
+            )
+            horizon_r2 = r2_score(
+                horizon_targets,
+                horizon_predictions,
+            )
+            horizon_r2_raw = r2_score(
+                horizon_targets,
+                horizon_predictions,
+                multioutput="raw_values",
+            )
+            horizon_mae_raw = mean_absolute_error(
+                horizon_targets,
+                horizon_predictions,
+                multioutput="raw_values",
+            )
+            target_normals = target_date_heat_normals(
+                test_evaluation_rows,
+                horizon,
+                city_monthly_heat_normals,
+            )
+            rule_predictions = same_vintage_rule_predictions(
+                X_test,
+                horizon,
+                target_normal_temperature=target_normals,
+            )
+            rule_r2_raw = r2_score(
+                horizon_targets,
+                rule_predictions,
+                multioutput="raw_values",
+            )
+            rule_mae_raw = mean_absolute_error(
+                horizon_targets,
+                rule_predictions,
+                multioutput="raw_values",
+            )
+            mlflow.log_metric(f"mae_d{horizon}", horizon_mae)
+            mlflow.log_metric(f"r2_d{horizon}", horizon_r2)
+            print(
+                f"  Day +{horizon}: MAE {horizon_mae:.2f}, "
+                f"R2 {horizon_r2:.2f}"
+            )
+            for target, target_r2, target_mae, rule_r2, rule_mae in zip(
+                target_columns,
+                horizon_r2_raw,
+                horizon_mae_raw,
+                rule_r2_raw,
+                rule_mae_raw,
+            ):
+                score_name = target.removeprefix("future_").removesuffix(
+                    f"_{horizon}d"
+                )
+                mlflow.log_metric(
+                    f"r2_{score_name}_d{horizon}",
+                    target_r2,
+                )
+                mlflow.log_metric(
+                    f"mae_{score_name}_d{horizon}",
+                    target_mae,
+                )
+                mlflow.log_metric(
+                    f"rule_r2_{score_name}_d{horizon}",
+                    rule_r2,
+                )
+                mlflow.log_metric(
+                    f"rule_mae_{score_name}_d{horizon}",
+                    rule_mae,
+                )
+                target_values = horizon_targets[target].to_numpy(dtype=float)
+                mlflow.log_metric(
+                    f"test_count_{score_name}_d{horizon}",
+                    float(len(target_values)),
+                )
+                mlflow.log_metric(
+                    f"test_std_{score_name}_d{horizon}",
+                    float(np.std(target_values, ddof=0)),
+                )
+                mlflow.log_metric(
+                    f"test_nonzero_count_{score_name}_d{horizon}",
+                    float(np.count_nonzero(target_values)),
+                )
+                mlflow.log_metric(
+                    f"rule_test_count_{score_name}_d{horizon}",
+                    float(len(target_values)),
+                )
+                print(
+                    f"    {target}: R2 {target_r2:.2f}, "
+                    f"MAE {target_mae:.2f}; same-vintage rule "
+                    f"R2 {rule_r2:.2f}, MAE {rule_mae:.2f}"
+                )
+
+        input_example = X_train.head(min(5, len(X_train))).copy()
+        output_example = model.predict(input_example)
+        signature = infer_signature(input_example, output_example)
         
         # Register Model to DagsHub MLflow Registry
-        mlflow.sklearn.log_model(
+        model_info = mlflow.sklearn.log_model(
             sk_model=model,
-            artifact_path="random_forest_model",
-            registered_model_name="ClimaSentinel_RiskForecaster"
+            name="random_forest_model",
+            registered_model_name=REGISTERED_MODEL_NAME,
+            signature=signature,
+            input_example=input_example,
+            serialization_format=mlflow.sklearn.SERIALIZATION_FORMAT_CLOUDPICKLE,
         )
         print("Model successfully registered to MLflow!")
+        registered_version = model_info.registered_model_version
+        if registered_version is None:
+            raise RuntimeError("MLflow did not return a concrete registered model version")
+        registered_version = str(registered_version)
+        print(f"REGISTERED_MODEL_VERSION={registered_version}")
+        github_output = os.environ.get("GITHUB_OUTPUT")
+        if github_output:
+            with open(github_output, "a", encoding="utf-8") as output_file:
+                output_file.write(f"model_version={registered_version}\n")
         
-        # Save a robust local model artifact for the FastAPI backend inference
-        os.makedirs("backend/app", exist_ok=True)
-        joblib.dump(model, "backend/app/risk_forecaster.pkl")
-        print("Model successfully saved to backend/app/risk_forecaster.pkl!")
-
 if __name__ == "__main__":
     train_model()

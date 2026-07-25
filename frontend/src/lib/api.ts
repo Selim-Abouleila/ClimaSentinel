@@ -44,23 +44,50 @@ export async function fetchCityScores(city_id: string): Promise<CityDetail | nul
   }
 }
 
+export type ForecastComponentMethod = 'forecast_rule';
+
+export type ForecastValidationStatus =
+  | 'era5_backtested_limited'
+  | 'era5_backtested_insufficient_skill'
+  | 'not_observation_validated';
+
+export type ForecastUncertaintyMethod = 'none';
+
 export interface SubScoreForecast {
-  estimated_score: number;
-  ci_lower: number;
-  ci_upper: number;
-  confidence_margin: number;
+  estimated_score: number | null;
+  ci_lower: null;
+  ci_upper: null;
+  confidence_margin: null;
+  available: boolean;
+  method: ForecastComponentMethod;
+  validation_status: ForecastValidationStatus;
+  uncertainty_method: ForecastUncertaintyMethod;
+  provenance: string;
+  method_reason: string;
+  unavailable_reason: string | null;
 }
 
 export interface CityForecast {
   city_id: string;
   horizon_days: number;
   prediction_date: string;
+  prediction_source: 'same_vintage_forecast_rules';
+  model_version: null;
+  forecast_method: 'forecast_rules_baseline';
+  model_target_components: [];
+  rule_based_components: string[];
+  feature_schema_version: string;
+  feature_ingestion_run_id: string;
+  feature_ingested_at_utc: string;
+  forecast_origin_time_zone: string;
   current_tipping_score: number;
   estimated_total_tipping_score: number;
-  total_confidence_margin: number;
-  total_ci_lower: number;
-  total_ci_upper: number;
+  total_confidence_margin: null;
+  total_ci_lower: null;
+  total_ci_upper: null;
+  total_uncertainty_method: ForecastUncertaintyMethod;
   forecast_primary_driver: string;
+  forecast_primary_driver_method: ForecastComponentMethod;
   sub_scores_forecast: {
     heat_score: SubScoreForecast;
     wind_score: SubScoreForecast;
@@ -68,7 +95,7 @@ export interface CityForecast {
     air_score: SubScoreForecast;
     river_score: SubScoreForecast;
   };
-  weather_trajectory: Record<string, number>;
+  weather_trajectory: Record<string, number | null>;
 }
 
 export async function fetchCityForecast(city_id: string, horizonDays: number = 3): Promise<CityForecast | null> {
