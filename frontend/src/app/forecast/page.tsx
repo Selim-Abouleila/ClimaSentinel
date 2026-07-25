@@ -115,10 +115,13 @@ export default function ForecastPage() {
               className="model-status model-status--beta"
               aria-label="Forecast feature is in beta"
             >
-              Beta
+              Beta forecast
             </span>
           </div>
-          <p>Explore projected climate risk by city and horizon.</p>
+          <p>
+            Experimental, rule-based climate risk projections by city for the
+            next 1–3 days.
+          </p>
         </header>
 
         <section className="forecast-controls" aria-label="Forecast controls">
