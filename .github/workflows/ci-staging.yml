@@ -90,14 +90,21 @@ jobs:
         run: npm install -g @railway/cli
 
       - name: Deploy Backend to Railway
-        run: railway up --environment staging --service ${{ secrets.RAILWAY_SERVICE_ID }} --detach
+        run: railway up --environment staging --service ${{ secrets.RAILWAY_SERVICE_ID }}
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
           RAILWAY_PROJECT_ID: ${{ secrets.RAILWAY_PROJECT_ID }}
           RAILWAY_SERVICE_ID: ${{ secrets.RAILWAY_SERVICE_ID }}
 
+      - name: Stamp Frontend Release
+        run: |
+          release_id="${GITHUB_SHA}-${GITHUB_RUN_ID}"
+          mkdir -p frontend/public/releases
+          printf '%s\n' "${release_id}" \
+            > "frontend/public/releases/${release_id}.txt"
+
       - name: Deploy Frontend to Railway
-        run: railway up --environment staging --service ${{ secrets.RAILWAY_FRONTEND_SERVICE_ID }} --detach
+        run: railway up --environment staging --service ${{ secrets.RAILWAY_FRONTEND_SERVICE_ID }}
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
           RAILWAY_PROJECT_ID: ${{ secrets.RAILWAY_PROJECT_ID }}
@@ -115,21 +122,36 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Wait for the new staging frontend release
+      - name: Verify the deployed staging frontend release
         env:
           STAGING_FRONTEND_URL: ${{ secrets.STAGING_FRONTEND_URL }}
         run: |
+          : "${STAGING_FRONTEND_URL:?STAGING_FRONTEND_URL is required}"
+          release_id="${GITHUB_SHA}-${GITHUB_RUN_ID}"
+          release_url="${STAGING_FRONTEND_URL%/}/releases/${release_id}.txt"
+          response_file="${RUNNER_TEMP}/climasentinel-${release_id}.txt"
+
           for attempt in {1..36}; do
-            if curl --fail --silent --show-error --location \
-              "${STAGING_FRONTEND_URL%/}/forecast" \
-              | grep --fixed-strings --quiet "Climate Risk Forecast"; then
-              echo "Staging frontend release is ready."
+            if curl \
+              --fail \
+              --silent \
+              --show-error \
+              --location \
+              --connect-timeout 5 \
+              --max-time 10 \
+              --header "Cache-Control: no-cache" \
+              --header "Pragma: no-cache" \
+              --output "${response_file}" \
+              "${release_url}?attempt=${attempt}" \
+              && grep --fixed-strings --line-regexp --quiet \
+                "${release_id}" "${response_file}"; then
+              echo "Staging frontend is serving release ${release_id}."
               exit 0
             fi
-            echo "Waiting for staging frontend release (${attempt}/36)..."
+            echo "Waiting for staging frontend release ${release_id} (${attempt}/36)..."
             sleep 10
           done
-          echo "Staging frontend did not become ready within 6 minutes."
+          echo "Staging frontend did not serve release ${release_id} after 36 attempts."
           exit 1
 
       - name: Setup Node

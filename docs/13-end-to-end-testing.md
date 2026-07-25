@@ -11,6 +11,8 @@ live operational rule release.
 genuine Day +1, Day +2 and Day +3 selector. The test verifies that:
 
 - the page and city/horizon controls render without a server error;
+- the page labels the forecast as beta and describes the projections as
+  experimental and rule-based;
 - the API reports `forecast_rules_baseline` and
   `same_vintage_forecast_rules`;
 - every factor is identified as a forecast rule;
@@ -46,9 +48,11 @@ remains available whether the candidate passed or was honestly rejected. The
 workflow uses a non-canceling model-promotion concurrency group to prevent two
 passing challengers from moving the alias concurrently.
 
-Railway deployments run in detached mode. Before Playwright starts, CI polls the
-staging `/forecast` HTML for the new rule-policy release marker for up to six
-minutes. The test then polls the backend API for the matching
+Railway deployments run in attached mode, so the CLI waits for each service to
+deploy successfully. The frontend build also includes a unique
+`/releases/<commit-sha>-<workflow-run-id>.txt` marker. Before Playwright starts,
+CI checks that exact marker for up to 36 attempts, including on failed-job
+reruns. The test then polls the backend API for the matching
 `forecast_rules_baseline:same_vintage_forecast_rules` contract before exercising
 all horizons. This avoids testing an old release or a rollout in progress.
 
