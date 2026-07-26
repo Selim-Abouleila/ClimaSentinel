@@ -6,8 +6,9 @@
 
 **🌍 Live Dashboard:** [climasentinel.up.railway.app](https://climasentinel.up.railway.app/)
 
-ClimaSentinel is an automated climate data pipeline running on Google Cloud Platform. It ingests real-time weather, air quality, river discharge, historical ERA5 reanalysis, and long-term CMIP6 climate projections for 10 major European cities — every day, at zero marginal cost.
+ClimaSentinel combines a serverless GCP climate-data pipeline with a FastAPI and Next.js serving layer on Railway. It ingests daily weather, air-quality and river-discharge forecasts plus lagged ERA5 reanalysis for 10 major European cities, transforms them with BigQuery and dbt, and supports an optional monthly CMIP6 projection source that is currently disabled in scheduled ingestion.
 
+> **Forecasting is beta.** The three-day page presents experimental Day +1/+2/+3 point estimates from deterministic same-vintage rules, not a deployed ML model. Heat has limited ERA5 backtest evidence; Rain was ERA5-backtested but showed insufficient skill; Wind, Air Quality and River are not observation-validated. Missing inputs remain unavailable, and no confidence intervals are claimed.
 
 ---
 
@@ -97,10 +98,9 @@ flowchart LR
 
         BQ_MART["🗄️ BigQuery (Gold)
         ─────────────
-        mart.mart_city_score_current
-        mart.mart_city_score_history
-        mart.mart_city_zone_current
-        mart.mart_city_score_detail
+        mart.mart_city_score_*
+        mart.mart_ml_forecast_features_vintage
+        mart.mart_city_realized_weather_daily
         mart.mart_ml_training_examples
         mart.mart_ml_serving_features_current"]
 
@@ -131,7 +131,8 @@ flowchart LR
 
         CP["🌡️ CMIP6 Climate
         climate-api.open-meteo.com
-        10-year projection · monthly"]
+        10-year daily projection
+        optional · scheduled fetch off"]
     end
 
     subgraph SERVING["Serving Layer (Railway)"]
@@ -187,7 +188,7 @@ flowchart LR
     AQ --> CRJ
     FL -->|"river_enabled cities only"| CRJ
     HW --> CRJ
-    CP -->|"1st of month only"| CRJ
+    CP -.->|"optional integration"| CRJ
     BQ_MART -->|"Current exact-vintage features"| BACKEND
     BACKEND -->|"REST API (JSON)"| FRONTEND
     BQ_MART -->|"Point-in-time training examples"| ML
@@ -198,13 +199,13 @@ flowchart LR
 
 ## Data Sources
 
-| API | Endpoint | Grain | Rows/city/day | Table |
+| API | Endpoint | Grain | Typical rows/city/run | Table |
 |---|---|---|---|---|
 | Weather Forecast | `api.open-meteo.com/v1/forecast` | Hourly | 168 | `raw.weather_forecast_hourly` |
 | Air Quality | `air-quality-api.open-meteo.com/v1/air-quality` | Hourly | 120 | `raw.air_quality_hourly` |
 | River Discharge | `flood-api.open-meteo.com/v1/flood` | Daily | 7 | `raw.flood_daily` |
 | ERA5 Historical | `archive-api.open-meteo.com/v1/archive` | Daily | 7 | `raw.historical_weather_daily` |
-| CMIP6 Climate | `climate-api.open-meteo.com/v1/climate` | Daily | ~3,650/mo | `raw.climate_projections_daily` |
+| CMIP6 Climate (optional; scheduled fetch off) | `climate-api.open-meteo.com/v1/climate` | Daily | ~3,650 | `raw.climate_projections_daily` |
 
 ---
 
@@ -214,7 +215,7 @@ flowchart LR
 |---|---|---|---|---|
 | 🥉 Bronze | `raw` | Raw API loads — append-only, partitioned by day | `weather_forecast_hourly`, `air_quality_hourly`, `flood_daily`, `historical_weather_daily`, `climate_projections_daily` | ✅ Live |
 | 🥈 Silver | `stg` | Static seeds, operational daily views, and exact forecast vintages (dbt) | `city_monthly_normals`, `stg_latest_*`, `stg_city_signal_input`, `stg_city_signal_vintage` | ✅ Live |
-| 🥇 Gold | `mart` | Operational scores plus point-in-time-safe ML training and serving contracts | `mart_city_score_history`, `mart_city_score_current`, `mart_ml_training_examples`, `mart_ml_serving_features_current` | ✅ Live |
+| 🥇 Gold | `mart` | Operational scores, exact-vintage forecast features, and ERA5-backed Heat/Rain labels | `mart_city_score_*`, `mart_ml_forecast_features_vintage`, `mart_city_realized_weather_daily`, `mart_ml_training_examples`, `mart_ml_serving_features_current` | ✅ Live |
 
 > **Bronze** tables are auto-created by the ingest job. **Silver** and **Gold** models are managed by dbt and deployed via `make deploy`.
 
@@ -239,11 +240,11 @@ flowchart LR
 
 ## CI/CD Pipeline & Model Promotion
 
-ClimaSentinel uses a strict 4-tier branching strategy (`feature/*` → `dev` → `staging` → `main`) enforced by GitHub Actions to ensure code quality and safe MLOps deployments:
+ClimaSentinel uses a four-tier branching strategy (`feature/*` → `dev` → `staging` → `main`) protected by branch rules and validated by GitHub Actions:
 
-1. **Continuous Integration (`dev`):** Runs the full Python `pytest` suite (unit + integration tests) and verifies Docker builds.
-2. **Staging Environment (`staging`):** Extracts a point-in-time snapshot, trains and evaluates the six-output Heat/Rain challenger, then deploys the transparent all-rule baseline and runs **Playwright E2E tests** across all three horizons. A normal challenger quality rejection is reported but does not make the operational page unavailable.
-3. **Challenger Evaluation & Production (`main`):** A candidate must have non-negative component R², beat the exact matching rule MAE by at least 5%, and satisfy horizon-aware absolute MAE ceilings. Only a complete pass can move `champion`; authentication, provenance or artifact-contract failures remain fatal. The currently enabled operational response still serves all five same-vintage rules and claims no model interval.
+1. **PR validation (`dev`):** Runs Python unit and integration tests, frontend lint/build checks, and a Docker build.
+2. **Staging environment (`staging`):** Extracts a point-in-time snapshot, trains and evaluates the six-output Heat/Rain challenger, and deploys the transparent all-rule baseline. Railway deployments run in attached mode; CI verifies an exact commit/run release marker before **Playwright E2E** exercises all three horizons. A normal challenger quality rejection is reported without making the operational page unavailable.
+3. **Production gate (`main`):** A candidate must have non-negative component R², beat the exact matching rule MAE by at least 5%, and satisfy horizon-aware absolute MAE ceilings. Only a complete pass can move `champion`; authentication, provenance or artifact-contract failures remain fatal. Railway production deployment is currently disabled, and the operational response continues to serve all five same-vintage rules without model intervals.
 
 *For full details on our pipelines and quality gates, please see [Doc 7: CI/CD and Branching Strategy](docs/7-cicd-and-branching.md).*
 
@@ -251,7 +252,7 @@ ClimaSentinel uses a strict 4-tier branching strategy (`feature/*` → `dev` →
 
 ## Reproducibility
 
-This project is built to be 100% reproducible from end-to-end:
+This project is designed for reproducible end-to-end runs:
 - **Infrastructure:** All Google Cloud resources (BigQuery, Cloud Run, Scheduler) are defined in Infrastructure-as-Code using Terraform. Follow the [Quick Start](#quick-start) to recreate the environment.
 - **Data Transformations:** The entire Medallion Architecture (Bronze → Silver → Gold) is generated reproducibly using `dbt`.
 - **Machine Learning:** Data snapshots are versioned with **DVC**, and every model training run is tracked via **MLflow**, ensuring exact hyperparameter and metric reproducibility.
@@ -265,15 +266,15 @@ This project is built to be 100% reproducible from end-to-end:
 | Document | Description |
 |---|---|
 | [1. Bootstrap Initialization](docs/1-bootstrap-initialization.md) | How to clone this project in GCP Cloud Shell and initialize the Terraform remote state backend |
-| [2. Ingestion Pipeline](docs/2-ingestion-pipeline.md) | Details on the Cloud Run and BigQuery pipeline architecture and the 5 Open-Meteo APIs fetched |
+| [2. Ingestion Pipeline](docs/2-ingestion-pipeline.md) | Cloud Run and BigQuery ingestion architecture, source contracts, and fetch cadences |
 | [3. Staging Layer](docs/3-staging-layer.md) | Silver layer: operational latest views plus exact-run weather, AQ, flood and unified signal vintages |
 | [4. Mart Layer](docs/4-mart-layer.md) | Gold layer: operational scores plus point-in-time-safe ML feature, realized-label, training, and serving marts |
 | [5. Guide Power BI](docs/5-guide-powerbi.md) | Guide en français pour connecter Power BI Desktop aux tables `mart` et configurer le rafraîchissement automatique |
 | [6. Guide Streamlit](docs/6-guide-streamlit.md) | Guide en français pour créer un dashboard Python Streamlit connecté à BigQuery avec le même compte de service |
 | [7. CI/CD and Branching Strategy](docs/7-cicd-and-branching.md) | Explanation of the strict Git branching model and the GitHub Actions deployment pipelines |
 | [8. Backend Architecture](docs/8-backend.md) | FastAPI, exact-vintage rule serving, offline challenger boundary, and Dockerization |
-| [9. Frontend Architecture](docs/9-frontend.md) | Next.js dashboard and transparent rule/validation presentation |
+| [9. Frontend Architecture](docs/9-frontend.md) | Next.js dashboard, beta rule-forecast UI, and transparent validation presentation |
 | [10. Monitoring Dashboard](docs/10-monitoring-dashboard.md) | Prometheus + Grafana observability stack: metrics scraping, dashboards, and Docker Compose setup |
 | [11. Machine Learning Model](docs/11-machine-learning-model.md) | Six-output realized Heat/Rain challenger, purged validation, rule baselines, MLflow, and DagsHub registry |
 | [12. API Swagger Documentation](docs/12-api-swagger-documentation.md) | Interactive Swagger UI reference for all FastAPI endpoints, request/response schemas, and examples |
-| [13. End-to-End Testing](docs/13-end-to-end-testing.md) | Details on Playwright E2E test suite running in staging CI pipeline |
+| [13. End-to-End Testing](docs/13-end-to-end-testing.md) | Release-pinned Playwright validation of the deployed staging frontend, backend, and serving mart |
