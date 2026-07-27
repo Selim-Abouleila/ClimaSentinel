@@ -19,7 +19,7 @@ they demonstrate value beyond those baselines.
 |---|---|
 | `backend/app/main.py` | Routes, BigQuery orchestration and rule-baseline response assembly |
 | `backend/app/db.py` | Authenticated BigQuery client creation |
-| `backend/app/config.py` | Environment-based application, BigQuery and MLflow settings |
+| `backend/app/config.py` | Environment-based application and BigQuery settings |
 | `backend/app/ml_pipeline.py` | Shared schema-v3 preprocessing, target ordering, horizon slicing, purge rules and artifact validation |
 | `backend/app/forecast_rules.py` | Pure same-vintage Heat, Rain, Wind, AQ and River forecast rules |
 | `backend/app/schemas.py` | Typed API contract, including availability, method, validation and uncertainty provenance |
@@ -28,7 +28,7 @@ they demonstrate value beyond those baselines.
 
 The dashboard endpoints continue to read the operational score marts:
 
-- `GET /health` returns service health and uptime;
+- `GET /health` returns process liveness and uptime;
 - `GET /data/current-scores` reads `mart_city_score_current`;
 - `GET /data/history-scores` reads `mart_city_score_history`;
 - `GET /data/current-zones` reads `mart_city_zone_current`; and
@@ -36,6 +36,36 @@ The dashboard endpoints continue to read the operational score marts:
 
 These marts calculate all five factors from operational inputs. They are not the
 realized-label source used to validate the forecast model.
+
+`GET /data/history-scores` has a known schema mismatch on this branch: the route
+orders by `prediction_date`, while `mart_city_score_history` exposes the date
+column as `date`. Until the route is corrected, the BigQuery query is expected
+to fail with a `500` response.
+
+## Current API exposure and hardening gaps
+
+The current service is suitable for the public demonstration dashboard, not a
+hardened multi-tenant API:
+
+- routes have no application-level authentication or authorization;
+- `/docs`, `/openapi.json` and `/metrics` are public;
+- CORS is hard-coded with `allow_origins=["*"]`,
+  `allow_credentials=True`, and unrestricted methods and headers;
+- the `limit` parameters on list endpoints have defaults but no lower or upper
+  bounds, and there is no rate limiting or response cache in the application;
+- each data request can issue a BigQuery query; and
+- unexpected forecast failures currently include the underlying exception text
+  in the HTTP `500` detail.
+
+Only the forecast endpoint has a Pydantic response model. The operational
+current-score, history, zone and city-detail endpoints return BigQuery rows
+directly, so callers should not assume those payloads have the same typed
+response-model validation as `CityForecastResponse`.
+
+`GET /health` is a liveness check only. It always reports the running process as
+healthy and does not test BigQuery credentials, dataset availability, the
+serving mart, DagsHub or MLflow. It must not be used as a dependency-readiness
+guarantee.
 
 ## Rule-baseline Day +1/+2/+3 forecast
 

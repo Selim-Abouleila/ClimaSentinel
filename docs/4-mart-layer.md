@@ -33,14 +33,29 @@ Every component is clipped to the `0-100` range before the maximum is taken.
 | Air quality | `(European_AQI - 40) * 1.67`, with legacy prior-value fallback |
 | River | `max(0, (discharge[D+1] - discharge[D]) / discharge[D]) * 200` when discharge is above 50 m³/s |
 
+This is a legacy operational path, not the strict missingness contract used by
+the forecast-vintage marts. Its upstream daily models convert some missing
+precipitation, wind and pollutant readings to zero, and the score SQL can use a
+prior AQ value or zero when current AQ is absent. Those substitutions keep the
+dashboard calculation available, but they do not prove that the missing signal
+was observed at zero.
+
+The velocity SQL currently uses `LEAD(... ORDER BY date)` without verifying that
+the next row is exactly the next calendar date. Under normal complete weather
+coverage that row is Day `D+1`; a gap can instead make it a later date. Do not
+interpret operational velocity as a strict one-day change unless source-date
+continuity has also been checked.
+
 This model is appropriate for operational forecast displays. It is **not an
 realized-outcome label table**: its inputs can be forecast values. The ML
 training path therefore does not treat its component scores as ground truth.
 
 ### `mart_city_score_current` (view)
 
-Selects the highest forecast-derived score for each city in the current 48-hour
-window and ranks cities from highest to lowest risk.
+Selects the highest forecast-derived score for each city across the two UTC
+calendar dates `CURRENT_DATE('UTC')` and the following day, then ranks cities
+from highest to lowest risk. This is not a rolling 48-hour interval and is not
+anchored separately to each city's local date.
 
 ### `mart_city_zone_current` (view)
 
@@ -57,7 +72,10 @@ operational zones.
 ### `mart_city_score_detail` (view)
 
 Exposes the five component scores and their raw forecast context for the city
-detail page. It selects one internally consistent worst-day row per city.
+detail page. It uses separate `ANY_VALUE(... HAVING MAX ...)` aggregates for the
+worst score and each context field. When one date has the unique maximum the
+fields come from that date; tied maximum dates are nondeterministic and the SQL
+does not guarantee a single consistent tie winner across every field.
 
 ## Point-in-time ML marts
 
@@ -241,6 +259,12 @@ realized Heat/Rain targets. Singular tests additionally verify:
 The vintage staging tests remain part of the dependency contract. A mart test
 passing cannot compensate for a failed same-vintage staging lineage test.
 
+These checks run only when `dbt test` is invoked. The scheduled Cloud Run
+ingestion path currently runs `dbt seed` and `dbt run` without tests and also
+logs dbt failures without propagating a nonzero process exit. A green scheduled
+execution therefore does not by itself establish that the marts refreshed or
+that these contracts passed.
+
 ## Deployment and approval sequence
 
 1. Run the vintage staging models and tests.
@@ -255,6 +279,10 @@ passing cannot compensate for a failed same-vintage staging lineage test.
 8. Deploy the backend and frontend rule policy together, then verify the
    `forecast_rules_baseline` response in staging E2E tests even when the
    challenger is rejected.
+
+This is an approval sequence, not one atomic scheduled workflow. In particular,
+the daily ingestion job does not perform the `dbt test` portions of steps 1 and
+3; those tests need an explicit deployment or validation run.
 
 The MLOps workflow publishes the DVC object and commits its pointer only after
 extraction, contract validation, training and registry logging succeed. Model

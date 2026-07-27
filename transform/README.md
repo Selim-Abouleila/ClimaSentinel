@@ -18,13 +18,25 @@ gcloud auth application-default login
 
 ### 3. Run via Makefile (recommended)
 
-dbt is integrated into `make deploy` — no separate dbt command needed. The profile reads `GCP_PROJECT_ID` and `GCP_REGION` directly from your `.env` file via dbt's `env_var()`.
+dbt is integrated into `make deploy`. The profile reads `GCP_PROJECT_ID` and
+`GCP_REGION` directly from your `.env` file via dbt's `env_var()`.
 
 ```bash
-make deploy     # Build image → terraform apply → dbt run + test
+make deploy     # Build/push → Terraform apply → dbt seed/run/test
 make dbt-stg    # Run staging models only (standalone)
-make dbt-test   # Run schema tests only (standalone)
+make dbt-test   # Run schema and singular tests (standalone)
 ```
+
+`make deploy` is mutating and non-interactive: it builds and pushes an image,
+immediately applies a saved Terraform plan, installs dbt dependencies, then runs
+seed/model/test commands. Use `make plan` separately when you need to review the
+Terraform diff before deployment.
+
+On a clean project, the `raw` BigQuery dataset must be created first. The first
+`make deploy` can apply infrastructure and then fail at dbt because the active
+raw source tables do not exist until the ingestion job has run once. Follow the
+clean-room sequence and IAM prerequisites in
+[Doc 1](../docs/1-bootstrap-initialization.md).
 
 ### 4. Run standalone (from transform/)
 
@@ -48,23 +60,24 @@ transform/
 ├── profiles.yml                     # BigQuery profile (reads from .env via env_var)
 ├── requirements.txt                 # Python deps (dbt-core + dbt-bigquery)
 ├── models/
-│   └── stg/                         # Silver layer — staging views
-│       ├── _stg_sources.yml         # Source definitions (raw.* tables)
-│       ├── _stg_models.yml          # Model docs + schema tests
-│       ├── _stg_vintage_models.yml  # Vintage model docs + schema tests
-│       ├── stg_latest_weather_hourly.sql
-│       ├── stg_latest_air_quality_hourly.sql
-│       ├── stg_latest_flood_daily.sql
-│       ├── stg_latest_historical_daily.sql
-│       ├── stg_city_daily_weather.sql
-│       ├── stg_city_daily_air_quality.sql
-│       ├── stg_city_signal_input.sql     ← ⭐ Operational mart input
-│       ├── stg_weather_forecast_hourly_vintage.sql
-│       ├── stg_city_daily_weather_vintage.sql
-│       ├── stg_air_quality_hourly_vintage.sql
-│       ├── stg_city_daily_air_quality_vintage.sql
-│       ├── stg_flood_daily_vintage.sql
-│       └── stg_city_signal_vintage.sql   ← Point-in-time ML staging input
+│   ├── stg/                         # Silver layer — staging views
+│   │   ├── _stg_sources.yml         # Source definitions (raw.* tables)
+│   │   ├── _stg_models.yml          # Model docs + schema tests
+│   │   ├── _stg_vintage_models.yml  # Vintage model docs + schema tests
+│   │   ├── stg_latest_weather_hourly.sql
+│   │   ├── stg_latest_air_quality_hourly.sql
+│   │   ├── stg_latest_flood_daily.sql
+│   │   ├── stg_latest_historical_daily.sql
+│   │   ├── stg_city_daily_weather.sql
+│   │   ├── stg_city_daily_air_quality.sql
+│   │   ├── stg_city_signal_input.sql     ← ⭐ Operational mart input
+│   │   ├── stg_weather_forecast_hourly_vintage.sql
+│   │   ├── stg_city_daily_weather_vintage.sql
+│   │   ├── stg_air_quality_hourly_vintage.sql
+│   │   ├── stg_city_daily_air_quality_vintage.sql
+│   │   ├── stg_flood_daily_vintage.sql
+│   │   └── stg_city_signal_vintage.sql   ← Point-in-time ML staging input
+│   └── mart/                        # Gold layer — operational and ML marts
 ├── macros/
 │   ├── forecast_origin_time_zone.sql # City ID → IANA timezone contract
 │   └── generate_schema_name.sql      # Preserve explicit stg/mart datasets
@@ -94,15 +107,31 @@ raw.air_quality_hourly ────────→ stg_air_quality_hourly_vintag
 raw.flood_daily ───────────────→ stg_flood_daily_vintage ──────────────────────────────────────────────────┤
                                                                                                            ▼
                                                                                          stg_city_signal_vintage
-                                                                                         (future ML marts)
+                                                                                         (point-in-time ML marts)
 ```
 
-The vintage path keeps `ingestion_run_id` in its grain and joins sources only within the same run. It exposes `forecast_origin_time_zone` and derives `forecast_origin_date` from the UTC ingestion timestamp in each city's IANA timezone, so late or manual runs retain the correct local Day `0–6` weather trajectory. Build and validate it independently with:
+The vintage path keeps `ingestion_run_id` in its grain and joins sources only
+within the same run. It exposes `forecast_origin_time_zone` and derives
+`forecast_origin_date` from the UTC ingestion timestamp in each city's IANA
+timezone, so late or manual runs retain the correct local Day `0–6` weather
+trajectory.
+
+The raw field named `valid_ts_utc` is currently populated from offset-free
+city-local provider strings and must not be treated as a trustworthy UTC
+instant for precise lead-hour or DST calculations. The vintage daily models
+preserve missing measurements, while the legacy operational daily models
+coalesce some missing precipitation, wind and pollutant readings to zero.
+
+Build and validate the vintage path independently with:
 
 ```bash
 dbt run --profiles-dir . --select tag:forecast_vintage
 dbt test --profiles-dir . --select tag:forecast_vintage
 ```
+
+The scheduled ingestion job runs `dbt seed` and `dbt run`, but not `dbt test`;
+it can also appear successful after a logged dbt failure. Run tests explicitly
+and inspect transform completion in the job logs.
 
 ---
 
@@ -110,5 +139,5 @@ dbt test --profiles-dir . --select tag:forecast_vintage
 
 | Layer | Materialization | Rationale |
 |---|---|---|
-| `stg` (Silver) | **View** | Always fresh, zero storage cost, reads from raw on query |
+| `stg` (Silver) | **View** | No duplicated model-data storage; reads from raw and can incur query cost on each use |
 | `mart` (Gold) | **Table** | Precomputed for dashboard performance |

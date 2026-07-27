@@ -13,9 +13,11 @@ does not query BigQuery or load MLflow artifacts directly.
 - Tailwind CSS v4 plus shared design tokens; and
 - Playwright for live staging end-to-end tests.
 
-`NEXT_PUBLIC_API_URL` identifies the backend. All score values are sanitized by
-the API before display, while nullable unavailable factors remain nullable in
-the client contract.
+`NEXT_PUBLIC_API_URL` identifies the backend. The forecast response is validated
+by the backend's typed `CityForecastResponse` contract, including nullable
+unavailable factors. The operational current-score and city-detail endpoints
+return BigQuery rows directly and do not provide the same typed response-model
+validation.
 
 ## Main dashboard and city detail
 
@@ -32,26 +34,28 @@ horizon. A selection calls
 `GET /data/city/{city_id}/forecast?horizon_days={1|2|3}`; the client never creates
 a shorter horizon by reusing Day +3 output.
 
-The result page renders method and validation provenance per factor:
+The page gives a prominent global beta disclosure and validation-scope note:
 
 - all five factors are deterministic indicators calculated from the selected
   horizon's same-vintage forecasts;
-- Heat is labelled as having only a limited backtest against realized ERA5;
-- Rain is labelled as ERA5-backtested with insufficient predictive skill;
-- Wind, Air Quality and River are labelled as lacking observed-label validation;
+- Heat is described as having only limited backtest evidence;
+- Rain is described as having performed poorly in backtests;
+- Wind, Air Quality and River are described as lacking observed validation;
 - a source gap is displayed as unavailable, not as a green zero-risk value; and
 - no component or aggregate model-confidence interval is displayed.
 
-The frontend does not turn formula outputs into pseudo-confidence bounds. API
-interval fields are required to be null and the page explicitly states that no
-model confidence interval is claimed.
+The API carries `method`, `validation_status`, `provenance` and `method_reason`
+for every factor, but the current factor cards do **not** render those values as
+visible per-factor labels. They show the factor score/risk band or a source-data
+unavailable state. `method` is present only as a non-visible
+`data-forecast-method` attribute. Product copy must therefore not claim that the
+current UI presents detailed provenance on every card.
 
-The following disclaimer remains visible until observed gust, AQ and river
-outcomes are ingested and validated:
+The current global note is:
 
-> Heat uses a same-vintage forecast rule with a limited ERA5 backtest. Rain was
-> backtested against realized ERA5 but showed insufficient predictive skill.
-> Wind, air-quality and river-risk still lack observed-label validation.
+> Heat has limited backtest evidence; Rain performed poorly in backtests; Wind,
+> air quality and river lack observed validation. Scores are point estimates
+> without confidence bands. Missing inputs are marked unavailable.
 
 ## Loading and failure states
 
@@ -64,6 +68,9 @@ produce a successful response; only the affected rule cards are unavailable.
 
 The API exposes method, availability and validation fields and keeps all model
 uncertainty nullable. Backend and frontend should therefore be promoted as one
-release. The staging Playwright test verifies the `forecast_rules_baseline`
-contract across all three horizons; it does not require a rejected challenger
-to be deployed.
+release. The staging Playwright smoke test verifies the
+`forecast_rules_baseline` API contract for Paris across all three horizons and
+checks the global beta disclosure. It does not verify visible per-factor
+validation labels, the other nine cities, the overview or city-detail pages, or
+an exact backend commit marker. A rejected challenger is not required to be
+deployed.
