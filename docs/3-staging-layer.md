@@ -9,7 +9,8 @@ The `raw.*` tables accumulate overlapping data on every ingestion run (e.g., 168
 Before computing operational tipping scores, we need to:
 
 1. **Deduplicate** — Keep only the freshest forecast for each `(city_id, timestamp)` pair
-2. **Handle nulls** — Coalesce missing sensor readings to avoid downstream errors
+2. **Apply legacy null handling** — The operational daily aggregates coalesce
+   some missing precipitation, wind and pollutant readings to zero
 3. **Harmonize grain** — Roll hourly tables down to daily summaries so all signals share the same `(city_id, date)` key
 4. **Unify** — JOIN all signals into a single `stg.city_signal_input` table for the mart layer
 
@@ -41,7 +42,7 @@ raw.air_quality_hourly ────────→ stg_air_quality_hourly_vintag
 raw.flood_daily ───────────────→ stg_flood_daily_vintage ──────────────────────────────────────────────────┤
                                                                                                            ▼
                                                                                          stg_city_signal_vintage
-                                                                                         (future ML marts)
+                                                                                         (point-in-time ML marts)
 ```
 
 ---
@@ -82,12 +83,24 @@ These views roll up deduplicated hourly data into daily summaries.
 |---|---|
 | `stg_city_signal_input` | Joins weather + air quality + river + historical into one row per `(city_id, date)` |
 
-**Nullability rules:**
-- Weather & air quality columns: always populated (all cities, daily)
+**Operational nullability rules:**
+
+- Weather anchors the row, but the legacy daily aggregation converts missing
+  precipitation and wind readings to zero. Temperature aggregates can still be
+  NULL if all source readings are missing.
+- Air-quality columns can be NULL when there is no joined AQ row. Within an
+  existing AQ day, the legacy averages convert missing pollutant readings to
+  zero.
 - `river_discharge_m3s`: NULL for non-river-enabled cities (7 of 10)
 - `hist_*` columns: NULL for dates outside the ERA5 lag window (most recent 6 days)
 
-> **Note:** CMIP6 climate projections are intentionally excluded from `city_signal_input`. They have a different grain (10-year window, monthly refresh) and will be consumed separately in the mart layer as a long-term deviation baseline.
+These rules belong only to the legacy operational path. They can suppress a
+risk factor when source measurements are missing, so this path must not be used
+as evidence that a missing observation was truly zero.
+
+> **Note:** CMIP6 climate projections are excluded from
+> `city_signal_input`. Their scheduled fetch is currently disabled, and no
+> staging or mart model consumes `raw.climate_projections_daily`.
 
 ### Forecast-Vintage Views (6)
 
@@ -113,7 +126,17 @@ The vintage path does not join ERA5. ERA5 is published later and belongs to a fu
 - AQ has a five-day window while weather and flood have seven-day windows.
 - Unknown city IDs fail during vintage-model evaluation until an IANA timezone is configured; they never silently fall back to UTC.
 
-> **Timestamp caveat:** the current fetcher requests city-local timestamps and stores the offset-free strings in `valid_ts_utc`. Calendar-day horizons are now anchored to the city-local ingestion date, including off-schedule runs that cross local midnight. Precise lead-hour and DST calculations still require the separate ingestion change that preserves the provider timestamp offset. When that field is corrected to contain a true UTC instant, `valid_date` must also change to `DATE(valid_ts_utc, forecast_origin_time_zone)` so the calendar contract remains local.
+> **Timestamp caveat:** despite its name and BigQuery `TIMESTAMP` type,
+> `valid_ts_utc` is not currently a trustworthy UTC instant. The fetcher
+> requests city-local timestamps and stores the provider's offset-free strings
+> in that field. Calendar-day horizons are anchored to the city-local ingestion
+> date, including off-schedule runs that cross local midnight, but consumers
+> must not use the field for precise lead-hour, cross-time-zone or DST
+> calculations. Those uses require an ingestion change that preserves the
+> provider timestamp offset. When the field is corrected to contain a true UTC
+> instant, `valid_date` must also change to
+> `DATE(valid_ts_utc, forecast_origin_time_zone)` so the calendar contract
+> remains local.
 
 `ingested_at_utc` is currently one timestamp captured at the start of the whole ingestion run. If an unusually long run begins before a city's local midnight but fetches that city after midnight, the raw schema cannot reconstruct the later per-city request date. Normal scheduled runs are short enough to avoid this edge case; a future ingestion revision should persist provider issue time or a per-city request timestamp.
 
@@ -124,9 +147,10 @@ The local-origin rule matters for retries and manual runs. For example, an inges
 ## Materialization
 
 All staging models are materialized as **views** (not tables). This means:
-- ✅ Zero storage cost
-- ✅ Always fresh — reads from raw on every query
+- ✅ No duplicated model-data storage for the views themselves
+- ✅ Reflects the rows currently stored in `raw` on every query
 - ✅ No scheduled refresh needed
+- ⚠️ Every query can rescan upstream data and incur BigQuery query cost
 - ⚠️ Slightly slower queries (acceptable for silver; mart layer uses tables)
 
 ---
@@ -138,10 +162,16 @@ All staging models are materialized as **views** (not tables). This means:
 Staging views are created automatically as part of `make deploy`:
 
 ```
-make deploy  →  build image  →  terraform apply  →  dbt run + test
+make deploy  →  build/push image  →  terraform apply  →  dbt seed + run + test
 ```
 
 No separate dbt command or profile configuration needed — the profile reads `GCP_PROJECT_ID` and `GCP_REGION` from your `.env` file automatically via dbt's `env_var()`.
+
+> **Clean-room limitation:** on a brand-new project, create the `raw` dataset
+> first. The initial `make deploy` can apply the infrastructure and then fail in
+> dbt because the four active raw source tables do not exist until the ingestion
+> job runs once. Follow the first-deployment sequence in
+> [Doc 1](1-bootstrap-initialization.md).
 
 ### Prerequisites (first time only)
 
@@ -157,7 +187,7 @@ gcloud auth application-default login
 | `make deploy` | Full pipeline: build + terraform + dbt run + test |
 | `make dbt-stg` | Run staging models only |
 | `make dbt-run` | Run all models (stg + mart) |
-| `make dbt-test` | Run schema tests (not_null checks on key columns) |
+| `make dbt-test` | Run schema and singular data tests |
 
 ### From the transform directory
 
@@ -176,11 +206,16 @@ dbt docs generate --profiles-dir . && dbt docs serve --profiles-dir .
 
 Core schema tests are defined in `_stg_models.yml` and `_stg_vintage_models.yml`. Singular tests in `transform/tests` validate the composite vintage grains, city-local origin/horizon derivation, one timestamp per run, raw retry-payload consistency, and the weather-anchored unified key set. The unified lineage test validates exact-vintage source presence, timestamps, coverage metadata, and nullable-value propagation. Coverage anomalies are warnings during the initial raw-history audit rather than filters or hard failures.
 
+The scheduled Cloud Run ingestion job runs `dbt seed` and `dbt run`, but not
+`dbt test`. These contracts are enforced only when `make dbt-test`, `dbt test`
+or another validation workflow invokes them; a green scheduled execution is
+not evidence that the tests passed.
+
 The hard lineage test deliberately does not compare `AVG`/`SUM`-derived `FLOAT64` values by independently rereading the daily views. All staging relations are views, so BigQuery can expand those reductions separately through `stg_city_signal_vintage` and through the test's source references; floating-point reduction and the final two-decimal rounding can then depend on the query plan. Deterministic `MAX`/`MIN` and direct-value projections remain hard-checked. Raw conflicting payloads also fail `assert_forecast_vintage_raw_payloads_consistent`, while aggregate NULL propagation remains part of the lineage contract.
 
 | Model | Column | Test |
 |---|---|---|
-| All 7 models | `city_id` | `not_null` |
+| All 7 operational models | `city_id` | `not_null` |
 | Hourly models | `valid_ts_utc` | `not_null` |
 | Daily models | `date` | `not_null` |
 | Vintage models | Lineage and grain columns | `not_null` |

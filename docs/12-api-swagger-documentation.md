@@ -9,6 +9,20 @@ interactive Swagger UI at `/docs`.
 - Content type: `application/json`
 - Forecast horizons: integer `1`, `2` or `3`
 
+## Current security and reliability posture
+
+The API currently has no application-level authentication or authorization.
+Swagger (`/docs`), OpenAPI (`/openapi.json`) and Prometheus metrics (`/metrics`)
+are also public. CORS allows every origin, credentials, methods and headers.
+There is no application rate limiter or response cache, and list-endpoint
+`limit` values have no enforced lower or upper bound.
+
+The service is therefore a public demonstration API, not a hardened
+multi-tenant interface. Data endpoints can issue BigQuery queries, so a
+production hardening pass should add explicit origins, authentication where
+needed, bounded pagination, rate/cost controls, safer error responses and
+dependency readiness.
+
 ## System endpoints
 
 ### `GET /`
@@ -17,7 +31,7 @@ Returns service metadata and the documentation route.
 
 ```json
 {
-  "service": "ClimaSentinel",
+  "service": "ClimaSentinel Backend",
   "version": "1.0.0",
   "docs": "/docs"
 }
@@ -25,7 +39,9 @@ Returns service metadata and the documentation route.
 
 ### `GET /health`
 
-Returns process health, environment and uptime for deployment checks.
+Returns process liveness, environment and uptime. It does not check BigQuery,
+the serving mart, DagsHub or MLflow and must not be interpreted as dependency
+readiness.
 
 ```json
 {
@@ -35,20 +51,36 @@ Returns process health, environment and uptime for deployment checks.
 }
 ```
 
+### `GET /docs`, `GET /openapi.json` and `GET /metrics`
+
+FastAPI exposes interactive documentation and its OpenAPI schema at the first
+two routes. `prometheus-fastapi-instrumentator` exposes generic HTTP/process
+metrics at `/metrics`. All three are currently unauthenticated.
+
 ## Operational data endpoints
+
+These endpoints return BigQuery rows directly and do not declare Pydantic
+response models. Unlike the forecast response, their values are not passed
+through a typed finite-number sanitization contract.
 
 ### `GET /data/current-scores`
 
-Reads `mart_city_score_current`. `limit` defaults to `10`.
+Reads `mart_city_score_current`. `limit` defaults to `10` and is currently
+unbounded.
 
 ### `GET /data/history-scores`
 
 Reads `mart_city_score_history`. Accepts optional `city_id` and a `limit` that
-defaults to `50`.
+defaults to `50`; that limit is currently unbounded.
+
+> **Known issue:** this route currently orders by `prediction_date`, but the dbt
+> mart exposes the column as `date`. On this branch the query is expected to
+> return `500` until the backend route is corrected.
 
 ### `GET /data/current-zones`
 
-Reads `mart_city_zone_current`. `limit` defaults to `20`.
+Reads `mart_city_zone_current`. `limit` defaults to `20` and is currently
+unbounded.
 
 ### `GET /data/city/{city_id}/scores`
 
@@ -214,4 +246,4 @@ statistical confidence interval.
 |---:|---|
 | `404` | No current eligible point-in-time serving row exists for the city |
 | `422` | `horizon_days` is outside `1..3` or another request value is invalid |
-| `500` | BigQuery or unexpected application failure |
+| `500` | BigQuery or unexpected application failure. The forecast route currently includes the underlying exception text in `detail`, so clients should not treat that text as a stable contract. |

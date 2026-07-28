@@ -25,6 +25,13 @@ ClimaSentinel combines a serverless GCP climate-data pipeline with a FastAPI and
 
 ## Quick Start
 
+> **Existing-environment workflow.** The current Terraform does not create the
+> BigQuery `raw` dataset, and `make deploy` runs dbt before a first ingestion can
+> create the source tables. The commands below therefore update an environment
+> whose Bronze layer has already been initialized; they are not yet a clean-room
+> bootstrap. See [Doc 1](docs/1-bootstrap-initialization.md) for the prerequisite
+> and safe deployment order.
+
 ```bash
 git clone https://github.com/Selim-Abouleila/ClimaSentinel.git
 cd ClimaSentinel
@@ -36,8 +43,9 @@ cp .env.example .env   # then fill in GCP_PROJECT_ID
 make bootstrap
 ```
 
-**Deploy GCP resources:**
+**Review the Terraform plan, then deploy the initialized environment:**
 ```bash
+make plan
 make deploy
 ```
 
@@ -49,11 +57,11 @@ See the full guide in [docs/1-bootstrap-initialization.md](docs/1-bootstrap-init
 |---|---|
 | `make bootstrap` | Enable GCP APIs, create Artifact Registry repo, GCS state bucket, init Terraform |
 | `make build` | Build & push the ingest Docker image via Cloud Build |
-| `make deploy` | Full pipeline: build image + terraform apply + dbt run + dbt test |
+| `make deploy` | Build/push image, create and automatically apply a saved Terraform plan, then run dbt seed/run/test |
 | `make plan` | Dry run — show changes without applying |
-| `make destroy` | Tear down all GCP resources |
+| `make destroy` | Destroy Terraform-managed resources only; it does not remove the state bucket, Artifact Registry/images, BigQuery data, enabled APIs, or other imperatively created resources |
 | `make dbt-stg` | Run staging dbt models only |
-| `make dbt-test` | Run dbt schema tests |
+| `make dbt-test` | Run dbt schema and singular data tests |
 
 ---
 
@@ -81,7 +89,7 @@ flowchart LR
         raw.air_quality_hourly
         raw.historical_weather_daily
         raw.flood_daily
-        raw.climate_projections_daily"]
+        raw.climate_projections_daily (optional)"]
 
         DBT["⚙️ dbt (Transform)
         ─────────────
@@ -163,14 +171,14 @@ flowchart LR
 
     subgraph MON["Monitoring"]
         direction TB
-        PROM["📊 Prometheus
+        PROM["📊 Local Prometheus demo
         ─────────────
         Scrapes /metrics
         Port 9090"]
 
-        GRAF["📈 Grafana
+        GRAF["📈 Local Grafana demo
         ─────────────
-        Dashboards
+        Dashboard · no alert rules
         Port 3000"]
 
         PROM --> GRAF
@@ -182,7 +190,7 @@ flowchart LR
     NORMALS["🌱 transform/seeds/city_monthly_normals.csv
     10-year historical baselines"]
 
-    CITIES -->|"10 cities × 5 APIs"| CRJ
+    CITIES -->|"10 cities: weather + AQ + ERA5; river for 3"| CRJ
     NORMALS -->|"dbt seed"| BQ_STG
     W  --> CRJ
     AQ --> CRJ
@@ -205,7 +213,12 @@ flowchart LR
 | Air Quality | `air-quality-api.open-meteo.com/v1/air-quality` | Hourly | 120 | `raw.air_quality_hourly` |
 | River Discharge | `flood-api.open-meteo.com/v1/flood` | Daily | 7 | `raw.flood_daily` |
 | ERA5 Historical | `archive-api.open-meteo.com/v1/archive` | Daily | 7 | `raw.historical_weather_daily` |
-| CMIP6 Climate (optional; scheduled fetch off) | `climate-api.open-meteo.com/v1/climate` | Daily | ~3,650 | `raw.climate_projections_daily` |
+| CMIP6 Climate (integration present; scheduled fetch disabled; no mart consumer) | `climate-api.open-meteo.com/v1/climate` | Daily | ~3,650 when invoked | `raw.climate_projections_daily` |
+
+The hourly weather and air-quality timestamps are provider-local clock values
+stored in a field named `valid_ts_utc`; no source offset is retained. Do not use
+that field for exact absolute lead-time or DST auditing. Current horizon logic
+uses city-local calendar dates as a mitigation, not as a timestamp correction.
 
 ---
 
@@ -213,11 +226,14 @@ flowchart LR
 
 | Layer | Dataset | Purpose | Key Tables | Status |
 |---|---|---|---|---|
-| 🥉 Bronze | `raw` | Raw API loads — append-only, partitioned by day | `weather_forecast_hourly`, `air_quality_hourly`, `flood_daily`, `historical_weather_daily`, `climate_projections_daily` | ✅ Live |
+| 🥉 Bronze | `raw` | Raw API loads — append-only, partitioned by day | Active: `weather_forecast_hourly`, `air_quality_hourly`, `flood_daily`, `historical_weather_daily`; optional: `climate_projections_daily` | ✅ Active sources live; dataset is not provisioned by Terraform |
 | 🥈 Silver | `stg` | Static seeds, operational daily views, and exact forecast vintages (dbt) | `city_monthly_normals`, `stg_latest_*`, `stg_city_signal_input`, `stg_city_signal_vintage` | ✅ Live |
 | 🥇 Gold | `mart` | Operational scores, exact-vintage forecast features, and ERA5-backed Heat/Rain labels | `mart_city_score_*`, `mart_ml_forecast_features_vintage`, `mart_city_realized_weather_daily`, `mart_ml_training_examples`, `mart_ml_serving_features_current` | ✅ Live |
 
-> **Bronze** tables are auto-created by the ingest job. **Silver** and **Gold** models are managed by dbt and deployed via `make deploy`.
+> The ingest job creates active-source **Bronze tables only after the `raw`
+> dataset exists**. **Silver** and **Gold** models are managed by dbt. A
+> scheduled ingest can still finish green when its embedded dbt step fails, and
+> scheduled runs do not execute `dbt test`; verify mart freshness independently.
 
 ---
 
@@ -240,11 +256,13 @@ flowchart LR
 
 ## CI/CD Pipeline & Model Promotion
 
-ClimaSentinel uses a four-tier branching strategy (`feature/*` → `dev` → `staging` → `main`) protected by branch rules and validated by GitHub Actions:
+ClimaSentinel documents a four-tier branching strategy (`feature/*` → `dev` →
+`staging` → `main`) and validates it with GitHub Actions. Branch protection is
+configured outside the repository and must be verified in GitHub:
 
 1. **PR validation (`dev`):** Runs Python unit and integration tests, frontend lint/build checks, and a Docker build.
-2. **Staging environment (`staging`):** Extracts a point-in-time snapshot, trains and evaluates the six-output Heat/Rain challenger, and deploys the transparent all-rule baseline. Railway deployments run in attached mode; CI verifies an exact commit/run release marker before **Playwright E2E** exercises all three horizons. A normal challenger quality rejection is reported without making the operational page unavailable.
-3. **Production gate (`main`):** A candidate must have non-negative component R², beat the exact matching rule MAE by at least 5%, and satisfy horizon-aware absolute MAE ceilings. Only a complete pass can move `champion`; authentication, provenance or artifact-contract failures remain fatal. Railway production deployment is currently disabled, and the operational response continues to serve all five same-vintage rules without model intervals.
+2. **Staging environment (`staging`):** Extracts a point-in-time snapshot, trains and evaluates the six-output Heat/Rain challenger, and deploys the transparent all-rule baseline. Railway deployments run in attached mode; CI verifies the frontend release marker before a limited Chromium/Paris Playwright path exercises all three horizons. Training jobs do not currently receive GitHub Environment isolation, and staging promotion can move the shared MLflow `Production` stage/`champion` alias.
+3. **Production gate (`main`):** A candidate must have non-negative component R², beat the exact matching rule MAE by at least 5%, and satisfy horizon-aware absolute MAE ceilings. Authentication, provenance or artifact-contract failures remain fatal. Railway production deployment is currently disabled, and the operational response continues to serve all five same-vintage rules without model intervals.
 
 *For full details on our pipelines and quality gates, please see [Doc 7: CI/CD and Branching Strategy](docs/7-cicd-and-branching.md).*
 
@@ -252,10 +270,18 @@ ClimaSentinel uses a four-tier branching strategy (`feature/*` → `dev` → `st
 
 ## Reproducibility
 
-This project is designed for reproducible end-to-end runs:
-- **Infrastructure:** All Google Cloud resources (BigQuery, Cloud Run, Scheduler) are defined in Infrastructure-as-Code using Terraform. Follow the [Quick Start](#quick-start) to recreate the environment.
-- **Data Transformations:** The entire Medallion Architecture (Bronze → Silver → Gold) is generated reproducibly using `dbt`.
-- **Machine Learning:** Data snapshots are versioned with **DVC**, and every model training run is tracked via **MLflow**, ensuring exact hyperparameter and metric reproducibility.
+The repository contains the main ingredients for traceable runs, with important
+current limits:
+
+- **Infrastructure:** Cloud Run, Scheduler, service accounts and IAM are in
+  Terraform. The state bucket, Artifact Registry and `raw` dataset lifecycle are
+  outside that state, so Quick Start is not a complete clean-room recreation.
+- **Data transformations:** dbt defines Silver and Gold, but requires initialized
+  Bronze sources and successful credentials/source access.
+- **Machine learning:** MLflow records runs, but the checked-in DVC pointer is a
+  legacy snapshot that predates the current schema-v3 six-output training
+  contract. `dvc pull` alone does not reproduce the current model; regenerate and
+  version a compatible snapshot before claiming exact reproduction.
 
 *For details on reproducing the ML pipelines or testing, refer to [Doc 11: Machine Learning Model](docs/11-machine-learning-model.md) and [Doc 13: End-to-End Testing](docs/13-end-to-end-testing.md).*
 
@@ -270,11 +296,12 @@ This project is designed for reproducible end-to-end runs:
 | [3. Staging Layer](docs/3-staging-layer.md) | Silver layer: operational latest views plus exact-run weather, AQ, flood and unified signal vintages |
 | [4. Mart Layer](docs/4-mart-layer.md) | Gold layer: operational scores plus point-in-time-safe ML feature, realized-label, training, and serving marts |
 | [5. Guide Power BI](docs/5-guide-powerbi.md) | Guide en français pour connecter Power BI Desktop aux tables `mart` et configurer le rafraîchissement automatique |
-| [6. Guide Streamlit](docs/6-guide-streamlit.md) | Guide en français pour créer un dashboard Python Streamlit connecté à BigQuery avec le même compte de service |
-| [7. CI/CD and Branching Strategy](docs/7-cicd-and-branching.md) | Explanation of the strict Git branching model and the GitHub Actions deployment pipelines |
+| [6. Guide Streamlit](docs/6-guide-streamlit.md) | Guide en français pour connecter Streamlit à BigQuery avec une identité dédiée et des secrets gérés |
+| [7. CI/CD and Branching Strategy](docs/7-cicd-and-branching.md) | Intended branch flow, GitHub Actions behavior, secret scope, and current deployment/registry limitations |
 | [8. Backend Architecture](docs/8-backend.md) | FastAPI, exact-vintage rule serving, offline challenger boundary, and Dockerization |
 | [9. Frontend Architecture](docs/9-frontend.md) | Next.js dashboard, beta rule-forecast UI, and transparent validation presentation |
-| [10. Monitoring Dashboard](docs/10-monitoring-dashboard.md) | Prometheus + Grafana observability stack: metrics scraping, dashboards, and Docker Compose setup |
+| [10. Monitoring Dashboard](docs/10-monitoring-dashboard.md) | Local Prometheus + Grafana observability demo, its metric semantics, and production gaps |
 | [11. Machine Learning Model](docs/11-machine-learning-model.md) | Six-output realized Heat/Rain challenger, purged validation, rule baselines, MLflow, and DagsHub registry |
-| [12. API Swagger Documentation](docs/12-api-swagger-documentation.md) | Interactive Swagger UI reference for all FastAPI endpoints, request/response schemas, and examples |
-| [13. End-to-End Testing](docs/13-end-to-end-testing.md) | Release-pinned Playwright validation of the deployed staging frontend, backend, and serving mart |
+| [12. API Swagger Documentation](docs/12-api-swagger-documentation.md) | FastAPI endpoint reference, typed forecast contract, raw operational routes, and current hardening gaps |
+| [13. End-to-End Testing](docs/13-end-to-end-testing.md) | Frontend-marker-pinned Paris/Chromium staging smoke test and its coverage limits |
+| [Archived project material](docs/archive/2026-06/README.md) | Superseded posters and eco-design report retained for history, not current technical claims |

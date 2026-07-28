@@ -11,8 +11,15 @@ Before you begin, ensure the following conditions are met:
 | Requirement | Details |
 |---|---|
 | GCP Project | An active GCP project with billing enabled |
-| IAM Permissions | `Storage Admin` + `Service Usage Admin` on the project |
+| IAM Permissions | A deployer identity that can enable services; manage the Terraform state bucket and Artifact Registry; submit Cloud Build builds; create service accounts and project IAM bindings; manage Cloud Run Jobs and Cloud Scheduler; and create/query BigQuery datasets and tables |
 | Tools | `gcloud` CLI and `terraform` — both pre-installed in Cloud Shell |
+
+The exact predefined roles depend on your organization's IAM policy. `Storage
+Admin` and `Service Usage Admin` alone are **not** sufficient for the complete
+bootstrap and deploy flow. Prefer a dedicated deployer identity with the
+smallest custom-role permissions that cover the capabilities above; ask a GCP
+administrator to provision it rather than granting broad permanent access to
+an individual account.
 
 ---
 
@@ -75,13 +82,18 @@ This runs `infra/bootstrap.sh` under the hood and will:
 
 1. Source your `.env` variables automatically
 2. Set the active GCP project via `gcloud`
-3. Enable the required GCP APIs (`storage`, `cloudresourcemanager`)
-4. Create the GCS bucket for Terraform remote state (skips if already exists)
-5. Enable **object versioning** on the bucket
-6. Apply a **30-day retention policy**
-7. Enforce **uniform bucket-level access** (no public access)
-8. Generate `infra/terraform/backend.tf` pointing at the bucket
-9. Run `terraform init` to wire up the remote backend
+3. Enable the Storage, Resource Manager, Artifact Registry, Cloud Run,
+   Scheduler, BigQuery and Cloud Build APIs
+4. Create the Artifact Registry Docker repository (skips if already exists)
+5. Create the GCS bucket for Terraform remote state (skips if already exists)
+6. Enable **object versioning** on the bucket
+7. Attempt to apply a **30-day retention policy** (warns and continues if the
+   organization policy does not permit it)
+8. Enforce **uniform bucket-level access** (no public access)
+9. Generate `infra/terraform/backend.tf` pointing at the bucket
+10. Run `terraform init` to wire up the remote backend when Terraform is
+    available
+11. Add a persistent `bq` alias with a 1 GiB query cap to `~/.bashrc`
 
 You will be prompted to confirm before any GCP resources are created:
 
@@ -95,7 +107,31 @@ Proceed? [y/N]
 
 ---
 
-## Step 5 — Deploy GCP Resources
+## Step 5 — Prepare BigQuery
+
+The current Terraform configuration does not create BigQuery datasets, and the
+ingestion loader creates tables only inside an existing dataset. Create the
+`raw` dataset once, in the same location configured by `GCP_REGION`:
+
+```bash
+set -a
+source .env
+set +a
+bq --location="$GCP_REGION" mk --dataset "$GCP_PROJECT_ID:raw"
+```
+
+If the dataset already exists, verify its location instead of recreating it:
+
+```bash
+bq show --format=prettyjson "$GCP_PROJECT_ID:raw"
+```
+
+The `stg` and `mart` datasets are created by dbt when their first relations are
+built.
+
+---
+
+## Step 6 — Deploy GCP Resources
 
 Once the backend is initialized, deploy your infrastructure:
 
@@ -103,12 +139,43 @@ Once the backend is initialized, deploy your infrastructure:
 make deploy
 ```
 
-This runs `terraform plan` followed by `terraform apply`. You will be shown a diff of changes before confirming.
+`make deploy` is a mutating, non-interactive pipeline. In order, it:
 
-For a dry run with no changes applied:
+1. builds and pushes the ingestion image through Cloud Build;
+2. creates a saved Terraform plan and immediately applies it without an
+   additional confirmation prompt;
+3. installs the dbt dependencies in the current Python environment;
+4. runs `dbt seed`, `dbt run`, and `dbt test`.
+
+Run `make plan` first when you want to review Terraform changes before allowing
+those mutations:
 
 ```bash
 make plan
+```
+
+### First deployment into an empty project
+
+The current `make deploy` order is not fully clean-room-safe. Terraform creates
+the Cloud Run Job before dbt runs, but the four active `raw.*` source tables do
+not exist until that job completes its first ingestion. Consequently, the
+first `make deploy` can apply the infrastructure successfully and then fail in
+`dbt run` because the source tables are absent.
+
+After that initial infrastructure apply, execute the job once and wait for it:
+
+```bash
+gcloud run jobs execute clima-sentinel-ingest \
+  --region="$GCP_REGION" \
+  --project="$GCP_PROJECT_ID" \
+  --wait
+```
+
+Confirm in the Cloud Run logs that both ingestion and `dbt run` completed, then
+run the warehouse tests explicitly:
+
+```bash
+make dbt-test
 ```
 
 ### All available commands
@@ -116,19 +183,27 @@ make plan
 | Command | Description |
 |---|---|
 | `make bootstrap` | Create GCS state bucket & init Terraform backend |
-| `make deploy` | `terraform plan` + `terraform apply` |
+| `make build` | Build and push the ingestion image through Cloud Build |
+| `make deploy` | Build/push + non-interactive Terraform apply + dbt seed/run/test |
 | `make plan` | Dry run — show changes without applying |
-| `make destroy` | Tear down all GCP resources |
+| `make destroy` | Destroy only Terraform-managed resources |
+| `make dbt-run` | Run all staging and mart models |
+| `make dbt-stg` | Run staging models only |
+| `make dbt-test` | Run dbt schema and singular tests |
 
 ---
 
-## Step 6 — Verify
+## Step 7 — Verify
 
 Confirm the bucket was created and versioning is active:
 
 ```bash
-gsutil ls gs://$(grep GCP_PROJECT_ID .env | cut -d= -f2)-tf-state
-gsutil versioning get gs://$(grep GCP_PROJECT_ID .env | cut -d= -f2)-tf-state
+set -a
+source .env
+set +a
+STATE_BUCKET="${TF_STATE_BUCKET:-${GCP_PROJECT_ID}-tf-state}"
+gsutil ls "gs://$STATE_BUCKET"
+gsutil versioning get "gs://$STATE_BUCKET"
 ```
 
 Expected output:
@@ -160,9 +235,9 @@ ClimaSentinel/
 │   └── terraform/
 │       └── backend.tf    # Auto-generated by make bootstrap
 ├── ingest/               # Python batch job (Open-Meteo API calls)
-├── config/               # cities.csv, weights.csv, variable rules
+├── config/               # cities.csv
 └── docs/
-    └── bootstrap-initialization.md   # This document
+    └── 1-bootstrap-initialization.md # This document
 ```
 
 ---
@@ -176,7 +251,16 @@ ClimaSentinel/
 > The script detects this and skips creation — no action needed.
 
 **Insufficient permissions**
-> Ensure your account has `Storage Admin` and `Service Usage Admin` roles on the project. Ask your GCP org admin if needed.
+> The full flow needs more than storage and service-usage permissions. Ask your
+> GCP administrator for a deployer identity covering Artifact Registry, Cloud
+> Build, service-account/IAM administration, Cloud Run, Scheduler and BigQuery.
+
+**`make destroy` left resources behind**
+> This is expected with the current infrastructure split. It removes resources
+> tracked in Terraform state, but not the bootstrap-created GCS state bucket or
+> Artifact Registry repository, BigQuery datasets/tables created outside
+> Terraform, or enabled project APIs. Review and remove those separately only
+> when their data and retained state are no longer needed.
 
 **`terraform` not found**
 > Cloud Shell includes Terraform by default. If missing, install it via [HashiCorp's instructions](https://developer.hashicorp.com/terraform/install).

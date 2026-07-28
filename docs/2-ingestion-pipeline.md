@@ -1,6 +1,11 @@
 # 2. Ingestion Pipeline
 
-The ClimaSentinel ingestion pipeline is a serverless, automated data pipeline running entirely on Google Cloud Platform. It scales to zero when idle and automatically fetches daily weather, air quality, river discharge, historical reanalysis, and long-term climate projection data for a configurable set of cities directly into BigQuery.
+The ClimaSentinel ingestion pipeline is a serverless, automated data pipeline
+running on Google Cloud Platform. It scales to zero when idle and actively
+fetches weather forecasts, air-quality forecasts, river-discharge forecasts and
+lagged historical reanalysis for a configurable set of cities. Support code for
+long-term CMIP6 projections remains in the repository, but that fetch is
+disabled in scheduled ingestion.
 
 ## Architecture
 
@@ -13,7 +18,11 @@ Additionally, **Artifact Registry** is used to store the Docker container image 
 
 ## Configuration: The City List
 
-The ingestion script iterates over 10 major European cities configured in `config/cities.csv`. To add or remove cities, simply update the CSV and push. The `river_enabled` column controls whether flood/river discharge data is fetched for that city.
+The ingestion script iterates over 10 major European cities configured in
+`config/cities.csv`. To add or remove cities, update the CSV, then rebuild and
+redeploy the ingestion image; pushing the file alone does not update the running
+Cloud Run Job. The `river_enabled` column controls whether flood/river discharge
+data is fetched for that city.
 
 | City | Country | Latitude | Longitude | River Monitoring |
 |---|---|---|---|---|
@@ -32,7 +41,11 @@ The ingestion script iterates over 10 major European cities configured in `confi
 
 ## APIs & Data Retrieved
 
-The Cloud Run job fetches data from **five Open-Meteo endpoints** for each city, formats it as JSON, and streams it into the `raw` BigQuery dataset. Because tables are time-partitioned, no data is overwritten — historical forecasts are accumulated continuously over time allowing for forecast deviation monitoring.
+The scheduled Cloud Run job actively calls four Open-Meteo endpoint families,
+formats the responses as JSON, and streams them into the `raw` BigQuery dataset.
+Flood is called only for river-enabled cities. A fifth CMIP6 client exists but
+is not invoked by `ingest/main.py`. Because active tables are time-partitioned,
+no data is overwritten; historical forecast vintages accumulate over time.
 
 ### 1. Weather Forecast (`raw.weather_forecast_hourly`)
 - **Endpoint**: `api.open-meteo.com/v1/forecast`
@@ -67,7 +80,9 @@ The Cloud Run job fetches data from **five Open-Meteo endpoints** for each city,
 - **Endpoint**: `archive-api.open-meteo.com/v1/archive`
 - **Cadence**: Daily (all cities)
 - **Time Window**: Rolling 7-day window (`today-12` to `today-6`) = **7 rows per city per day**
-- **Note**: ERA5 has a ~5-day publication lag. The fetch window is offset to guarantee only confirmed, non-partial data is ingested.
+- **Note**: ERA5 has a publication lag. The fetch window is deliberately offset
+  to reduce the chance of ingesting partial recent data; source completeness
+  should still be checked rather than assumed.
 - **Variables Retrieved**:
   - `temperature_2m_mean` (Daily mean temperature in °C)
   - `temperature_2m_max` (Daily maximum temperature in °C)
@@ -75,9 +90,12 @@ The Cloud Run job fetches data from **five Open-Meteo endpoints** for each city,
   - `precipitation_sum_mm` (Total daily precipitation in mm)
   - `wind_speed_10m_max` (Maximum daily wind speed in km/h)
 
-### 5. Climate Projections — CMIP6 (`raw.climate_projections_daily`)
+### 5. Climate Projections — CMIP6 (implemented, scheduled fetch disabled)
+
+- **Scheduled status**: Disabled; `ingest/main.py` does not currently invoke the
+  fetch or loader, so no monthly rows or table creation should be expected
 - **Endpoint**: `climate-api.open-meteo.com/v1/climate`
-- **Cadence**: Monthly (1st of month only — all cities)
+- **Guard if invoked directly**: 1st of month only
 - **Time Window**: Next 10 years (Daily) = **~3,650 rows per city per month**
 - **Model**: `MRI_AGCM3_2_S` (high-resolution atmospheric model)
 - **Variables Retrieved**:
@@ -96,7 +114,7 @@ The Cloud Run job fetches data from **five Open-Meteo endpoints** for each city,
 | Air Quality | 120 | 10 | Daily | 1,200 |
 | River Discharge | 7 | 3 | Daily | 21 |
 | Historical (ERA5) | 7 | 10 | Daily | 70 |
-| Climate (CMIP6) | ~3,650 | 10 | Monthly | ~36,500/mo |
+| Climate (CMIP6) | ~3,650 | 10 | Disabled | 0 scheduled |
 | **Daily total** | | | | **~2,971** |
 
 ---
@@ -114,31 +132,50 @@ These fields enable deduplication in the staging layer and full audit trail of w
 
 ## Table Auto-Creation
 
-You do not need to manage BigQuery table schemas manually or via Terraform. The Python script (`loader.py`) uses `client.create_table(exists_ok=True)` to dynamically spin up all five raw tables on its very first run, saving you from writing extensive and verbose DDL files.
+The active Python loaders use `client.create_table(exists_ok=True)` to create
+their four raw tables on first successful use. They do **not** create the `raw`
+dataset itself; it must already exist in the configured BigQuery location, as
+described in [Doc 1](1-bootstrap-initialization.md). The optional
+`climate_projections_daily` table is not auto-created while the CMIP6 call
+remains disabled.
 
 ---
 
 ## Post-Ingestion: Automated dbt Run
 
-After all raw data has been successfully loaded into BigQuery, the Cloud Run Job **automatically triggers `dbt run`** to rebuild the Silver (staging views) and Gold (mart tables) layers in the same execution.
+Unless the run records source errors and inserts zero rows, the Cloud Run Job
+invokes `dbt seed` and then `dbt run` to rebuild the Silver staging views and
+Gold mart relations in the same execution. Partial ingestion therefore still
+starts the transform step; an unusual zero-row run with no recorded exception
+does too.
 
 ### How it works
 
 ```
 Cloud Scheduler (06:00 UTC)
     → Cloud Run Job starts
-        → [1] Ingest: fetch 5 APIs × 10 cities → raw.* tables   ✅
-        → [2] Transform: dbt run → stg.* views + mart.* tables   ✅
+        → [1] Ingest: fetch 4 active source families → raw.* tables
+        → [2] Transform: dbt seed + dbt run → stg.* + mart.*
     → Job exits
 ```
 
-The `run_dbt()` function in `main.py` invokes dbt as a subprocess using the `transform/` directory bundled inside the Docker image:
+The `run_dbt()` function in `main.py` invokes dbt as subprocesses using the
+`transform/` directory bundled inside the Docker image and the `prod` target:
 
 ```python
-subprocess.run([sys.executable, "-m", "dbt", "run",
+subprocess.run([
+    "dbt", "--no-use-colors", "seed",
     "--project-dir", "/app/transform",
     "--profiles-dir", "/app/transform",
-    "--no-use-colors"])
+    "--target", "prod",
+], check=True)
+
+subprocess.run([
+    "dbt", "--no-use-colors", "run",
+    "--project-dir", "/app/transform",
+    "--profiles-dir", "/app/transform",
+    "--target", "prod",
+], check=True)
 ```
 
 Authentication is handled automatically via the Cloud Run Job's service account — no JSON key file is required (`method: oauth` in `profiles.yml`).
@@ -147,9 +184,16 @@ Authentication is handled automatically via the Cloud Run Job's service account 
 
 | Scenario | Outcome |
 |---|---|
-| Ingestion fails entirely (0 rows inserted) | Job exits with code 1 — dbt is **not** triggered |
-| Ingestion partial success (some rows inserted) | dbt **is** triggered — mart tables are refreshed with available data |
-| dbt fails (model error, schema change, etc.) | Logged as `ERROR` — job exits **0** so raw data is always preserved |
+| All active fetch/insert attempts fail (errors and 0 rows inserted) | Job exits with code 1 — dbt is **not** triggered |
+| Ingestion partial success (some rows inserted) | dbt seed/run is attempted against the available data |
+| `dbt seed` or `dbt run` fails | Logged as `ERROR`, but the process currently returns normally and the Cloud Run execution can still appear successful |
+| dbt tests | **Not run** by the scheduled ingestion job; run `make dbt-test` or `dbt test` separately |
+
+> **Operational warning:** a green Cloud Run execution does not prove that the
+> Silver and Gold layers refreshed. Raw streaming inserts are already durable
+> before dbt starts, so swallowing a dbt error is not required to preserve
+> them. Until the runner propagates transform failures, monitor the dbt log
+> markers explicitly and run tests in a separate validation step.
 
 ### Verifying in logs
 
