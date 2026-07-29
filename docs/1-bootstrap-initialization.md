@@ -12,7 +12,7 @@ Before you begin, ensure the following conditions are met:
 |---|---|
 | GCP Project | An active GCP project with billing enabled |
 | IAM Permissions | A deployer identity that can enable services; manage the Terraform state bucket and Artifact Registry; submit Cloud Build builds; create service accounts and project IAM bindings; manage Cloud Run Jobs and Cloud Scheduler; and create/query BigQuery datasets and tables |
-| Tools | `gcloud` CLI and `terraform` — both pre-installed in Cloud Shell |
+| Tools | `git`, `gcloud`, `gsutil` and `bq`; Terraform `>= 1.5` is required to complete backend initialization, planning and deployment |
 
 The exact predefined roles depend on your organization's IAM policy. `Storage
 Admin` and `Service Usage Admin` alone are **not** sufficient for the complete
@@ -27,11 +27,20 @@ an individual account.
 
 From the [GCP Console](https://console.cloud.google.com), click the **Activate Cloud Shell** button (terminal icon) in the top-right toolbar.
 
-Once the terminal is ready, authenticate if prompted:
+Once the terminal is ready, confirm the active CLI identity and initialize
+Application Default Credentials (ADC). The first identity is used by `gcloud`;
+ADC is used by local dbt/BigQuery clients.
 
 ```bash
-gcloud auth login
+gcloud auth list
+gcloud auth application-default login
+terraform version
 ```
+
+Cloud Shell provides the Google Cloud CLI, but Terraform availability is not a
+repository guarantee. If the final command is unavailable, the bootstrap script
+can still create its GCP resources and write `backend.tf`; install Terraform
+before completing backend initialization, planning or deployment.
 
 ---
 
@@ -58,13 +67,22 @@ Open the file and fill in your GCP Project ID:
 nano .env
 ```
 
-The file looks like this — only `GCP_PROJECT_ID` needs to be changed:
+The committed template looks like this. For the standard layout, replace
+`GCP_PROJECT_ID`; change the region or dataset names only when the deployment is
+intentionally using a different layout.
 
 ```dotenv
 GCP_PROJECT_ID=your-gcp-project-id   # ← replace this
 GCP_REGION=europe-west9               # pre-configured (Paris region)
+BQ_DATASET=mart                        # backend/model extraction default
+BQ_STAGING_DATASET=stg                 # backend seed lookup default
 TF_STATE_BUCKET=                      # optional — defaults to <project-id>-tf-state
 ```
+
+`BQ_DATASET` and `BQ_STAGING_DATASET` configure application queries. The dbt
+schemas remain explicitly configured as `stg` and `mart` in
+`transform/dbt_project.yml`; changing only these two environment variables does
+not move dbt relations.
 
 Save and exit: `Ctrl+O` → `Enter` → `Ctrl+X`
 
@@ -94,6 +112,15 @@ This runs `infra/bootstrap.sh` under the hood and will:
 10. Run `terraform init` to wire up the remote backend when Terraform is
     available
 11. Add a persistent `bq` alias with a 1 GiB query cap to `~/.bashrc`
+
+If Terraform is missing, the script can still create bootstrap resources and
+write `backend.tf`, but it skips backend initialization. Installing Terraform
+later through `make deploy` does not retroactively run `terraform init`; run the
+following before planning or deploying:
+
+```bash
+terraform -chdir=infra/terraform init
+```
 
 You will be prompted to confirm before any GCP resources are created:
 
@@ -263,4 +290,7 @@ ClimaSentinel/
 > when their data and retained state are no longer needed.
 
 **`terraform` not found**
-> Cloud Shell includes Terraform by default. If missing, install it via [HashiCorp's instructions](https://developer.hashicorp.com/terraform/install).
+> Install Terraform `>= 1.5` via
+> [HashiCorp's instructions](https://developer.hashicorp.com/terraform/install),
+> then run `terraform -chdir=infra/terraform init`. The Makefile's deploy-time
+> installer does not initialize a backend that bootstrap previously skipped.

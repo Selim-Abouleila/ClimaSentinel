@@ -25,7 +25,7 @@ clean-targets:
 models:
   clima_sentinel:
     stg:
-      +materialized: view          # Staging = views (always fresh, zero cost)
+      +materialized: view          # Reads current raw rows; queries can incur cost
       +schema: stg                 # All staging models land in the `stg` dataset
     mart:
       +materialized: table         # Marts = tables (precomputed for dashboard perf)

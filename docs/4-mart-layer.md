@@ -50,6 +50,12 @@ This model is appropriate for operational forecast displays. It is **not an
 realized-outcome label table**: its inputs can be forecast values. The ML
 training path therefore does not treat its component scores as ground truth.
 
+Despite the `history` name, this is a full-refresh table built from
+`stg_latest_*`. It is history by forecast-valid date, not an immutable record of
+what the application showed at each retrieval. Later overlapping forecasts can
+revise a date when the table is rebuilt; use the forecast-vintage marts for
+as-of analysis.
+
 ### `mart_city_score_current` (view)
 
 Selects the highest forecast-derived score for each city across the two UTC
@@ -64,10 +70,15 @@ operational zones.
 
 | Zone | Score range | Meaning |
 |---|---:|---|
-| Stable | 0 to <31 | Signals remain within the normal operating range |
-| Monitoring | 31 to <61 | Elevated signals require observation |
-| Tipping | 61 to <81 | Rapidly rising tension requires preparation |
-| Critical | 81-100 | Severe operational risk requires immediate attention |
+| Stable | 0 to <31 | Lowest legacy score band |
+| Monitoring | 31 to <61 | Elevated legacy score band |
+| Tipping | 61 to <81 | High legacy score band |
+| Critical | 81-100 | Highest legacy score band |
+
+The labels and thresholds are product-defined operational bands, not calibrated
+event probabilities, validated severity classes or response mandates. Their
+names must be presented with the Beta/evidence disclaimer rather than as
+standalone safety advice.
 
 ### `mart_city_score_detail` (view)
 
@@ -100,9 +111,17 @@ It contains:
 - expected-date, source-presence and daily-coverage flags; and
 - deterministic eligibility and canonical-vintage indicators.
 
-No realized ERA5 outcome is joined into this model. It is therefore safe to use
-as the shared source for both historical training features and live serving
-features.
+No realized ERA5 outcome is joined into this model, so the SQL does not itself
+introduce outcome leakage. It is the shared feature-definition source for
+historical training and live serving. Its point-in-time claim still relies on
+`ingested_at_utc`, a job-start availability proxy rather than the provider's
+model issue time or a per-city request timestamp.
+
+Eligibility currently requires exactly 24 distinct weather timestamps on every
+Horizon 0-4 date. If a provider response represents a DST-transition civil day
+with 23 or 25 timestamps, that otherwise complete vintage is excluded from
+canonical training and serving. This is a known coverage rule, not evidence that
+the source day itself was incomplete.
 
 The old `mart_ml_feature_store` remains temporarily for compatibility. Its
 date-based `LEAD()` construction does not guarantee that all horizons came from
@@ -127,6 +146,10 @@ weather, and exposes:
 The availability timestamps are essential. ERA5 is published after the valid
 date, so an example can only enter the training set after its required outcome
 has actually been ingested.
+
+Because `stg_latest_historical_daily` retains the latest ingestion of a
+city/date, these timestamps are conservative latest-retrieval proxies, not the
+first time the outcome became available from the provider.
 
 This mart does not manufacture labels for unsupported components. Sustained
 wind is retained as realized reanalysis context, but it cannot reproduce the
@@ -189,8 +212,17 @@ The Python integration now uses this contract directly:
 
 The fitted artifact is registered as `ClimaSentinel_HeatRainForecaster`. A
 four-day purge separates training and evaluation dates because the Day +3 Heat
-label depends on realized Day +4 temperature. This closes the remaining
-training/serving skew without pretending unsupported labels exist.
+label depends on realized Day +4 temperature. This addresses the current
+feature-definition and label-lookahead skew without pretending unsupported
+labels exist; it does not by itself establish external validity.
+
+Both operational and realized Heat scores depend on
+`transform/seeds/city_monthly_normals.csv`. Repository history describes that
+lookup as 2014-2023 Open-Meteo/ERA5-derived, but no regeneration script, exact
+source-model/version or retrieval metadata is checked in. Comparisons across
+seed changes therefore need the Git commit or seed hash plus newly documented
+generation inputs; the current repository cannot reproduce the seed from raw
+instructions alone.
 
 ## Observed-label limitation and required product disclaimer
 
@@ -264,6 +296,11 @@ ingestion path currently runs `dbt seed` and `dbt run` without tests and also
 logs dbt failures without propagating a nonzero process exit. A green scheduled
 execution therefore does not by itself establish that the marts refreshed or
 that these contracts passed.
+
+The GitHub pull-request, staging and production workflows do not currently
+compile or test dbt either, and the dbt sources have no configured freshness
+policy. Application CI success, SQL/data-contract success and raw-data freshness
+must therefore be verified separately.
 
 ## Deployment and approval sequence
 

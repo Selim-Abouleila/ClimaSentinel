@@ -2,6 +2,8 @@
 
 <div align="center">
   <img src="docs/images/ClimaSentinel_Theme_Picture.png" alt="ClimaSentinel Theme" width="600">
+  <br>
+  <sub>Illustrative project artwork; not live forecast evidence.</sub>
 </div>
 
 **🌍 Live Dashboard:** [climasentinel.up.railway.app](https://climasentinel.up.railway.app/)
@@ -188,7 +190,7 @@ flowchart LR
     10 European cities"]
 
     NORMALS["🌱 transform/seeds/city_monthly_normals.csv
-    10-year historical baselines"]
+    Versioned monthly baseline lookup"]
 
     CITIES -->|"10 cities: weather + AQ + ERA5; river for 3"| CRJ
     NORMALS -->|"dbt seed"| BQ_STG
@@ -226,9 +228,9 @@ uses city-local calendar dates as a mitigation, not as a timestamp correction.
 
 | Layer | Dataset | Purpose | Key Tables | Status |
 |---|---|---|---|---|
-| 🥉 Bronze | `raw` | Raw API loads — append-only, partitioned by day | Active: `weather_forecast_hourly`, `air_quality_hourly`, `flood_daily`, `historical_weather_daily`; optional: `climate_projections_daily` | ✅ Active sources live; dataset is not provisioned by Terraform |
-| 🥈 Silver | `stg` | Static seeds, operational daily views, and exact forecast vintages (dbt) | `city_monthly_normals`, `stg_latest_*`, `stg_city_signal_input`, `stg_city_signal_vintage` | ✅ Live |
-| 🥇 Gold | `mart` | Operational scores, exact-vintage forecast features, and ERA5-backed Heat/Rain labels | `mart_city_score_*`, `mart_ml_forecast_features_vintage`, `mart_city_realized_weather_daily`, `mart_ml_training_examples`, `mart_ml_serving_features_current` | ✅ Live |
+| 🥉 Bronze | `raw` | Raw API loads — append-only, partitioned by day | Active: `weather_forecast_hourly`, `air_quality_hourly`, `flood_daily`, `historical_weather_daily`; optional: `climate_projections_daily` | Configured; dataset existence and freshness require runtime verification |
+| 🥈 Silver | `stg` | Static seeds, operational daily views, and exact forecast vintages (dbt) | `city_monthly_normals`, `stg_latest_*`, `stg_city_signal_input`, `stg_city_signal_vintage` | dbt-managed; deployment and freshness require runtime verification |
+| 🥇 Gold | `mart` | Operational scores, exact-vintage forecast features, and ERA5-backed Heat/Rain labels | `mart_city_score_*`, `mart_ml_forecast_features_vintage`, `mart_city_realized_weather_daily`, `mart_ml_training_examples`, `mart_ml_serving_features_current` | dbt-managed; deployment and freshness require runtime verification |
 
 > The ingest job creates active-source **Bronze tables only after the `raw`
 > dataset exists**. **Silver** and **Gold** models are managed by dbt. A
@@ -264,6 +266,10 @@ configured outside the repository and must be verified in GitHub:
 2. **Staging environment (`staging`):** Extracts a point-in-time snapshot, trains and evaluates the six-output Heat/Rain challenger, and deploys the transparent all-rule baseline. Railway deployments run in attached mode; CI verifies the frontend release marker before a limited Chromium/Paris Playwright path exercises all three horizons. Training jobs do not currently receive GitHub Environment isolation, and staging promotion can move the shared MLflow `Production` stage/`champion` alias.
 3. **Production gate (`main`):** A candidate must have non-negative component R², beat the exact matching rule MAE by at least 5%, and satisfy horizon-aware absolute MAE ceilings. Authentication, provenance or artifact-contract failures remain fatal. Railway production deployment is currently disabled, and the operational response continues to serve all five same-vintage rules without model intervals.
 
+PR and staging CI do not currently exercise source fetchers, BigQuery loader
+writes or dbt compile/run/test; see [Doc 7](docs/7-cicd-and-branching.md) for
+the tested boundaries.
+
 *For full details on our pipelines and quality gates, please see [Doc 7: CI/CD and Branching Strategy](docs/7-cicd-and-branching.md).*
 
 ---
@@ -278,10 +284,12 @@ current limits:
   outside that state, so Quick Start is not a complete clean-room recreation.
 - **Data transformations:** dbt defines Silver and Gold, but requires initialized
   Bronze sources and successful credentials/source access.
-- **Machine learning:** MLflow records runs, but the checked-in DVC pointer is a
-  legacy snapshot that predates the current schema-v3 six-output training
-  contract. `dvc pull` alone does not reproduce the current model; regenerate and
-  version a compatible snapshot before claiming exact reproduction.
+- **Machine learning:** MLflow records runs, but the DVC pointer on the current
+  `dev` line is a legacy snapshot that predates the schema-v3 six-output
+  training contract. Workflow-generated pointer commits are branch-local, so
+  inspect the exact revision being run. `dvc pull` alone does not reproduce the
+  current challenger from `dev`; regenerate and version a compatible snapshot
+  before claiming exact reproduction.
 
 *For details on reproducing the ML pipelines or testing, refer to [Doc 11: Machine Learning Model](docs/11-machine-learning-model.md) and [Doc 13: End-to-End Testing](docs/13-end-to-end-testing.md).*
 
@@ -304,4 +312,4 @@ current limits:
 | [11. Machine Learning Model](docs/11-machine-learning-model.md) | Six-output realized Heat/Rain challenger, purged validation, rule baselines, MLflow, and DagsHub registry |
 | [12. API Swagger Documentation](docs/12-api-swagger-documentation.md) | FastAPI endpoint reference, typed forecast contract, raw operational routes, and current hardening gaps |
 | [13. End-to-End Testing](docs/13-end-to-end-testing.md) | Frontend-marker-pinned Paris/Chromium staging smoke test and its coverage limits |
-| [Archived project material](docs/archive/2026-06/README.md) | Superseded posters and eco-design report retained for history, not current technical claims |
+| [Archived project material](docs/archive/README.md) | Dated, superseded project artifacts retained with provenance and use restrictions |

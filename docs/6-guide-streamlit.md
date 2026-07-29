@@ -6,6 +6,11 @@ tables `mart` de BigQuery. Les commandes et les messages d'erreur peuvent être
 partagés pour obtenir de l'aide, mais jamais des jetons, clés, fichiers de
 credentials, variables secrètes ou captures contenant ces valeurs.
 
+> **Statut : guide de conception uniquement.** Le dépôt ne contient actuellement
+> ni dossier `dashboard/`, ni application Streamlit, ni test ou déploiement
+> Streamlit. Les étapes ci-dessous décrivent un composant à créer ; elles ne
+> documentent pas un service ClimaSentinel déjà exploité.
+
 > **Périmètre bêta — mart opérationnel historique.** Les tables
 > `mart_city_score_*` sont dérivées de prévisions. Elles ne représentent ni des
 > impacts observés, ni des probabilités, ni un modèle prédictif validé. Certains
@@ -30,8 +35,9 @@ L'application doit afficher de façon visible :
 - **Base de données :** BigQuery, dataset `mart`
 - **Développement local :** identité individuelle via
   [Application Default Credentials (ADC)](https://docs.cloud.google.com/docs/authentication/provide-credentials-adc)
-- **Application déployée :** identité technique dédiée à Streamlit, distincte de
-  Power BI et de toute identité personnelle
+- **Application déployée (cible, non provisionnée par ce dépôt) :** identité
+  technique dédiée à Streamlit, distincte de Power BI et de toute identité
+  personnelle
 - **IAM :** lecture limitée au dataset `mart`, plus le droit minimal requis pour
   exécuter les requêtes
 
@@ -47,9 +53,9 @@ L'application doit afficher de façon visible :
 
 | Table | Colonnes clés | Description |
 |---|---|---|
-| `mart_city_score_current` | `city_id`, `current_tipping_score`, `current_primary_driver`, `rank` | Snapshot quotidien et classement des 10 villes à partir de prévisions ; pas une vue temps réel |
-| `mart_city_score_history` | `city_id`, `date`, `global_tipping_score`, `heat_score`, `wind_score`, `rain_score`, `air_score`, `river_score`, `primary_driver` | Historique sur 7 jours des scores dérivés de prévisions ; pas un historique d'impacts observés |
-| `mart_city_zone_current` | `zone_name`, `city_count`, `cities_in_zone`, `drivers_in_zone` | Résumé des villes regroupées par zone opérationnelle (Stable / Monitoring / Tipping / Critical) |
+| `mart_city_score_current` | `city_id`, `current_tipping_score`, `current_primary_driver`, `rank` | Vue de classement sur les deux dates calendaires UTC « aujourd'hui + demain » ; ni snapshot persistant, ni fenêtre glissante de 48 heures |
+| `mart_city_score_history` | `city_id`, `date`, `global_tipping_score`, `heat_score`, `wind_score`, `rain_score`, `air_score`, `river_score`, `primary_driver` | Dates cibles de la prévision actuellement transformée ; la table reconstruite n'archive ni les exécutions précédentes, ni des impacts observés |
+| `mart_city_zone_current` | `zone_name`, `city_count`, `cities_in_zone`, `drivers_in_zone` | Résumé des zones opérationnelles occupées ; une zone sans ville n'apparaît pas |
 
 ---
 
@@ -95,8 +101,9 @@ L'application doit afficher de façon visible :
 
 #### Pour une application déployée
 
-1. Créez une identité technique dédiée à l'application Streamlit. Elle ne doit
-   jamais réutiliser l'identité Power BI.
+1. Faites provisionner une identité technique dédiée à l'application
+   Streamlit. Le Terraform actuel ne crée aucune identité Streamlit. Elle ne
+   doit jamais réutiliser l'identité Power BI.
 2. Limitez sa lecture au dataset `mart` et accordez seulement les permissions
    nécessaires à l'exécution.
 3. Privilégiez une fédération d'identité ou une autre authentification sans clé
@@ -125,9 +132,9 @@ Créer un fichier `app.py` dans le dossier `dashboard/` qui réalise les opérat
    - Un titre et sous-titre descriptifs
    - Le cartouche bêta obligatoire indiqué au début de ce guide
    - Un bouton pour forcer le rechargement des données
-4. **Section 1 — Vue Globale :** Afficher les 4 zones opérationnelles (`mart_city_zone_current`) avec le nombre de villes par zone
-5. **Section 2 — Classement :** Un tableau et un graphique en barres montrant les 10 villes triées par score décroissant (`mart_city_score_current`)
-6. **Section 3 — Historique :** Un graphique en courbes montrant l'évolution du score sur 7 jours avec un sélecteur de villes (`mart_city_score_history`)
+4. **Section 1 — Vue Globale :** Afficher les zones présentes dans `mart_city_zone_current` ; si l'interface doit toujours montrer les 4 zones, compléter explicitement les zones absentes avec un compteur à zéro
+5. **Section 2 — Classement :** Un tableau et un graphique en barres montrant jusqu'aux 10 villes configurées, selon les lignes réellement disponibles dans `mart_city_score_current`
+6. **Section 3 — Horizon courant :** Un graphique en courbes par date cible avec un sélecteur de villes (`mart_city_score_history`), sans le présenter comme un historique des runs ou des observations
 7. **Section 4 — Décomposition :** Un graphique montrant la contribution de chaque règle de facteur (Heat, Wind, Rain, Air, River) au score, sans la présenter comme une causalité
 
 ---
@@ -177,5 +184,5 @@ http://localhost:8501 (local) ou https://votre-app.streamlit.app (déployé)
 | `DefaultCredentialsError` | ADC n'est pas initialisé en local, ou l'identité dédiée n'est pas configurée sur l'hébergeur | En local, relancer `gcloud auth application-default login` ; en déploiement, vérifier la configuration du gestionnaire de secrets |
 | `Forbidden 403` | Permission BigQuery manquante ou périmètre IAM incorrect | Faire vérifier l'accès en lecture au dataset `mart` et le droit minimal d'exécuter des jobs |
 | `ModuleNotFoundError: db_dtypes` | Package oublié à l'installation | Exécuter `pip install db-dtypes` |
-| Tables `mart` vides | Le pipeline dbt n'a pas encore tourné | Vérifier dans la console BigQuery que le dataset `mart` contient des données |
+| Tables `mart` vides | Sources `raw` non initialisées, ingestion absente ou transformation dbt non réussie | Vérifier séparément les sources, les journaux dbt et les lignes réellement présentes dans le dataset `mart` |
 | Données figées | Le cache Streamlit est actif | Cliquer sur le bouton "Actualiser" dans l'interface ou redémarrer l'application |

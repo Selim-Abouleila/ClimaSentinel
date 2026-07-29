@@ -16,7 +16,10 @@ The checked-in Prometheus configuration targets
 `monitoring/prometheus/prometheus.yml` if the backend hostname changes or if a
 different environment should be observed. The hostname and the provisioned
 dashboard title contain “production,” but that label does not make this local
-Compose stack a production deployment.
+Compose stack a production deployment. The current `main` workflow does not
+deploy Railway production, and Compose neither provisions nor verifies this
+remote target; confirm its ownership, release and availability separately in
+Prometheus's target-status page.
 
 The backend uses `prometheus-fastapi-instrumentator`, which exposes generic HTTP
 and Python-process metrics. These series cover all instrumented routes; they are
@@ -30,6 +33,11 @@ not model-specific prediction-quality, drift or business-outcome metrics.
 | Prediction Request Latency (p95) | `histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket[5m])) by (le))` | An aggregate p95 over all included handlers/statuses; the current query does not isolate the forecast endpoint |
 | Failed Requests (Error Rate) | `sum(http_requests_total{status=~"5.."})` | A cumulative count of 5xx responses, not a rate and not 4xx + 5xx |
 | Backend Uptime / Health | `time() - process_start_time_seconds` | Backend process age in seconds; it is not dependency readiness or Prometheus target health |
+
+The panel titles “Prediction Request Latency,” “Error Rate” and “Health” are
+therefore legacy labels and are broader or stronger than their actual queries.
+Grafana refreshes every 5 seconds while Prometheus scrapes every 15 seconds, so
+several dashboard refreshes can legitimately show the same sample.
 
 Prometheus's own `up{job="climasentinel-backend"}` series indicates whether the
 scrape target is reachable. The provisioned dashboard does not currently use

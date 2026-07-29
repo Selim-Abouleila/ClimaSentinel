@@ -1,7 +1,9 @@
 # 12. API and Swagger Reference
 
 FastAPI generates the authoritative OpenAPI document at `/openapi.json` and the
-interactive Swagger UI at `/docs`.
+interactive Swagger UI at `/docs`. Only the forecast route declares a response
+model, so OpenAPI does not fully specify the response schemas of the operational
+BigQuery routes.
 
 ## Base information
 
@@ -66,7 +68,10 @@ through a typed finite-number sanitization contract.
 ### `GET /data/current-scores`
 
 Reads `mart_city_score_current`. `limit` defaults to `10` and is currently
-unbounded.
+unbounded. Each row contains `city_id`, `current_tipping_score`,
+`current_primary_driver` and `rank`. The mart takes the maximum across the two
+UTC calendar dates “today + tomorrow”; despite legacy UI wording, this is not a
+rolling 48-hour interval or a persisted snapshot.
 
 ### `GET /data/history-scores`
 
@@ -77,21 +82,29 @@ defaults to `50`; that limit is currently unbounded.
 > mart exposes the column as `date`. On this branch the query is expected to
 > return `500` until the backend route is corrected.
 
+Once that mismatch is corrected, the source table still represents target dates
+from the currently transformed forecast. It is rebuilt by dbt and is not an
+archive of successive forecast runs or observed impacts.
+
 ### `GET /data/current-zones`
 
 Reads `mart_city_zone_current`. `limit` defaults to `20` and is currently
-unbounded.
+unbounded. The mart emits only occupied zones, so an absent zone means zero
+current rows rather than a guaranteed row with `city_count: 0`.
 
 ### `GET /data/city/{city_id}/scores`
 
 Returns the five current operational factors from `mart_city_score_detail`.
 These are operational score-mart outputs, not claims that all five factors have
-realized-label model validation.
+realized-label model validation. The aggregate covers today and tomorrow UTC,
+not a rolling 48-hour window. If both dates tie on the maximum, separate
+`ANY_VALUE(... HAVING MAX ...)` aggregates can choose fields from different tied
+rows, so the response is not guaranteed to represent one deterministic date.
 
 ```json
 {
   "city_id": "paris_fr",
-  "current_tipping_score": 42.5,
+  "current_tipping_score": 60.0,
   "current_primary_driver": "Heat",
   "heat_score": 60.0,
   "wind_score": 20.0,
@@ -100,6 +113,11 @@ realized-label model validation.
   "river_score": 5.0
 }
 ```
+
+This example illustrates the intended non-tied relationship between the global
+score and Heat as its driver. Clients must not enforce that relationship as an
+API invariant until the documented tie behavior in
+[Mart Layer](4-mart-layer.md#mart_city_score_detail-view) is corrected.
 
 ## Rule-baseline forecast endpoint
 
@@ -230,6 +248,18 @@ Example response where Heat is the primary driver and AQ is unavailable:
 | `model_version` | `null`; offline challenger registration is not serving provenance |
 | `prediction_date` | City-local forecast origin date for the exact serving vintage |
 | `feature_ingestion_run_id` | Exact same-vintage feature run used by the response |
+
+`weather_trajectory` is a display subset, not the complete rule-input
+provenance: it returns temperatures through the selected horizon and target-day
+rain/wind. Heat Day +3 still consumes the same-vintage Day +4 temperature, and
+River Day +3 can consume Day +4 discharge, even though those Day +4 values and
+AQ/River inputs are not exposed in this object.
+
+`estimated_total_tipping_score` is the maximum among available component point
+estimates, not their sum or average. `forecast_primary_driver` names the
+component that provides that maximum. `current_tipping_score` is separately
+calculated from the forecast-origin day's same-vintage inputs; it is not an
+observed-outcome baseline.
 
 `estimated_score: 0.0` means the component had sufficient source data and its
 calculation genuinely evaluated to zero. `estimated_score: null` plus

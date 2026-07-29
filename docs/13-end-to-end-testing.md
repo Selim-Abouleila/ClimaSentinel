@@ -37,7 +37,7 @@ scope in one global note and checks detailed provenance in the API payload.
 
 The live E2E job runs only from `.github/workflows/ci-staging.yml` after:
 
-1. backend tests pass;
+1. the full `backend/tests/` pytest suite passes;
 2. a schema-v3 `ClimaSentinel_HeatRainForecaster` challenger is trained and
    registered;
 3. the exact challenger is evaluated; quality rejection is recorded without
@@ -66,6 +66,11 @@ the backend was built from the same commit. The BigQuery mart is likewise live
 state rather than a release-stamped artifact. An older backend that already
 serves the same contract can therefore pass.
 
+The workflow's first step is the backend pytest suite only. Neither that step
+nor Playwright runs `dbt parse/build/test`, verifies warehouse lineage, or
+asserts when the live mart was last rebuilt. The smoke path consuming a valid
+live row is therefore not evidence of mart freshness.
+
 ## Deliberate scope limits
 
 The current smoke test does not cover:
@@ -75,7 +80,10 @@ The current smoke test does not cover:
 - Firefox, WebKit, mobile layouts or accessibility conformance;
 - a deliberately missing AQ/River feed or other injected backend failure;
 - authentication, rate limiting, readiness or monitoring; or
-- exact backend commit identity.
+- exact backend commit identity;
+- dbt contracts, lineage or live-mart freshness;
+- exact rendered score values against the corresponding API fields; or
+- screenshot-based visual regression.
 
 These are coverage gaps, not claims that those paths are broken.
 
@@ -91,18 +99,23 @@ frontend/
 
 ## Running locally
 
-Start the frontend and a compatible backend, then run:
+Install the frontend dependencies and Chromium:
 
 ```bash
 cd frontend
-npm install
+npm ci
 npx playwright install --with-deps chromium
-npm run test:e2e
 ```
 
-The default target is `http://localhost:3000`. Override it for a live target:
+The Playwright configuration does not start a web server. The frontend must
+already be running at the default target `http://localhost:3000`, built or
+started with `NEXT_PUBLIC_API_URL` pointing to the compatible backend. Override
+only the frontend target for a live deployment:
 
 ```bash
+cd frontend
+npm run test:e2e
+
 PLAYWRIGHT_TEST_BASE_URL=https://your-staging-frontend.example npm run test:e2e
 ```
 
