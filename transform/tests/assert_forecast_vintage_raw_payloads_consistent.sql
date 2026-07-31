@@ -19,6 +19,9 @@ WITH violations AS (
             weather_code AS weather_code
         ))) AS payload_variant_count
     FROM {{ source('raw', 'weather_forecast_hourly') }}
+    WHERE city_id IN (
+        SELECT city_id FROM {{ ref('forecast_city_allowlist') }}
+    )
     GROUP BY ingestion_run_id, city_id, valid_ts_utc
     HAVING COUNT(DISTINCT TO_JSON_STRING(STRUCT(
         temperature_2m AS temperature_2m,
@@ -44,6 +47,9 @@ WITH violations AS (
             o3 AS o3
         )))
     FROM {{ source('raw', 'air_quality_hourly') }}
+    WHERE city_id IN (
+        SELECT city_id FROM {{ ref('forecast_city_allowlist') }}
+    )
     GROUP BY ingestion_run_id, city_id, valid_ts_utc
     HAVING COUNT(DISTINCT TO_JSON_STRING(STRUCT(
         european_aqi AS european_aqi,
@@ -65,6 +71,9 @@ WITH violations AS (
             river_discharge_m3s AS river_discharge_m3s
         )))
     FROM {{ source('raw', 'flood_daily') }}
+    WHERE city_id IN (
+        SELECT city_id FROM {{ ref('forecast_city_allowlist') }}
+    )
     GROUP BY ingestion_run_id, city_id, date
     HAVING COUNT(DISTINCT TO_JSON_STRING(STRUCT(
         river_discharge_m3s AS river_discharge_m3s

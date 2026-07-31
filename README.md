@@ -101,6 +101,7 @@ flowchart LR
         BQ_STG["🗄️ BigQuery (Silver)
         ─────────────
         stg.city_monthly_normals (seed)
+        stg.forecast_city_allowlist (seed)
         stg.stg_latest_*
         stg.stg_city_daily_*
         stg.stg_city_signal_input
@@ -192,8 +193,12 @@ flowchart LR
     NORMALS["🌱 transform/seeds/city_monthly_normals.csv
     Versioned monthly baseline lookup"]
 
+    FORECAST_SCOPE["🌱 transform/seeds/forecast_city_allowlist.csv
+    Forecast city + timezone contract"]
+
     CITIES -->|"10 cities: weather + AQ + ERA5; river for 3"| CRJ
     NORMALS -->|"dbt seed"| BQ_STG
+    FORECAST_SCOPE -->|"dbt seed"| BQ_STG
     W  --> CRJ
     AQ --> CRJ
     FL -->|"river_enabled cities only"| CRJ
@@ -229,7 +234,7 @@ uses city-local calendar dates as a mitigation, not as a timestamp correction.
 | Layer | Dataset | Purpose | Key Tables | Status |
 |---|---|---|---|---|
 | 🥉 Bronze | `raw` | Raw API loads — append-only, partitioned by day | Active: `weather_forecast_hourly`, `air_quality_hourly`, `flood_daily`, `historical_weather_daily`; optional: `climate_projections_daily` | Configured; dataset existence and freshness require runtime verification |
-| 🥈 Silver | `stg` | Static seeds, operational daily views, and exact forecast vintages (dbt) | `city_monthly_normals`, `stg_latest_*`, `stg_city_signal_input`, `stg_city_signal_vintage` | dbt-managed; deployment and freshness require runtime verification |
+| 🥈 Silver | `stg` | Static seeds, operational daily views, and exact forecast vintages (dbt) | `city_monthly_normals`, `forecast_city_allowlist`, `stg_latest_*`, `stg_city_signal_input`, `stg_city_signal_vintage` | dbt-managed; deployment and freshness require runtime verification |
 | 🥇 Gold | `mart` | Operational scores, exact-vintage forecast features, and ERA5-backed Heat/Rain labels | `mart_city_score_*`, `mart_ml_forecast_features_vintage`, `mart_city_realized_weather_daily`, `mart_ml_training_examples`, `mart_ml_serving_features_current` | dbt-managed; deployment and freshness require runtime verification |
 
 > The ingest job creates active-source **Bronze tables only after the `raw`

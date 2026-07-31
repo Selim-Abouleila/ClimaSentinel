@@ -49,13 +49,14 @@ raw.flood_daily ───────────────→ stg_flood_daily
 
 ## Models
 
-### Static Seeds (1)
+### Static Seeds (2)
 
 Static configuration data loaded directly into BigQuery tables via `dbt seed`.
 
 | Seed | Description | Source |
 |---|---|---|
 | `city_monthly_normals` | Checked-in city/month lookup described in repository history as 2014-2023 temperature, rain and wind averages. The Gold layer currently uses its maximum-temperature value as the Heat baseline. | `transform/seeds/city_monthly_normals.csv` |
+| `forecast_city_allowlist` | Explicit city/timezone contract for forecast-vintage staging and point-in-time feature, training and serving outputs. A city may appear on the operational dashboard without entering those outputs until it is intentionally added here. | `transform/seeds/forecast_city_allowlist.csv` |
 
 The repository does not currently contain the query or script that generated
 this seed, nor the exact Open-Meteo model/version, coordinates, retrieval date
@@ -118,7 +119,15 @@ as evidence that a missing observation was truly zero.
 
 ### Forecast-Vintage Views (6)
 
-These views preserve every ingestion run. `ingested_at_utc` is the ingestion-run start timestamp used as ClimaSentinel's availability proxy; it is not Open-Meteo's model issue or initialization timestamp. `forecast_origin_time_zone` records the IANA timezone used to convert that UTC timestamp into the city's local `forecast_origin_date`.
+These views preserve every ingestion run for cities in
+`forecast_city_allowlist`. The three entry models join that seed before their
+forecast rows are ranked, so a new operational dashboard city is excluded from
+point-in-time forecast features, training and serving by default.
+`ingested_at_utc` is the ingestion-run start timestamp used as ClimaSentinel's
+availability proxy; it is not Open-Meteo's model issue or initialization
+timestamp.
+`forecast_origin_time_zone` comes from the allowlist and is used to convert
+that UTC timestamp into the city's local `forecast_origin_date`.
 
 | Model | Grain | Purpose |
 |---|---|---|
@@ -138,7 +147,7 @@ The vintage path does not join ERA5. ERA5 is published later and belongs to a fu
 - AQ and flood never fall back to a different run after a partial ingestion failure.
 - Flood is legitimately absent for non-river-enabled cities.
 - AQ has a five-day window while weather and flood have seven-day windows.
-- Unknown city IDs fail during vintage-model evaluation until an IANA timezone is configured; they never silently fall back to UTC.
+- City IDs absent from `forecast_city_allowlist` are excluded from all three vintage entry models; they never silently enter point-in-time forecast features, training or serving outputs.
 
 `has_24_hour_coverage` means exactly 24 distinct stored timestamps, not
 "complete for the local civil day." If an upstream response represents a DST
@@ -221,8 +230,7 @@ source ../.env
 set +a
 dbt run --profiles-dir . --select stg        # Build staging views
 dbt test --profiles-dir . --select stg       # Run schema + singular staging tests
-dbt run --profiles-dir . --select tag:forecast_vintage
-dbt test --profiles-dir . --select tag:forecast_vintage
+dbt build --profiles-dir . --select tag:forecast_vintage
 dbt docs generate --profiles-dir . && dbt docs serve --profiles-dir .
 ```
 

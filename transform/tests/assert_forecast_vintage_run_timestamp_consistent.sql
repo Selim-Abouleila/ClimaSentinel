@@ -7,16 +7,25 @@
 WITH source_timestamps AS (
     SELECT ingestion_run_id, ingested_at_utc
     FROM {{ source('raw', 'weather_forecast_hourly') }}
+    WHERE city_id IN (
+        SELECT city_id FROM {{ ref('forecast_city_allowlist') }}
+    )
 
     UNION ALL
 
     SELECT ingestion_run_id, ingested_at_utc
     FROM {{ source('raw', 'air_quality_hourly') }}
+    WHERE city_id IN (
+        SELECT city_id FROM {{ ref('forecast_city_allowlist') }}
+    )
 
     UNION ALL
 
     SELECT ingestion_run_id, ingested_at_utc
     FROM {{ source('raw', 'flood_daily') }}
+    WHERE city_id IN (
+        SELECT city_id FROM {{ ref('forecast_city_allowlist') }}
+    )
 )
 
 SELECT
