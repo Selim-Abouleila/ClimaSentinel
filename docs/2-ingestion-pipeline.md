@@ -9,12 +9,20 @@ disabled in scheduled ingestion.
 
 ## Architecture
 
-The ingestion process relies on three core Google Cloud services, all provisioned via Terraform:
-1. **Cloud Scheduler**: Acts as a cron job, firing an HTTP request to the Cloud Run job once a day at `06:00 UTC` (`0 6 * * *`).
-2. **Cloud Run Job**: Executes the Python runner which contains the application logic to pull from APIs and transform the results.
-3. **BigQuery**: Provides the data warehouse where processed, raw climate data is appended into time-partitioned tables.
+The ingestion process relies on three core Google Cloud services:
 
-Additionally, **Artifact Registry** is used to store the Docker container image built via **Cloud Build**.
+1. **Cloud Scheduler**: Fires an HTTP request to the Cloud Run job once a day at
+   `06:00 UTC` (`0 6 * * *`).
+2. **Cloud Run Job**: Executes the Python runner that pulls the APIs and invokes
+   dbt.
+3. **BigQuery**: Stores appended raw rows in time-partitioned tables and hosts
+   the dbt relations.
+
+Terraform manages the Cloud Run Job, Scheduler, service accounts and their IAM
+bindings. The `raw` dataset is a manual prerequisite and the Python loader
+creates active source tables on first use. The bootstrap script, rather than
+Terraform, creates the Artifact Registry repository; Cloud Build builds and
+pushes its image.
 
 ## Configuration: The City List
 
@@ -46,6 +54,11 @@ formats the responses as JSON, and streams them into the `raw` BigQuery dataset.
 Flood is called only for river-enabled cities. A fifth CMIP6 client exists but
 is not invoked by `ingest/main.py`. Because active tables are time-partitioned,
 no data is overwritten; historical forecast vintages accumulate over time.
+
+The hourly row counts below are configured expectations, not validated source
+contracts. They assume 24 distinct provider timestamps per civil day. Partial
+responses and any 23/25-hour daylight-saving-time representation can produce a
+different count; the loader inserts the response it receives.
 
 ### 1. Weather Forecast (`raw.weather_forecast_hourly`)
 - **Endpoint**: `api.open-meteo.com/v1/forecast`
@@ -106,7 +119,7 @@ no data is overwritten; historical forecast vintages accumulate over time.
 
 ---
 
-## Daily Volume Summary
+## Nominal Daily Volume Summary
 
 | Source | Rows/city/run | Cities | Frequency | Daily Total |
 |---|---|---|---|---|
@@ -128,7 +141,25 @@ Every row inserted into BigQuery is stamped with two metadata fields for traceab
 | `ingestion_run_id` | `STRING` | UUID v4 unique to each pipeline run |
 | `ingested_at_utc` | `TIMESTAMP` | UTC timestamp when the run started |
 
-These fields enable deduplication in the staging layer and full audit trail of when each row was loaded.
+These fields support staging deduplication and retrieval-run lineage. They are
+not complete source provenance: `ingested_at_utc` is captured once at the start
+of the whole job, and the raw schema does not retain the provider's model issue
+time, a per-city request time, response headers or source-version metadata.
+
+## Delivery and Retry Semantics
+
+Each city/source request is attempted once by the application with a request
+timeout; there is no application-level retry or backoff. A source failure is
+logged and processing continues with the remaining city/source pairs. If any
+rows were inserted, the run is classified as a partial failure and still
+attempts dbt.
+
+Raw writes use BigQuery streaming inserts without an application-supplied
+idempotency key. Re-executing the job creates a new `ingestion_run_id` and can
+append overlapping rows. That is expected in Bronze: the operational staging
+path selects the latest row, while the vintage path deliberately retains
+separate retrievals. Do not interpret raw row count as a count of unique
+forecast instants.
 
 ## Table Auto-Creation
 
@@ -178,7 +209,11 @@ subprocess.run([
 ], check=True)
 ```
 
-Authentication is handled automatically via the Cloud Run Job's service account — no JSON key file is required (`method: oauth` in `profiles.yml`).
+Authentication is handled automatically via the Cloud Run Job's service account
+— no JSON key file is required (`method: oauth` in `profiles.yml`). The
+committed `dev` and `prod` dbt targets currently have the same settings;
+environment isolation comes from the active credentials and
+`GCP_PROJECT_ID`, not from selecting the target name.
 
 ### Failure behaviour
 
@@ -211,3 +246,12 @@ If dbt fails, the log will show:
 ```
 ── dbt run FAILED (exit 1) — mart tables may be stale. Check logs above for details.
 ```
+
+## Automated-Validation Boundary
+
+The current GitHub pull-request, staging and production workflows do not run
+the ingestion job or execute `dbt compile`, `dbt run`, `dbt test` or source
+freshness checks. A green application CI run therefore does not validate raw
+schemas, BigQuery SQL or warehouse data contracts. Transform changes require a
+separate authenticated BigQuery/dbt validation; the scheduled job is also not a
+substitute because it omits tests and can mask dbt failure in its exit status.

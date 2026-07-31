@@ -18,8 +18,9 @@ gcloud auth application-default login
 
 ### 3. Run via Makefile (recommended)
 
-dbt is integrated into `make deploy`. The profile reads `GCP_PROJECT_ID` and
-`GCP_REGION` directly from your `.env` file via dbt's `env_var()`.
+dbt is integrated into `make deploy`. The Makefile exports `.env`, after which
+the profile reads `GCP_PROJECT_ID` and `GCP_REGION` from the process environment
+through dbt's `env_var()`. dbt does not parse `.env` by itself.
 
 ```bash
 make deploy     # Build/push → Terraform apply → dbt seed/run/test
@@ -42,13 +43,19 @@ clean-room sequence and IAM prerequisites in
 
 ```bash
 cd transform
+set -a
+source ../.env
+set +a
 dbt run --profiles-dir .          # Build all models
 dbt run --profiles-dir . -s stg   # Staging only
-dbt test --profiles-dir .         # Schema tests
+dbt test --profiles-dir .         # Schema and singular tests
 dbt docs generate --profiles-dir . && dbt docs serve --profiles-dir .
 ```
 
-> **Note:** `--profiles-dir .` tells dbt to read `profiles.yml` from this directory instead of `~/.dbt/`. The profile uses `env_var('GCP_PROJECT_ID')` to read your project ID from the environment (exported by the Makefile from `.env`).
+> **Note:** `--profiles-dir .` tells dbt to read `profiles.yml` from this
+> directory instead of `~/.dbt/`. The committed `dev` and `prod` outputs are
+> currently identical; selecting `--target prod` does not create environment
+> isolation. The active credentials and `GCP_PROJECT_ID` determine the project.
 
 ---
 
@@ -57,7 +64,7 @@ dbt docs generate --profiles-dir . && dbt docs serve --profiles-dir .
 ```
 transform/
 ├── dbt_project.yml                  # dbt project configuration
-├── profiles.yml                     # BigQuery profile (reads from .env via env_var)
+├── profiles.yml                     # BigQuery profile (reads exported environment)
 ├── requirements.txt                 # Python deps (dbt-core + dbt-bigquery)
 ├── models/
 │   ├── stg/                         # Silver layer — staging views
@@ -77,13 +84,12 @@ transform/
 │   │   ├── stg_city_daily_air_quality_vintage.sql
 │   │   ├── stg_flood_daily_vintage.sql
 │   │   └── stg_city_signal_vintage.sql   ← Point-in-time ML staging input
-│   └── mart/                        # Gold layer — operational and ML marts
+│   └── mart/                        # Gold — operational + 4 point-in-time ML marts + legacy feature table
 ├── macros/
 │   ├── forecast_origin_time_zone.sql # City ID → IANA timezone contract
 │   └── generate_schema_name.sql      # Preserve explicit stg/mart datasets
 ├── seeds/
 │   └── city_monthly_normals.csv      # Static monthly climate baselines
-├── snapshots/                       # (future) SCD Type-2 snapshots
 └── tests/                           # Singular lineage, grain, and coverage tests
 ```
 
@@ -98,16 +104,24 @@ raw.flood_daily ───────────────→ stg_latest_floo
 raw.historical_weather_daily ──→ stg_latest_historical_daily ──────────────────────────────────┤
                                                                                                 ▼
                                                                               stg_city_signal_input
-                                                                                        │
-                                                                                        ▼
-                                                                              (mart layer — next)
+                                                                                        ├──→ mart_city_score_history
+                                                                                                  ├──→ mart_city_score_current
+                                                                                                  │          └──→ mart_city_zone_current
+                                                                                                  └──→ mart_city_score_detail
+                                                                                        └──→ mart_ml_feature_store (legacy)
 
 raw.weather_forecast_hourly ──→ stg_weather_forecast_hourly_vintage ──→ stg_city_daily_weather_vintage ──┐
 raw.air_quality_hourly ────────→ stg_air_quality_hourly_vintage ───────→ stg_city_daily_air_quality_vintage ┤
 raw.flood_daily ───────────────→ stg_flood_daily_vintage ──────────────────────────────────────────────────┤
                                                                                                            ▼
                                                                                          stg_city_signal_vintage
-                                                                                         (point-in-time ML marts)
+                                                                                                   │
+                                                                                                   ▼
+                                                                              mart_ml_forecast_features_vintage
+                                                                                     ├──→ mart_ml_serving_features_current
+                                                                                     └──→ mart_ml_training_examples
+                                                                                                   ▲
+raw.historical_weather_daily ──→ stg_latest_historical_daily ──→ mart_city_realized_weather_daily ─────────┘
 ```
 
 The vintage path keeps `ingestion_run_id` in its grain and joins sources only
@@ -122,6 +136,12 @@ instant for precise lead-hour or DST calculations. The vintage daily models
 preserve missing measurements, while the legacy operational daily models
 coalesce some missing precipitation, wind and pollutant readings to zero.
 
+Vintage coverage is also literal: `has_24_hour_coverage` requires exactly 24
+distinct stored timestamps. If an upstream DST-transition day contains 23 or
+25, the flag is false and the Horizon 0-4 feature window is ineligible for
+canonical training and serving. No timezone-aware 23/24/25-hour exception is
+implemented.
+
 Build and validate the vintage path independently with:
 
 ```bash
@@ -133,11 +153,27 @@ The scheduled ingestion job runs `dbt seed` and `dbt run`, but not `dbt test`;
 it can also appear successful after a logged dbt failure. Run tests explicitly
 and inspect transform completion in the job logs.
 
+The GitHub pull-request, staging and production workflows do not currently
+compile or test this dbt project. `_stg_sources.yml` also has no configured
+source-freshness policy. A green application CI run, a passing manual `dbt
+test`, and recent raw data are therefore three separate checks.
+
+## Static-Seed Provenance
+
+`city_monthly_normals.csv` is a checked-in 120-row city/month lookup used by the
+Heat rules and labels. Repository history describes it as derived from
+2014-2023 Open-Meteo/ERA5 data, but no generation script/query, exact source
+model/version, retrieval timestamp or missing-data rules are stored. The CSV is
+version-controlled but not reproducible from this repository alone; record
+those inputs before refreshing it and compare results against a pinned seed
+commit or hash.
+
 ---
 
 ## Materialization Strategy
 
 | Layer | Materialization | Rationale |
 |---|---|---|
-| `stg` (Silver) | **View** | No duplicated model-data storage; reads from raw and can incur query cost on each use |
-| `mart` (Gold) | **Table** | Precomputed for dashboard performance |
+| `stg` (Silver) | **Views** | Queries current raw rows; definition changes still require `dbt run` |
+| Gold history/features/labels/training | **Tables** | Full-refresh, precomputed relations |
+| Gold current/detail/zone/serving selectors | **Views** | Current projections over the precomputed tables |

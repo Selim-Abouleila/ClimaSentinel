@@ -34,6 +34,15 @@ Consultez également la
 [documentation officielle du connecteur Google BigQuery](https://learn.microsoft.com/en-us/power-query/connectors/google-bigquery)
 pour les modes d'authentification actuellement pris en charge.
 
+> **Écart IaC actuel :** `infra/terraform/main.tf` crée encore le compte
+> `powerbi-sa` et lui attribue au niveau **projet** les rôles
+> `roles/bigquery.dataViewer`, `roles/bigquery.jobUser` et
+> `roles/bigquery.readSessionUser`. Cette configuration héritée n'implémente pas
+> l'objectif de moindre privilège décrit ci-dessous : en particulier,
+> `dataViewer` n'est pas limité au dataset `mart`. Ne considérez pas le simple
+> `terraform apply` comme une validation de sécurité et n'utilisez pas cette
+> identité avant que son périmètre IAM ait été revu et réduit.
+
 ---
 
 ## Étape 1 — Faire Valider l'Accès
@@ -97,9 +106,9 @@ Dans le **Navigateur** qui s'affiche :
 
 | Table | Utilité dans le Dashboard |
 |---|---|
-| ✅ `mart_city_score_history` | Tendance des scores opérationnels dérivés de prévisions sur 7 jours ; pas un historique d'impacts observés |
-| ✅ `mart_city_score_current` | Classement quotidien des villes par tension ; pas une vue temps réel |
-| ✅ `mart_city_zone_current` | Résumé exécutif par zone (Stable / Critique, etc.) |
+| ✅ `mart_city_score_history` | Courbe par date cible de la prévision actuellement transformée ; la table est reconstruite et n'est ni un historique des exécutions, ni un historique d'impacts observés |
+| ✅ `mart_city_score_current` | Vue classant les villes sur les deux dates calendaires UTC « aujourd'hui + demain » ; ce n'est ni un snapshot persistant, ni une fenêtre glissante de 48 heures |
+| ✅ `mart_city_zone_current` | Agrégat des zones actuellement occupées (Stable / Monitoring / Tipping / Critical) ; les zones vides ne produisent pas de ligne |
 
 4. Cliquez sur **Charger**
 
@@ -111,7 +120,7 @@ Power BI vous demandera entre **Import** et **DirectQuery** :
 
 | Mode | Explication | Recommandation ClimaSentinel |
 |---|---|---|
-| **Import** | Power BI télécharge une copie des données. Rapide, mais pas en temps réel. | ✅ **Recommandé** — cadence amont visée : 1 fois par jour, sous réserve d'un pipeline réussi |
+| **Import** | Power BI télécharge une copie des données. Rapide, mais pas en temps réel. | ✅ **Recommandé** — cadence amont visée : une fois par jour, sous réserve d'une ingestion et d'une transformation réussies |
 | **DirectQuery** | Power BI interroge BigQuery à chaque clic ; cela ne rend pas la source amont temps réel. | ❌ Non nécessaire pour notre cadence quotidienne |
 
 → Sélectionnez **Import** et cliquez sur **OK**.
@@ -139,6 +148,10 @@ Voici les visuels recommandés et les colonnes à utiliser depuis les tables mar
 - **Axe X :** `date`
 - **Axe Y :** `global_tipping_score`
 - **Légende :** `city_id` (pour comparer les villes)
+
+Ce graphique compare des **dates cibles dans la prévision courante**. Il ne
+permet pas d'analyser comment les prévisions d'une même date ont évolué entre
+plusieurs exécutions, car ce mart n'archive pas les snapshots successifs.
 
 ### 🚦 Résumé par Zone
 - **Visuel :** Graphique en anneau ou Carte de synthèse
@@ -172,9 +185,12 @@ Pour que le dashboard se mette à jour automatiquement chaque matin :
      plateforme et documentez sa rotation
    - Activez le **Rafraîchissement planifié** → Fréquence : `Quotidien` → Heure : `06:30 UTC`
 
-> Le rafraîchissement est planifié 30 minutes après le lancement du pipeline dbt
-> de 06:00 UTC. Il ne garantit pas à lui seul la fraîcheur : vérifiez le statut du
-> pipeline et la date maximale des données avant de publier le dashboard.
+> Le rafraîchissement proposé est planifié 30 minutes après le déclenchement du
+> job d'ingestion à 06:00 UTC. Ce délai ne garantit ni que l'ingestion et dbt sont
+> terminés, ni que dbt a réussi : l'orchestrateur actuel journalise certains
+> échecs dbt sans faire échouer le job Cloud Run. Vérifiez les journaux de
+> transformation et la fraîcheur réelle des tables avant de publier le
+> dashboard.
 
 ---
 
@@ -183,7 +199,7 @@ Pour que le dashboard se mette à jour automatiquement chaque matin :
 ```
 Cloud Scheduler (06:00 UTC)
         ↓
-Cloud Run (Ingestion Python)
+Cloud Run (Ingestion Python, puis tentative dbt)
         ↓
 BigQuery raw.*  →  dbt (Silver)  →  stg.*
                                          ↓
@@ -203,6 +219,6 @@ BigQuery raw.*  →  dbt (Silver)  →  stg.*
 | Problème | Solution |
 |---|---|
 | "Accès refusé" lors de la connexion | Faire vérifier l'accès nominatif au dataset `mart` et le droit minimal d'exécuter des jobs BigQuery |
-| Les tables `mart` n'apparaissent pas | Vérifier que le pipeline `make deploy` a bien été exécuté avec succès (le dataset `mart` doit exister dans BigQuery) |
+| Les tables `mart` n'apparaissent pas | Vérifier séparément que les datasets existent, que les sources `raw` ont été initialisées et qu'un `dbt run` a réellement réussi ; `make deploy` seul ne prouve pas que le mart contient des données |
 | Le rafraîchissement échoue sur Power BI Service | Vérifier l'identité dédiée, son périmètre IAM et l'état de son secret dans le gestionnaire approuvé ; ne pas échanger de clé par messagerie |
 | Données vides / NULL dans les graphiques | Attendu pour les colonnes `river_*` des villes dont `river_enabled=false`; Paris, Amsterdam et Varsovie sont les villes actuellement activées |

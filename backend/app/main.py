@@ -246,10 +246,10 @@ def get_current_zones(limit: int = 20):
 def get_city_scores(city_id: str):
     """
     Returns the individual tipping sub-scores (heat, wind, rain, air, river)
-    for a single city within the current 48-hour operational window.
+    for a single city across today and tomorrow in UTC.
 
-    Source table : mart_city_score_detail  (new mart — does NOT touch
-                   mart_city_score_current or mart_city_score_history).
+    Source table : mart_city_score_detail (an independent view over
+                   mart_city_score_history).
 
     Returns 404 if the city_id is not found in the mart.
     """

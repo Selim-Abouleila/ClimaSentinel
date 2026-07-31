@@ -46,9 +46,10 @@ models:
   - name: mart_city_score_detail
     description: >
       Exposes the five individual tipping sub-scores (Heat, Wind, Rain, Air Quality, River)
-      plus raw signal values for every city within the current 48-hour operational window.
-      One row per city — the day with the highest global tipping score is selected so all
-      sub-scores are internally consistent. Does NOT modify mart_city_score_current.
+      plus raw signal values for every city across today and tomorrow in UTC.
+      One row per city is selected using the maximum global tipping score. When both dates
+      tie, separate ANY_VALUE aggregates can select values nondeterministically across the
+      tied dates. Does NOT modify mart_city_score_current.
       Consumed by GET /data/city/{city_id}/scores to power the city detail page.
     columns:
       - name: city_id

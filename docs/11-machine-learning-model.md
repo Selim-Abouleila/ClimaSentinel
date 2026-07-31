@@ -11,6 +11,11 @@ This boundary avoids both training/serving skew and false claims. Training a
 five-component model against later forecasts would teach it to reproduce
 another forecast, not validate it against reality.
 
+> **Evidence scope (reviewed 2026-07-28).** This document describes the
+> repository's implemented contracts and gates. It is not an inventory of the
+> mutable DagsHub/MLflow registry, and the repository does not pin a current
+> schema-v3 run ID, registered version, alias target or evaluation report.
+
 ## End-to-end architecture
 
 ```text
@@ -67,10 +72,11 @@ forward-fill, backward-fill or replace a missing optional source with zero.
 
 ### Tracked snapshot compatibility
 
-The checked-in pointer at `model/data/training_snapshot.csv.dvc` currently
-references a **legacy snapshot created before the schema-v3 point-in-time
-contract**. It is not compatible with `mart_ml_training_examples_v1` and must
-not be used to reproduce, benchmark or promote the current challenger.
+On the current `dev` line, `model/data/training_snapshot.csv.dvc` references
+legacy object MD5 `44a4b85de5546b4cf649c71414468f52` (99,126 bytes), first
+committed in `486889d`. That object predates the schema-v3 point-in-time
+contract. It is not compatible with `mart_ml_training_examples_v1` and must not
+be used to reproduce, benchmark or promote the current challenger.
 
 The reusable MLOps workflow performs a fresh authorized extraction and runs
 `dvc add` before training. Local work must do the same until a schema-v3
@@ -78,6 +84,14 @@ snapshot has been pushed and its updated pointer committed. A plain `dvc pull`
 from the current pointer does not establish reproducibility for this model.
 Any evaluation report must identify the exact Git commit, updated DVC hash,
 MLflow run ID/model version, data date range and held-out sample counts.
+
+Snapshot auto-commits are branch-local. For example, a `staging` workflow can
+advance its pointer without updating `dev`, so always inspect the pointer in the
+exact revision being run. The MLflow run logs the workflow's checked-out source
+commit plus the newly generated DVC object hash; the later automated pointer
+commit has a different Git ID. Those two identifiers must therefore be retained
+together—the logged source commit alone does not locate the fresh snapshot
+pointer.
 
 The realized score definitions are clipped to `0-100`:
 
@@ -184,6 +198,21 @@ artifact-contract, metadata and unexpected operational failures remain fatal.
 The reusable MLOps workflow publishes the DVC object and Git pointer only after
 training and registration succeed.
 
+### Registry state and manual promotion
+
+The repository proves the registration and promotion logic through code and
+tests; it does not prove which external model version currently owns
+`champion` or MLflow's `Production` stage. Registry state can change outside a
+documentation commit and staging and production currently share it.
+
+CI passes the exact version returned by the training job through
+`MLFLOW_MODEL_VERSION`. In contrast, `python -m model.promote` without that
+variable searches the registry and selects the numerically latest version.
+That fallback is convenient for isolated local work but is ambiguous when
+another run can register concurrently. A reviewed promotion should always pin
+the version printed as `REGISTERED_MODEL_VERSION` by the corresponding training
+run.
+
 ## Operational rule policy
 
 The FastAPI endpoint does not load the latest candidate merely because training
@@ -249,6 +278,9 @@ From the repository root:
 python -m model.extract_data
 dvc add model/data/training_snapshot.csv
 python -m model.train
+
+# Replace 123 with the exact REGISTERED_MODEL_VERSION printed above.
+export MLFLOW_MODEL_VERSION=123
 python -m model.promote
 
 # CI/release mode: report an ordinary quality rejection without deploying it
@@ -262,13 +294,15 @@ cd backend
 pytest tests/ -v
 ```
 
-Production and staging challenger evaluation requires DagsHub/MLflow
+Production and staging challenger evaluation require DagsHub/MLflow
 credentials, while extraction and serving require BigQuery access. A rejected
 challenger leaves the rule endpoint and `champion` alias unchanged.
 
 Do not use `dvc pull` on the current checked-in pointer as the input to
-`model.train`. Once a compatible snapshot is published, update this section
-with its DVC hash and the pinned evaluation record.
+`model.train`. Do not infer current registry state from this document. Once a
+compatible pointer is published on `dev`, update this section with its DVC hash
+and add a pinned evaluation record containing the run ID, registered version,
+alias decision and held-out support.
 
 ## Current limitation
 

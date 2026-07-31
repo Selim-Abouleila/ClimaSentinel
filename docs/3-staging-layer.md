@@ -55,7 +55,15 @@ Static configuration data loaded directly into BigQuery tables via `dbt seed`.
 
 | Seed | Description | Source |
 |---|---|---|
-| `city_monthly_normals` | 10-year historical averages (2014-2023) for temp, rain, wind per month. Used by Gold layer as the absolute baseline to compute tipping deviations. | `transform/seeds/city_monthly_normals.csv` (generated from Open-Meteo ERA5) |
+| `city_monthly_normals` | Checked-in city/month lookup described in repository history as 2014-2023 temperature, rain and wind averages. The Gold layer currently uses its maximum-temperature value as the Heat baseline. | `transform/seeds/city_monthly_normals.csv` |
+
+The repository does not currently contain the query or script that generated
+this seed, nor the exact Open-Meteo model/version, coordinates, retrieval date
+and missing-data rules used to produce it. The CSV is therefore versioned
+configuration, but it is not independently reproducible from the repository.
+Any refresh must define one unique key for every supported city/month (currently
+120), and record those inputs before old and new scores or model metrics are
+compared.
 
 ### Deduplication Views (4)
 
@@ -67,6 +75,12 @@ These views apply a `ROW_NUMBER() OVER (PARTITION BY ... ORDER BY ingested_at_ut
 | `stg_latest_air_quality_hourly` | `raw.air_quality_hourly` | `(city_id, valid_ts_utc)` |
 | `stg_latest_flood_daily` | `raw.flood_daily` | `(city_id, date)` |
 | `stg_latest_historical_daily` | `raw.historical_weather_daily` | `(city_id, date)` |
+
+This is a latest-value operational projection, not an immutable as-of ledger.
+If duplicate rows share the same natural key and identical
+`ingested_at_utc`, these four views do not define a secondary tie-breaker. Use
+the vintage path for retrieval-level lineage rather than treating
+`stg_latest_*` as audit history.
 
 ### Aggregation Views (2)
 
@@ -126,6 +140,14 @@ The vintage path does not join ERA5. ERA5 is published later and belongs to a fu
 - AQ has a five-day window while weather and flood have seven-day windows.
 - Unknown city IDs fail during vintage-model evaluation until an IANA timezone is configured; they never silently fall back to UTC.
 
+`has_24_hour_coverage` means exactly 24 distinct stored timestamps, not
+"complete for the local civil day." If an upstream response represents a DST
+transition with 23 or 25 distinct timestamps, the flag is false even when that
+response is complete for that day. The ML feature mart requires this flag for
+weather on every Horizon 0-4 date, so such a vintage is not canonical for
+training or serving. The current warehouse does not implement a
+timezone-aware 23/24/25-hour eligibility rule.
+
 > **Timestamp caveat:** despite its name and BigQuery `TIMESTAMP` type,
 > `valid_ts_utc` is not currently a trustworthy UTC instant. The fetcher
 > requests city-local timestamps and stores the provider's offset-free strings
@@ -149,7 +171,8 @@ The local-origin rule matters for retries and manual runs. For example, an inges
 All staging models are materialized as **views** (not tables). This means:
 - ✅ No duplicated model-data storage for the views themselves
 - ✅ Reflects the rows currently stored in `raw` on every query
-- ✅ No scheduled refresh needed
+- ✅ No data refresh is needed after new raw rows arrive
+- ⚠️ Definition changes still require `dbt run` to replace the views
 - ⚠️ Every query can rescan upstream data and incur BigQuery query cost
 - ⚠️ Slightly slower queries (acceptable for silver; mart layer uses tables)
 
@@ -193,12 +216,19 @@ gcloud auth application-default login
 
 ```bash
 cd transform
+set -a
+source ../.env
+set +a
 dbt run --profiles-dir . --select stg        # Build staging views
-dbt test --profiles-dir . --select stg       # Run staging tests
+dbt test --profiles-dir . --select stg       # Run schema + singular staging tests
 dbt run --profiles-dir . --select tag:forecast_vintage
 dbt test --profiles-dir . --select tag:forecast_vintage
 dbt docs generate --profiles-dir . && dbt docs serve --profiles-dir .
 ```
+
+dbt's `env_var()` reads the process environment; it does not parse `.env`
+itself. The Makefile exports `.env` automatically, while direct dbt commands
+need the explicit export above (or equivalent shell/CI configuration).
 
 ---
 
@@ -210,6 +240,12 @@ The scheduled Cloud Run ingestion job runs `dbt seed` and `dbt run`, but not
 `dbt test`. These contracts are enforced only when `make dbt-test`, `dbt test`
 or another validation workflow invokes them; a green scheduled execution is
 not evidence that the tests passed.
+
+The checked-in GitHub Actions workflows also do not compile or test this dbt
+project. In addition, `_stg_sources.yml` has no dbt source-freshness policy, so
+`dbt test` does not establish that raw data is recent. A green pull request and
+a passing warehouse test suite are separate signals; freshness needs an
+explicit operational check.
 
 The hard lineage test deliberately does not compare `AVG`/`SUM`-derived `FLOAT64` values by independently rereading the daily views. All staging relations are views, so BigQuery can expand those reductions separately through `stg_city_signal_vintage` and through the test's source references; floating-point reduction and the final two-decimal rounding can then depend on the query plan. Deterministic `MAX`/`MIN` and direct-value projections remain hard-checked. Raw conflicting payloads also fail `assert_forecast_vintage_raw_payloads_consistent`, while aggregate NULL propagation remains part of the lineage contract.
 

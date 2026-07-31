@@ -19,7 +19,7 @@ feature/* ──PR──▸ dev ──push──▸ staging ──push──▸ 
 |---|---|---|
 | `feature/*` | All active development. Developers branch off `dev`, implement changes, and open a PR back into `dev`. | Manual |
 | `dev` | Integration branch. Merging features here validates they work together. | PR merge |
-| `staging` | Pre-production validation. Code is deployed to a live staging environment on Railway for final testing. | Push (from dev merge) |
+| `staging` | Pre-production validation. Code is deployed to a live staging environment on Railway for final testing. | Push (normally from dev merge) |
 | `main` | Production-gate branch. It trains and evaluates a challenger, but the current workflow does not deploy the application to Railway production. | Push (normally from a staging merge) |
 
 > The workflows trigger on branch names; they do not themselves prove that
@@ -34,9 +34,11 @@ All pipelines are implemented as **GitHub Actions** workflows located in `.githu
 
 ### Pipeline 1 — PR to `dev` (`ci-dev.yml`)
 
-**Trigger:** Pull request opened against the `dev` branch.
+**Trigger:** Pull-request activity targeting `dev` (including opening, reopening
+and synchronizing the branch).
 
-This pipeline is the first quality gate. It validates that new feature code doesn't break existing functionality and that the Docker image builds successfully.
+This pipeline is the first quality gate. It runs the checks listed below; it
+does not constitute full-repository or live-environment validation.
 
 | Step | Description |
 |---|---|
@@ -45,7 +47,7 @@ This pipeline is the first quality gate. It validates that new feature code does
 | **Install dependencies** | `pip install -r requirements.txt` |
 | **Run unit tests** | `pytest tests/ -v -m "not integration"` — runs all tests *not* marked as integration |
 | **Run integration tests** | `pytest tests/ -v -m integration` — runs only tests marked `@pytest.mark.integration` |
-| **Validate frontend** | `npm ci`, `npm run lint` and `npm run build` validate the typed rule-baseline client and production bundle |
+| **Check frontend** | `npm ci`, `npm run lint` and `npm run build` lint and compile the production bundle; they do not execute browser behavior |
 | **Build Docker image** | `docker build -f backend/Dockerfile -t climasentinel-backend:test .` — verifies the image compiles but does **not** push to any registry |
 
 > If any step fails, its check fails. Whether that blocks the merge depends on
@@ -55,13 +57,16 @@ This pipeline is the first quality gate. It validates that new feature code does
 
 ### Pipeline 2 — Push to `staging` (`ci-staging.yml`)
 
-**Trigger:** Push to the `staging` branch (i.e., a PR from `dev` is merged).
+**Trigger:** Any push to `staging`, including a merged PR. The workflow itself
+does not require the pushed commit to come from `dev`.
 
-This pipeline re-runs the full test suite, builds the Docker image, and deploys both the backend and frontend to the **staging environment** on Railway.
+This pipeline re-runs the full **backend pytest suite**, builds the backend
+Docker image, trains/evaluates a challenger, and deploys both the backend and
+frontend to the **staging environment** on Railway.
 
 | Step | Description |
 |---|---|
-| **Full test suite** | `pytest tests/ -v` — runs *all* tests (unit + integration) to catch regressions |
+| **Full backend pytest suite** | `pytest tests/ -v` — runs every test under `backend/tests/`, including the tests marked `integration` |
 | **Build Docker image** | Builds `climasentinel-backend:staging` |
 | **Train and register Heat/Rain challenger** | Calls the reusable MLOps workflow and returns the exact schema-v3 `ClimaSentinel_HeatRainForecaster` version for offline evaluation |
 | **Evaluate candidate** | Runs per-horizon gates against same-vintage rule baselines. A passing challenger may receive `champion`; an ordinary quality rejection is reported without blocking the operational rule release. |
@@ -74,11 +79,18 @@ The deployment job references the `staging` GitHub environment and reads
 reference that environment, so its required `STAGING_FRONTEND_URL` currently
 must be available as a repository or organization secret.
 
+Unlike the PR workflow, staging does not explicitly rerun `npm run lint` or
+`npm run build` as standalone checks before `railway up`; the Railway build is
+therefore carrying the frontend build responsibility at this stage. The E2E job
+also installs packages with `npm install`, not the stricter lockfile-only
+`npm ci`.
+
 ---
 
 ### Pipeline 3 — Push to `main` / Production (`ci-production.yml`)
 
-**Trigger:** Push to the `main` branch (i.e., a PR from `staging` is merged).
+**Trigger:** Any push to `main`, including a merged PR. The workflow itself does
+not require the pushed commit to come from `staging`.
 
 This pipeline trains and evaluates a new challenger on `main`. No application
 release follows while the Railway production step is disabled. The operational
@@ -105,7 +117,8 @@ secrets or publish an application release.
 
 **Trigger:** Reusable calls from staging/production deployment workflows, or manual dispatch (`workflow_dispatch`).
 
-This pipeline handles the full ML lifecycle: data extraction, versioning, training, and model registration.
+This reusable pipeline handles data extraction, snapshot versioning, training
+and model registration. Challenger evaluation/promotion remains in its caller.
 
 | Step | Description |
 |---|---|
@@ -130,6 +143,11 @@ prevents failed extraction, contract-validation or training runs from advancing
 the versioned snapshot. Challenger evaluation remains downstream and does not
 change the operational rule policy merely because a model was registered.
 
+The logged Git hash identifies the source checkout used for training. The
+workflow creates and pushes the updated `.dvc` pointer only **after** training,
+so that later auto-commit is not the same Git commit logged in the MLflow run;
+the DVC hash is the authoritative snapshot identifier for that run.
+
 The final Git push is an important governance caveat: the reusable workflow has
 `contents: write` and pushes the DVC pointer directly to the branch that invoked
 it. Depending on branch-protection settings, that push can either fail or require
@@ -140,14 +158,15 @@ promotion path.
 
 ## Testing Strategy
 
-All backend tests live in `backend/tests/` and run automatically in CI. Pytest's
-`integration` marker separates broader application-contract tests from isolated
-unit tests. Most of these tests still use FastAPI's in-process test client and
-mocks; they are not live BigQuery, DagsHub or Railway integration tests.
+All backend tests live in `backend/tests/` and run in the PR-to-`dev` and
+staging workflows. Pytest's `integration` marker separates broader
+application-contract tests from isolated unit tests. Most of these tests still
+use FastAPI's in-process test client and mocks; they are not live BigQuery,
+DagsHub or Railway integration tests.
 
 | Test module | Main contract covered |
 |---|---|
-| `test_health.py` | Health, operational endpoints, middleware and OpenAPI generation |
+| `test_health.py` | Root/health, CORS, OpenAPI, metrics, mocked current-score behavior and selected error paths |
 | `test_forecast_rules.py` | All five rule formulas, clipping, source coverage, target-month Heat normal and Day +3 use of same-vintage Day +4 context |
 | `test_model_extraction.py` | Direct training-mart extraction, exact schema/provenance and absence of leaky filling |
 | `test_ml_pipeline.py` | Schema-v3 challenger preprocessing, six-output order, horizon slicing, four-day purge and endpoint rule semantics |
@@ -159,6 +178,24 @@ The staging Playwright suite adds a live deployment check after challenger
 evaluation and Railway deployment. It verifies the rule-baseline API rather
 than assuming that the newly registered candidate passed. See
 [End-to-End Testing](13-end-to-end-testing.md).
+
+### Checks not provided by the current workflows
+
+A green GitHub Actions run does not validate every repository layer:
+
+- no workflow runs ingestion/loader tests;
+- no workflow installs dbt or runs `dbt parse`, `dbt build` or `dbt test`;
+- Terraform formatting, validation and planning are not CI checks;
+- the PR workflow runs frontend lint/build, but not Playwright;
+- staging runs Playwright, but has no separate frontend lint/build job;
+- the `main` workflow runs challenger training/evaluation but no backend or
+  frontend application test suite; and
+- there are no frontend unit/component tests, visual-regression tests or
+  automated accessibility checks.
+
+Consequently, green backend and E2E jobs do not prove the dbt warehouse
+contracts, mart lineage or mart freshness. Those checks must be run separately
+until they are added to CI.
 
 ---
 
@@ -221,4 +258,8 @@ The backend and frontend are deployed to Railway staging with the Railway CLI
 (`railway up`). The repository contains a production environment gate, but its
 Railway deployment step is currently disabled.
 
-The backend runs as a Docker container built from `backend/Dockerfile` (Python 3.11-slim, Uvicorn), exposing the port dynamically via Railway's `$PORT` variable. The frontend is a Next.js application deployed as a separate Railway service.
+The backend runs as a Docker container built from `backend/Dockerfile` (Python
+3.11-slim, Uvicorn), exposing the port dynamically via Railway's `$PORT`
+variable. The frontend is a Next.js application deployed as a separate Railway
+service. Its `NEXT_PUBLIC_API_URL` value is not supplied by the workflow file;
+it must be configured correctly in Railway before the frontend build.

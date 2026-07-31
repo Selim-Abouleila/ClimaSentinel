@@ -13,11 +13,15 @@ does not query BigQuery or load MLflow artifacts directly.
 - Tailwind CSS v4 plus shared design tokens; and
 - Playwright for live staging end-to-end tests.
 
-`NEXT_PUBLIC_API_URL` identifies the backend. The forecast response is validated
-by the backend's typed `CityForecastResponse` contract, including nullable
-unavailable factors. The operational current-score and city-detail endpoints
-return BigQuery rows directly and do not provide the same typed response-model
-validation.
+`NEXT_PUBLIC_API_URL` identifies the backend and is embedded into the
+browser-facing bundle at build time. Railway must therefore provide the correct
+value before building the frontend. The backend validates forecast responses
+with its typed `CityForecastResponse` contract, including nullable unavailable
+factors. The TypeScript interface in `frontend/src/lib/api.ts` is compile-time
+only: the browser currently trusts parsed JSON and does not perform an
+independent runtime-schema validation. The operational current-score and
+city-detail endpoints return BigQuery rows directly and do not provide the same
+typed backend response model.
 
 ## Main dashboard and city detail
 
@@ -27,12 +31,33 @@ factor scores from `GET /data/city/{city_id}/scores`. These pages describe the
 current operational marts; they must not be interpreted as model-validation
 results.
 
+The underlying mart selects the two UTC dates “today + tomorrow,” not a rolling
+48-hour interval. The current overview and city page still display “48-hour”
+copy, which is a known product-label mismatch. Both pages also use legacy marts
+that can mask some missing inputs; unlike `/forecast`, they do not currently
+render the beta/validation disclosure.
+
+On the city page, tied maximum dates are not resolved deterministically by the
+current detail-mart SQL, and separately aggregated factor fields can come from
+different tied dates. The frontend renders that payload without detecting the
+tie; see [Mart Layer](4-mart-layer.md#mart_city_score_detail-view).
+
+The overview converts any API failure into an empty array and shows the same
+empty state as a legitimate zero-row response. The city client converts a
+`404`, any other non-success response and a network failure to `null`, after
+which the route renders Next.js's not-found page. Those pages therefore do not
+currently distinguish “no data/unknown city” from an upstream outage.
+
 ## Three-day forecast page
 
 `/forecast` lets the user select a city and one genuine Day +1, Day +2 or Day +3
 horizon. A selection calls
 `GET /data/city/{city_id}/forecast?horizon_days={1|2|3}`; the client never creates
 a shorter horizon by reusing Day +3 output.
+
+The ten city choices are hard-coded in the client rather than discovered from
+the API or `config/cities.csv`; backend configuration changes must be mirrored
+manually.
 
 The page gives a prominent global beta disclosure and validation-scope note:
 
@@ -56,6 +81,13 @@ The current global note is:
 > Heat has limited backtest evidence; Rain performed poorly in backtests; Wind,
 > air quality and river lack observed validation. Scores are point estimates
 > without confidence bands. Missing inputs are marked unavailable.
+
+`estimated_total_tipping_score` is the maximum available factor score, not an
+additive total. “Current baseline” is calculated from the forecast-origin day's
+same-vintage inputs and is not an observed climate-impact baseline. An
+unavailable factor displays generic “Source data unavailable” copy; the
+specific API `unavailable_reason` is available only through the card's native
+title tooltip.
 
 ## Loading and failure states
 

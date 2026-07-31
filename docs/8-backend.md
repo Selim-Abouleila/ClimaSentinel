@@ -37,6 +37,19 @@ The dashboard endpoints continue to read the operational score marts:
 These marts calculate all five factors from operational inputs. They are not the
 realized-label source used to validate the forecast model.
 
+Despite legacy “48-hour” wording elsewhere in the product,
+`mart_city_score_current` and `mart_city_score_detail` actually select the two
+UTC calendar dates `CURRENT_DATE('UTC')` and the following day. This is not a
+rolling 48-hour interval. `mart_city_score_history` is also a rebuilt table of
+target dates from the currently transformed forecast, not an archive of
+successive forecast runs.
+
+`mart_city_score_detail` uses separate `ANY_VALUE(... HAVING MAX ...)`
+aggregates. When both dates tie on the global score, BigQuery may select factor
+fields from different tied rows; the detail response is not guaranteed to
+represent one deterministic date in that case. See
+[Mart Layer](4-mart-layer.md#mart_city_score_detail-view).
+
 `GET /data/history-scores` has a known schema mismatch on this branch: the route
 orders by `prediction_date`, while `mart_city_score_history` exposes the date
 column as `date`. Until the route is corrected, the BigQuery query is expected
@@ -90,14 +103,21 @@ All rules consume only raw values from the same forecast vintage. Heat uses the
 selected day's maximum-temperature departure from its monthly normal plus only
 positive next-day temperature velocity. Rain uses selected-day precipitation.
 River consumes next-day discharge when the requested day's discharge
-is above its 50 m³/s activation threshold; River Day +3 therefore uses Day +4
-in that case. Optional source gaps are returned as
+is above its 50 m³/s activation threshold. Heat Day +3 always requires the
+same-vintage Day +4 temperature; River Day +3 also requires Day +4 discharge
+when the Day +3 discharge exceeds the threshold. Optional source gaps are
+returned as
 `available: false`, `estimated_score: null` with an `unavailable_reason`; they
 are never represented as zero risk. A genuine zero is returned only when the
 required source data is present and the rule evaluates to zero.
 
 The total and primary driver are calculated from available component point
-estimates. All component and top-level interval fields are null and
+estimates. Specifically, `estimated_total_tipping_score` is the **maximum**
+available component score, not a sum or average, and the primary driver is the
+component that supplies that maximum. The `current_tipping_score` comparison
+is calculated from the forecast origin day's same-vintage inputs; it is not an
+observed-impact baseline and is separate from the legacy operational mart's
+two-date maximum. All component and top-level interval fields are null and
 `uncertainty_method` is `none`; deterministic formulas do not create model
 confidence intervals.
 
