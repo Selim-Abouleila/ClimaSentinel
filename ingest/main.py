@@ -131,6 +131,11 @@ def run():
     # ── dbt transform (Silver + Gold) ─────────────────────────────────────────
     run_dbt()
 
+    # Preserve successfully loaded raw rows and refresh the marts, but surface
+    # any partial source failure to Cloud Run/Scheduler and `make deploy`.
+    if errors:
+        raise SystemExit(1)
+
 
 def run_dbt() -> None:
     """Invoke `dbt seed` + `dbt run` from the /app/transform directory.
@@ -142,8 +147,8 @@ def run_dbt() -> None:
     Runs `dbt seed` first to ensure static reference tables (e.g.
     city_monthly_normals) exist before the mart models reference them.
 
-    A dbt failure is logged as an error but does NOT raise SystemExit so that
-    raw data is always preserved even if a model has a bug.
+    Raw data remains preserved if dbt fails, while the exception is propagated
+    so Cloud Run, Scheduler and `make deploy` cannot report a false success.
     """
     dbt_dir = Path(__file__).parent.parent / "transform"
     dbt_base_args = [
@@ -170,7 +175,7 @@ def run_dbt() -> None:
             f"── dbt seed FAILED (exit {exc.returncode}) — "
             "seed tables may be missing. Check logs above for details."
         )
-        return  # No point running models if seeds failed
+        raise
 
     # ── dbt run ───────────────────────────────────────────────────────────
     log.info("── dbt run starting ───────────────────────────────────────────")
@@ -186,6 +191,7 @@ def run_dbt() -> None:
             f"── dbt run FAILED (exit {exc.returncode}) — "
             "mart tables may be stale. Check logs above for details."
         )
+        raise
 
 
 if __name__ == "__main__":

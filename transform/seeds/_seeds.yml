@@ -1,6 +1,26 @@
 version: 2
 
 seeds:
+  - name: city_monthly_normals
+    description: >
+      One complete set of twelve monthly climate baselines per configured city.
+      These values are required by the operational dashboard score models.
+    columns:
+      - name: city_id
+        description: Stable city identifier matching config/cities.csv.
+        tests: [not_null]
+      - name: month
+        description: Calendar month number from 1 through 12.
+        tests: [not_null]
+      - name: normal_temperature_2m_mean
+        tests: [not_null]
+      - name: normal_temperature_2m_max
+        tests: [not_null]
+      - name: normal_daily_precipitation_mm
+        tests: [not_null]
+      - name: normal_wind_speed_10m_max
+        tests: [not_null]
+
   - name: forecast_city_allowlist
     description: >
       Explicit city and timezone contract for the forecast-vintage path.

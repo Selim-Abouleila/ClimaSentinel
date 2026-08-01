@@ -23,20 +23,25 @@ the profile reads `GCP_PROJECT_ID` and `GCP_REGION` from the process environment
 through dbt's `env_var()`. dbt does not parse `.env` by itself.
 
 ```bash
-make deploy     # Build/push → Terraform apply → dbt seed/run/test
-make dbt-stg    # Run staging models only (standalone)
-make dbt-test   # Run schema and singular tests (standalone)
+make validate-cities  # Validate registry, normals and frozen forecast scope
+make deploy           # Validate → build/Terraform → waited ingest → dbt checks
+make dbt-stg          # Run staging models only (standalone)
+make dbt-test         # Run schema and singular tests (standalone)
 ```
 
 `make deploy` is mutating and non-interactive: it builds and pushes an image,
-immediately applies a saved Terraform plan, installs dbt dependencies, then runs
-seed/model/test commands. Use `make plan` separately when you need to review the
-Terraform diff before deployment.
+immediately applies a saved Terraform plan, executes and waits for the updated
+Cloud Run ingestion job, installs dbt dependencies, then runs final
+seed/model/test commands. The Cloud Run job itself loads Bronze and executes an
+embedded `dbt seed` + `dbt run`; source partial failures and embedded dbt
+failures propagate as a non-zero job result and stop the waiting deploy. Use
+`make plan` separately when you need to review the Terraform diff before
+deployment.
 
-On a clean project, the `raw` BigQuery dataset must be created first. The first
-`make deploy` can apply infrastructure and then fail at dbt because the active
-raw source tables do not exist until the ingestion job has run once. Follow the
-clean-room sequence and IAM prerequisites in
+On a clean project, the `raw` BigQuery dataset must be created first. With that
+prerequisite satisfied, `make deploy` waits for ingestion to create the active
+raw source tables before its final dbt validation. Follow the bootstrap sequence
+and IAM prerequisites in
 [Doc 1](../docs/1-bootstrap-initialization.md).
 
 ### 4. Run standalone (from transform/)
@@ -90,7 +95,10 @@ transform/
 ├── seeds/
 │   ├── _seeds.yml                    # Seed docs + schema tests
 │   ├── city_monthly_normals.csv      # Static monthly climate baselines
+│   ├── city_monthly_normals.provenance.json # Expansion retrieval/aggregation record
 │   └── forecast_city_allowlist.csv   # Forecast city + IANA timezone contract
+├── scripts/
+│   └── generate_city_monthly_normals.py # Generate reviewable Open-Meteo cohorts
 └── tests/                           # Singular lineage, grain, and coverage tests
 ```
 
@@ -135,6 +143,12 @@ Operational dashboard cities absent from the seed do not enter point-in-time
 forecast features, training or serving outputs. Realized-weather history and
 the unused legacy feature table intentionally remain outside this filter.
 
+The allowlist remains frozen to the original Paris, London, Madrid, Berlin,
+Rome, Amsterdam, Athens, Warsaw, Lisbon and Stockholm scope. The 20-city
+operational dashboard additionally includes Vienna, Brussels, Copenhagen,
+Dublin, Oslo, Helsinki, Prague, Budapest, Zurich and Bucharest; those additions
+do not enter the forecast-vintage/ML forecast path.
+
 The raw field named `valid_ts_utc` is currently populated from offset-free
 city-local provider strings and must not be treated as a trustworthy UTC
 instant for precise lead-hour or DST calculations. The vintage daily models
@@ -153,24 +167,51 @@ Build and validate the vintage path independently with:
 dbt build --profiles-dir . --select tag:forecast_vintage
 ```
 
-The scheduled ingestion job runs `dbt seed` and `dbt run`, but not `dbt test`;
-it can also appear successful after a logged dbt failure. Run tests explicitly
-and inspect transform completion in the job logs.
+The scheduled ingestion job runs `dbt seed` and `dbt run`, but not `dbt test`.
+Source partial failures and dbt subprocess failures propagate as a failed Cloud
+Run execution. `make deploy` waits for that result and, on success, executes a
+final dbt seed/run/test; standalone scheduled executions still need separate
+test and freshness monitoring.
 
-The GitHub pull-request, staging and production workflows do not currently
-compile or test this dbt project. `_stg_sources.yml` also has no configured
-source-freshness policy. A green application CI run, a passing manual `dbt
-test`, and recent raw data are therefore three separate checks.
+The pull-request workflow validates the checked-in city registry, monthly
+normals and frozen forecast scope, unit-tests ingestion failure propagation,
+and builds the backend and ingestion images. The GitHub workflows do not
+currently compile or test this dbt project against BigQuery.
+`_stg_sources.yml` also has no configured source-freshness policy. A green
+application CI run, a passing warehouse `dbt test`, and recent raw data are
+therefore three separate checks.
 
 ## Static-Seed Provenance
 
-`city_monthly_normals.csv` is a checked-in 120-row city/month lookup used by the
-Heat rules and labels. Repository history describes it as derived from
-2014-2023 Open-Meteo/ERA5 data, but no generation script/query, exact source
-model/version, retrieval timestamp or missing-data rules are stored. The CSV is
-version-controlled but not reproducible from this repository alone; record
-those inputs before refreshing it and compare results against a pinned seed
-commit or hash.
+`city_monthly_normals.csv` is a checked-in 240-row city/month lookup used by the
+Heat rules and labels. Structural validation requires unique keys, exactly 12
+months per active city, finite plausible values and registry consistency.
+
+The original 10 cities' 120 rows remain the historical seed and predate a
+checked-in generator, so they are not claimed to be exactly reproducible. The
+new cities' 120 rows were generated by
+`scripts/generate_city_monthly_normals.py` from the Open-Meteo Historical
+Weather endpoint for 2014-01-01 through 2023-12-31 with `models=best_match`,
+each city's IANA timezone, finite daily-variable monthly arithmetic means and
+two-decimal rounding. `seeds/city_monthly_normals.provenance.json` records the
+2026-08-01 retrieval and policy. Because Open-Meteo can revise Best Match
+archive data, future regeneration may not byte-reproduce an earlier provider
+response; review and version any resulting seed diff explicitly.
+
+Generate a cohort into temporary review files; the script never overwrites the
+checked-in seed:
+
+```bash
+python transform/scripts/generate_city_monthly_normals.py \
+  --city-id vienna_at \
+  --output /tmp/vienna_normals.csv \
+  --metadata-output /tmp/vienna_normals.metadata.json
+```
+
+Repeat `--city-id` for every intended city, review the CSV, metadata and
+checksums, then merge the approved rows explicitly. Running without
+`--city-id` selects all active cities; it must not be used to silently refresh
+the preserved legacy values.
 
 ---
 

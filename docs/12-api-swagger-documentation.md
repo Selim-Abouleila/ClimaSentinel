@@ -17,13 +17,14 @@ The API currently has no application-level authentication or authorization.
 Swagger (`/docs`), OpenAPI (`/openapi.json`) and Prometheus metrics (`/metrics`)
 are also public. CORS allows every origin, credentials, methods and headers.
 There is no application rate limiter or response cache, and list-endpoint
-`limit` values have no enforced lower or upper bound.
+limits are inconsistent: `current-scores` enforces `1..100`, while the history
+and zone routes remain unbounded.
 
 The service is therefore a public demonstration API, not a hardened
 multi-tenant interface. Data endpoints can issue BigQuery queries, so a
 production hardening pass should add explicit origins, authentication where
-needed, bounded pagination, rate/cost controls, safer error responses and
-dependency readiness.
+needed, bounded pagination on the remaining list routes, rate/cost controls,
+safer error responses and dependency readiness.
 
 ## System endpoints
 
@@ -67,11 +68,12 @@ through a typed finite-number sanitization contract.
 
 ### `GET /data/current-scores`
 
-Reads `mart_city_score_current`. `limit` defaults to `10` and is currently
-unbounded. Each row contains `city_id`, `current_tipping_score`,
-`current_primary_driver` and `rank`. The mart takes the maximum across the two
-UTC calendar dates “today + tomorrow”; despite legacy UI wording, this is not a
-rolling 48-hour interval or a persisted snapshot.
+Reads `mart_city_score_current`. `limit` defaults to `100` and accepts values
+from 1 through 100, leaving headroom above the 20-city operational registry
+without silently truncating the dashboard. Each row contains `city_id`,
+`current_tipping_score`, `current_primary_driver` and `rank`. The mart takes the
+maximum across the two UTC calendar dates “today + tomorrow”; despite legacy UI
+wording, this is not a rolling 48-hour interval or a persisted snapshot.
 
 ### `GET /data/history-scores`
 
@@ -127,6 +129,8 @@ Returns one genuine horizon from the point-in-time same-vintage rule policy.
 
 - Path: `city_id`, for example `paris_fr`
 - Query: `horizon_days`, default `3`, accepted values `1`, `2`, `3`
+- City scope: the original 10 IDs in `forecast_city_allowlist.csv` only; the 10
+  new operational-dashboard cities are intentionally excluded
 - Rule outputs: Heat, Rain, Wind, Air Quality and River from same-vintage
   forecasts
 - Validation scope: limited ERA5 backtest for Heat; an ERA5 backtest with
@@ -277,3 +281,9 @@ statistical confidence interval.
 | `404` | No current eligible point-in-time serving row exists for the city |
 | `422` | `horizon_days` is outside `1..3` or another request value is invalid |
 | `500` | BigQuery or unexpected application failure. The forecast route currently includes the underlying exception text in `detail`, so clients should not treat that text as a stable contract. |
+
+Vienna, Brussels, Copenhagen, Dublin, Oslo, Helsinki, Prague, Budapest, Zurich
+and Bucharest can return current operational scores but have no eligible
+forecast serving rows. Their forecast requests return `404` unless a future
+change explicitly expands the frozen allowlist and the complete point-in-time
+forecast contract.

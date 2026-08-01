@@ -183,7 +183,8 @@ than assuming that the newly registered candidate passed. See
 
 A green GitHub Actions run does not validate every repository layer:
 
-- no workflow runs ingestion/loader tests;
+- the PR workflow tests ingestion failure propagation, but no workflow exercises
+  live source fetchers or BigQuery loader behaviour;
 - no workflow installs dbt or runs `dbt parse`, `dbt build` or `dbt test`;
 - Terraform formatting, validation and planning are not CI checks;
 - the PR workflow runs frontend lint/build, but not Playwright;

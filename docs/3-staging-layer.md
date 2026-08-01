@@ -55,16 +55,30 @@ Static configuration data loaded directly into BigQuery tables via `dbt seed`.
 
 | Seed | Description | Source |
 |---|---|---|
-| `city_monthly_normals` | Checked-in city/month lookup described in repository history as 2014-2023 temperature, rain and wind averages. The Gold layer currently uses its maximum-temperature value as the Heat baseline. | `transform/seeds/city_monthly_normals.csv` |
-| `forecast_city_allowlist` | Explicit city/timezone contract for forecast-vintage staging and point-in-time feature, training and serving outputs. A city may appear on the operational dashboard without entering those outputs until it is intentionally added here. | `transform/seeds/forecast_city_allowlist.csv` |
+| `city_monthly_normals` | Structurally validated 240-row lookup: one temperature, precipitation and wind baseline row for each of 12 months across 20 operational cities. The Gold layer uses its maximum-temperature value as the Heat baseline. | `transform/seeds/city_monthly_normals.csv` |
+| `forecast_city_allowlist` | Frozen original 10-city/timezone contract for forecast-vintage staging and point-in-time feature, training and serving outputs. The other 10 operational cities remain outside that path. | `transform/seeds/forecast_city_allowlist.csv` |
 
-The repository does not currently contain the query or script that generated
-this seed, nor the exact Open-Meteo model/version, coordinates, retrieval date
-and missing-data rules used to produce it. The CSV is therefore versioned
-configuration, but it is not independently reproducible from the repository.
-Any refresh must define one unique key for every supported city/month (currently
-120), and record those inputs before old and new scores or model metrics are
-compared.
+`transform/scripts/generate_city_monthly_normals.py` generated the expansion's
+120 rows from the Open-Meteo Historical Weather endpoint with
+`models=best_match`, each city's IANA timezone, and the fixed interval
+2014-01-01 through 2023-12-31. It computes the arithmetic mean of every finite
+daily temperature mean/maximum, precipitation sum and maximum wind value within
+each local calendar month, rejects missing or non-finite source values, and
+rounds outputs to two decimal places.
+`transform/seeds/city_monthly_normals.provenance.json` records the endpoint,
+model, 2026-08-01 retrieval date, interval, variables, units and aggregation
+policy.
+
+The original cities' 120 rows are intentionally retained from the historical
+seed. They predate the generator and cannot be claimed as exactly regenerable;
+Open-Meteo's Best Match archive can also be revised after retrieval. The
+generator/provenance pair makes the new expansion procedure auditable without
+misrepresenting the legacy half of the seed.
+
+The standard-library city validator checks unique city/month keys, exactly 12
+months for every active city, finite physical ranges, registry consistency and
+the frozen original forecast IDs before deployment. dbt adds not-null/month
+domain checks and a warehouse-side 12-month completeness test.
 
 ### Deduplication Views (4)
 
@@ -106,7 +120,7 @@ These views roll up deduplicated hourly data into daily summaries.
 - Air-quality columns can be NULL when there is no joined AQ row. Within an
   existing AQ day, the legacy averages convert missing pollutant readings to
   zero.
-- `river_discharge_m3s`: NULL for non-river-enabled cities (7 of 10)
+- `river_discharge_m3s`: NULL for non-river-enabled cities (15 of 20)
 - `hist_*` columns: NULL for dates outside the ERA5 lag window (most recent 6 days)
 
 These rules belong only to the legacy operational path. They can suppress a
@@ -122,7 +136,10 @@ as evidence that a missing observation was truly zero.
 These views preserve every ingestion run for cities in
 `forecast_city_allowlist`. The three entry models join that seed before their
 forecast rows are ranked, so a new operational dashboard city is excluded from
-point-in-time forecast features, training and serving by default.
+point-in-time forecast features, training and serving by default. The allowlist
+remains the original Paris, London, Madrid, Berlin, Rome, Amsterdam, Athens,
+Warsaw, Lisbon and Stockholm set; Vienna, Brussels, Copenhagen, Dublin, Oslo,
+Helsinki, Prague, Budapest, Zurich and Bucharest are operational-only.
 `ingested_at_utc` is the ingestion-run start timestamp used as ClimaSentinel's
 availability proxy; it is not Open-Meteo's model issue or initialization
 timestamp.
@@ -194,15 +211,16 @@ All staging models are materialized as **views** (not tables). This means:
 Staging views are created automatically as part of `make deploy`:
 
 ```
-make deploy  →  build/push image  →  terraform apply  →  dbt seed + run + test
+make deploy  →  validate city files  →  build/push  →  terraform apply
+             →  execute/wait for ingestion + embedded dbt seed/run
+             →  final dbt seed + run + test
 ```
 
 No separate dbt command or profile configuration needed — the profile reads `GCP_PROJECT_ID` and `GCP_REGION` from your `.env` file automatically via dbt's `env_var()`.
 
-> **Clean-room limitation:** on a brand-new project, create the `raw` dataset
-> first. The initial `make deploy` can apply the infrastructure and then fail in
-> dbt because the four active raw source tables do not exist until the ingestion
-> job runs once. Follow the first-deployment sequence in
+> **First-deploy prerequisite:** on a brand-new project, create the `raw`
+> dataset first. The deploy then waits for ingestion to create the active source
+> tables before its final dbt validation. Follow
 > [Doc 1](1-bootstrap-initialization.md).
 
 ### Prerequisites (first time only)
@@ -216,7 +234,8 @@ gcloud auth application-default login
 
 | Command | Description |
 |---|---|
-| `make deploy` | Full pipeline: build + terraform + dbt run + test |
+| `make validate-cities` | Validate the operational registry, 240-row normals seed, and frozen forecast allowlist |
+| `make deploy` | Full pipeline: validate + build + Terraform + waited ingestion + dbt seed/run/test |
 | `make dbt-stg` | Run staging models only |
 | `make dbt-run` | Run all models (stg + mart) |
 | `make dbt-test` | Run schema and singular data tests |
@@ -245,15 +264,19 @@ need the explicit export above (or equivalent shell/CI configuration).
 Core schema tests are defined in `_stg_models.yml` and `_stg_vintage_models.yml`. Singular tests in `transform/tests` validate the composite vintage grains, city-local origin/horizon derivation, one timestamp per run, raw retry-payload consistency, and the weather-anchored unified key set. The unified lineage test validates exact-vintage source presence, timestamps, coverage metadata, and nullable-value propagation. Coverage anomalies are warnings during the initial raw-history audit rather than filters or hard failures.
 
 The scheduled Cloud Run ingestion job runs `dbt seed` and `dbt run`, but not
-`dbt test`. These contracts are enforced only when `make dbt-test`, `dbt test`
-or another validation workflow invokes them; a green scheduled execution is
-not evidence that the tests passed.
+`dbt test`. Ingest partial failures and dbt subprocess failures now propagate as
+a failed job execution. The warehouse test contracts are enforced by `make
+deploy` after a successful waited job, or by standalone `make dbt-test`/`dbt
+test`; a green Scheduler-triggered execution alone is not evidence that tests
+passed.
 
-The checked-in GitHub Actions workflows also do not compile or test this dbt
-project. In addition, `_stg_sources.yml` has no dbt source-freshness policy, so
-`dbt test` does not establish that raw data is recent. A green pull request and
-a passing warehouse test suite are separate signals; freshness needs an
-explicit operational check.
+The pull-request workflow validates the checked-in registry, monthly normals
+and forecast scope, unit-tests ingestion failure propagation, and builds the
+backend and ingestion images. It does not compile or test this dbt project
+against BigQuery. In addition, `_stg_sources.yml` has no dbt source-freshness
+policy, so `dbt test` does not establish that raw data is recent. A green pull
+request and a passing warehouse test suite are separate signals; freshness
+needs an explicit operational check.
 
 The hard lineage test deliberately does not compare `AVG`/`SUM`-derived `FLOAT64` values by independently rereading the daily views. All staging relations are views, so BigQuery can expand those reductions separately through `stg_city_signal_vintage` and through the test's source references; floating-point reduction and the final two-decimal rounding can then depend on the query plan. Deterministic `MAX`/`MIN` and direct-value projections remain hard-checked. Raw conflicting payloads also fail `assert_forecast_vintage_raw_payloads_consistent`, while aggregate NULL propagation remains part of the lineage contract.
 

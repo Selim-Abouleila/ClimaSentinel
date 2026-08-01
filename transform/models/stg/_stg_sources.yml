@@ -59,7 +59,8 @@ sources:
       - name: flood_daily
         description: >
           Daily river discharge forecast (7-day window) from Open-Meteo Flood API.
-          Only ingested for river-enabled cities (Paris, Amsterdam, Warsaw).
+          Only ingested for river-enabled cities (Paris, Amsterdam, Warsaw,
+          Vienna and Budapest).
         columns:
           - name: city_id
             description: City identifier
@@ -70,7 +71,7 @@ sources:
           - name: ingestion_run_id
             description: UUID of the ingestion run
           - name: river_discharge_m3s
-            description: River discharge in m³/s (nearest river within 5 km)
+            description: GloFAS river discharge in m³/s at roughly 5 km grid resolution
 
       - name: historical_weather_daily
         description: >

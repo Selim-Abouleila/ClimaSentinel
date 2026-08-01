@@ -38,6 +38,8 @@ export default async function Dashboard() {
   const cityData = await fetchCurrentScores();
 
   const monitoredCities = cityData.length;
+  const cityNoun = monitoredCities === 1 ? 'city' : 'cities';
+  const metropolitanAreaNoun = monitoredCities === 1 ? 'area' : 'areas';
   const avgRisk = monitoredCities > 0
     ? cityData.reduce((acc, curr) => acc + curr.current_tipping_score, 0) / monitoredCities
     : 0;
@@ -64,11 +66,13 @@ export default async function Dashboard() {
         <header className="dashboard-hero">
           <div className="dashboard-eyebrow">
             <span className="dashboard-eyebrow__dot" aria-hidden="true" />
-            Europe · {monitoredCities || 10} cities · 48-hour outlook
+            Europe · {monitoredCities} {cityNoun} · 48-hour outlook
           </div>
           <h1>European climate risk monitor</h1>
           <p>
-            Current climate stress signals and their dominant drivers across ten monitored metropolitan areas.
+            {monitoredCities > 0
+              ? `Current climate stress signals and their dominant drivers across ${monitoredCities} monitored metropolitan ${metropolitanAreaNoun}.`
+              : 'Current climate stress signals and their dominant drivers across the monitored European metropolitan network.'}
           </p>
         </header>
 
@@ -145,7 +149,7 @@ export default async function Dashboard() {
                       <Link
                         key={city.city_id}
                         href={`/city/${city.city_id}`}
-                        className={`risk-spectrum__marker risk-${band.tone} risk-spectrum__marker--lane-${index % 4}`}
+                        className={`risk-spectrum__marker risk-${band.tone} risk-spectrum__marker--lane-${index % 5}`}
                         style={{ left: `${safePosition}%` }}
                         title={`${cityName.displayName}: ${city.current_tipping_score.toFixed(1)} / 100`}
                         aria-label={`View ${cityName.displayName}, score ${city.current_tipping_score.toFixed(1)} out of 100`}

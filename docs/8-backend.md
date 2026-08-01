@@ -64,8 +64,9 @@ hardened multi-tenant API:
 - `/docs`, `/openapi.json` and `/metrics` are public;
 - CORS is hard-coded with `allow_origins=["*"]`,
   `allow_credentials=True`, and unrestricted methods and headers;
-- the `limit` parameters on list endpoints have defaults but no lower or upper
-  bounds, and there is no rate limiting or response cache in the application;
+- `/data/current-scores` bounds `limit` to 1–100, while the history and zone
+  list limits remain unbounded; there is no rate limiting or response cache in
+  the application;
 - each data request can issue a BigQuery query; and
 - unexpected forecast failures currently include the underlying exception text
   in the HTTP `500` detail.

@@ -34,6 +34,22 @@ test.describe('ClimaSentinel Forecast E2E', () => {
       'Scores are point estimates without confidence bands'
     );
 
+    // Dashboard-only city expansion must not widen the forecast selector.
+    const forecastCityButtons = page.locator('.forecast-city-grid').getByRole('button');
+    await expect(forecastCityButtons).toHaveCount(10);
+    expect(await forecastCityButtons.allTextContents()).toEqual([
+      'Stockholm, SE',
+      'Warsaw, PL',
+      'Berlin, DE',
+      'Paris, FR',
+      'London, GB',
+      'Rome, IT',
+      'Madrid, ES',
+      'Lisbon, PT',
+      'Athens, GR',
+      'Amsterdam, NL',
+    ]);
+
     // 3. Verify there are no 500 errors
     const bodyText = await page.locator('body').textContent();
     expect(bodyText).not.toContain('500 Internal Server Error');

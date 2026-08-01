@@ -137,6 +137,40 @@ def test_get_current_scores_mocked(mock_bq_client):
         assert data[0]["city_id"] == "Paris"
         assert data[0]["current_tipping_score"] == 85.5
 
+        job_config = mock_client_instance.query.call_args.kwargs["job_config"]
+        limit_parameter = job_config.query_parameters[0]
+        assert limit_parameter.name == "limit"
+        assert limit_parameter.value == 2
+
+
+@patch("app.db.bigquery.Client")
+def test_get_current_scores_default_supports_expanded_dashboard(mock_bq_client):
+    """The default query must not truncate an expanded 20-city registry."""
+    mock_query_job = MagicMock()
+    mock_query_job.result.return_value = []
+
+    mock_client_instance = MagicMock()
+    mock_client_instance.query.return_value = mock_query_job
+
+    with patch("app.main.get_bq_client", return_value=mock_client_instance):
+        response = client.get("/data/current-scores")
+
+    assert response.status_code == 200
+    job_config = mock_client_instance.query.call_args.kwargs["job_config"]
+    limit_parameter = job_config.query_parameters[0]
+    assert limit_parameter.name == "limit"
+    assert limit_parameter.value == 100
+
+
+@pytest.mark.parametrize("limit", [0, 101])
+def test_get_current_scores_rejects_out_of_bounds_limits(limit):
+    """Current-score reads stay bounded even when callers supply a limit."""
+    with patch("app.main.get_bq_client") as mock_get_bq_client:
+        response = client.get(f"/data/current-scores?limit={limit}")
+
+    assert response.status_code == 422
+    mock_get_bq_client.assert_not_called()
+
 # This test mocks an empty database response to verify that the API correctly
 # returns a 404 Not Found error when no data exists for a given city.
 @patch("app.db.bigquery.Client")
