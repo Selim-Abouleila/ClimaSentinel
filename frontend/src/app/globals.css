@@ -396,7 +396,7 @@ body {
 
 .risk-spectrum__plot {
   position: relative;
-  height: 70px;
+  height: 94px;
 }
 
 .risk-spectrum__bands {
@@ -481,6 +481,10 @@ body {
 
 .risk-spectrum__marker--lane-3 {
   height: 82px;
+}
+
+.risk-spectrum__marker--lane-4 {
+  height: 94px;
 }
 
 .risk-spectrum__axis {
@@ -1756,7 +1760,7 @@ body {
   }
 
   .risk-spectrum__plot {
-    height: 82px;
+    height: 94px;
   }
 
   .risk-spectrum__marker span {

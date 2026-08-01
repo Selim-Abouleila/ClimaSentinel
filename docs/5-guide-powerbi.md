@@ -221,4 +221,4 @@ BigQuery raw.*  →  dbt (Silver)  →  stg.*
 | "Accès refusé" lors de la connexion | Faire vérifier l'accès nominatif au dataset `mart` et le droit minimal d'exécuter des jobs BigQuery |
 | Les tables `mart` n'apparaissent pas | Vérifier séparément que les datasets existent, que les sources `raw` ont été initialisées et qu'un `dbt run` a réellement réussi ; `make deploy` seul ne prouve pas que le mart contient des données |
 | Le rafraîchissement échoue sur Power BI Service | Vérifier l'identité dédiée, son périmètre IAM et l'état de son secret dans le gestionnaire approuvé ; ne pas échanger de clé par messagerie |
-| Données vides / NULL dans les graphiques | Attendu pour les colonnes `river_*` des villes dont `river_enabled=false`; Paris, Amsterdam et Varsovie sont les villes actuellement activées |
+| Données vides / NULL dans les graphiques | Attendu pour les colonnes `river_*` des villes dont `river_enabled=false`; Paris, Amsterdam, Varsovie, Vienne et Budapest sont les villes actuellement activées |

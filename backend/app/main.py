@@ -49,6 +49,8 @@ DRIVER_LABELS = {
     "air_score": "Air Quality",
     "river_score": "River/Flood",
 }
+CURRENT_SCORES_DEFAULT_LIMIT = 100
+CURRENT_SCORES_MAX_LIMIT = 100
 
 
 def _finite_float(value: Any) -> float | None:
@@ -173,10 +175,19 @@ def health():
 from .db import get_bq_client
 
 @app.get("/data/current-scores", tags=["Data"])
-def get_current_scores(limit: int = 10):
+def get_current_scores(
+    limit: int = Query(
+        default=CURRENT_SCORES_DEFAULT_LIMIT,
+        ge=1,
+        le=CURRENT_SCORES_MAX_LIMIT,
+        description="Maximum number of current city scores to return",
+    ),
+):
     """
-    Example endpoint showing how to connect to BigQuery and query the 
-    `mart_city_score_current` table from your dbt_marts dataset.
+    Return the current city ranking from `mart_city_score_current`.
+
+    The bounded default is intentionally larger than the operational city
+    registry so dashboard growth is not silently truncated.
     """
     try:
         client = get_bq_client()

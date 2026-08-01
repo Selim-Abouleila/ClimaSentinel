@@ -8,7 +8,7 @@
 
 **🌍 Live Dashboard:** [climasentinel.up.railway.app](https://climasentinel.up.railway.app/)
 
-ClimaSentinel combines a serverless GCP climate-data pipeline with a FastAPI and Next.js serving layer on Railway. It ingests daily weather, air-quality and river-discharge forecasts plus lagged ERA5 reanalysis for 10 major European cities, transforms them with BigQuery and dbt, and supports an optional monthly CMIP6 projection source that is currently disabled in scheduled ingestion.
+ClimaSentinel combines a serverless GCP climate-data pipeline with a FastAPI and Next.js serving layer on Railway. It ingests daily weather and air-quality forecasts plus lagged ERA5 reanalysis for 20 major European cities, with river-discharge forecasts enabled for five of them, transforms the data with BigQuery and dbt, and supports an optional monthly CMIP6 projection source that is currently disabled in scheduled ingestion. The live operational dashboard covers all 20 cities; the beta forecast path remains intentionally frozen to its original 10-city allowlist.
 
 > **Forecasting is beta.** The three-day page presents experimental Day +1/+2/+3 point estimates from deterministic same-vintage rules, not a deployed ML model. Heat has limited ERA5 backtest evidence; Rain was ERA5-backtested but showed insufficient skill; Wind, Air Quality and River are not observation-validated. Missing inputs remain unavailable, and no confidence intervals are claimed.
 
@@ -27,12 +27,11 @@ ClimaSentinel combines a serverless GCP climate-data pipeline with a FastAPI and
 
 ## Quick Start
 
-> **Existing-environment workflow.** The current Terraform does not create the
-> BigQuery `raw` dataset, and `make deploy` runs dbt before a first ingestion can
-> create the source tables. The commands below therefore update an environment
-> whose Bronze layer has already been initialized; they are not yet a clean-room
-> bootstrap. See [Doc 1](docs/1-bootstrap-initialization.md) for the prerequisite
-> and safe deployment order.
+> **BigQuery prerequisite.** Terraform does not create the BigQuery `raw`
+> dataset. Create it once as described in
+> [Doc 1](docs/1-bootstrap-initialization.md); `make deploy` then validates the
+> city files, applies Terraform, executes and waits for the ingestion job, and
+> finishes with dbt seed/run/test.
 
 ```bash
 git clone https://github.com/Selim-Abouleila/ClimaSentinel.git
@@ -51,6 +50,10 @@ make plan
 make deploy
 ```
 
+`make deploy` updates the GCP ingestion/dbt pipeline only. It does not publish
+the FastAPI or Next.js services on Railway; promote the reviewed commit from
+`dev` to `staging` to run the repository's Railway deployment workflow.
+
 See the full guide in [docs/1-bootstrap-initialization.md](docs/1-bootstrap-initialization.md).
 
 ### All commands
@@ -59,7 +62,8 @@ See the full guide in [docs/1-bootstrap-initialization.md](docs/1-bootstrap-init
 |---|---|
 | `make bootstrap` | Enable GCP APIs, create Artifact Registry repo, GCS state bucket, init Terraform |
 | `make build` | Build & push the ingest Docker image via Cloud Build |
-| `make deploy` | Build/push image, create and automatically apply a saved Terraform plan, then run dbt seed/run/test |
+| `make validate-cities` | Validate the operational registry, 12 monthly normals per active city, and frozen forecast-city contract |
+| `make deploy` | Validate city files, build/push, apply Terraform, execute and wait for ingestion, then run dbt seed/run/test |
 | `make plan` | Dry run — show changes without applying |
 | `make destroy` | Destroy Terraform-managed resources only; it does not remove the state bucket, Artifact Registry/images, BigQuery data, enabled APIs, or other imperatively created resources |
 | `make dbt-stg` | Run staging dbt models only |
@@ -83,7 +87,7 @@ flowchart LR
         ─────────────
         clima-sentinel-ingest
         region: europe-west9
-        1 vCPU · 512 MB · 600s"]
+        1 vCPU · 512 MB · 1200s"]
 
         BQ_RAW["🗄️ BigQuery (Bronze)
         ─────────────
@@ -96,7 +100,7 @@ flowchart LR
         DBT["⚙️ dbt (Transform)
         ─────────────
         Dedup, harmonize, aggregate
-        Runs after Terraform apply"]
+        Runs after ingestion"]
 
         BQ_STG["🗄️ BigQuery (Silver)
         ─────────────
@@ -188,15 +192,15 @@ flowchart LR
     end
 
     CITIES["📋 config/cities.csv
-    10 European cities"]
+    20 operational cities"]
 
     NORMALS["🌱 transform/seeds/city_monthly_normals.csv
-    Versioned monthly baseline lookup"]
+    240-row monthly baseline lookup"]
 
     FORECAST_SCOPE["🌱 transform/seeds/forecast_city_allowlist.csv
-    Forecast city + timezone contract"]
+    Original 10-city forecast contract"]
 
-    CITIES -->|"10 cities: weather + AQ + ERA5; river for 3"| CRJ
+    CITIES -->|"20 cities: weather + AQ + ERA5; river for 5"| CRJ
     NORMALS -->|"dbt seed"| BQ_STG
     FORECAST_SCOPE -->|"dbt seed"| BQ_STG
     W  --> CRJ
@@ -238,9 +242,10 @@ uses city-local calendar dates as a mitigation, not as a timestamp correction.
 | 🥇 Gold | `mart` | Operational scores, exact-vintage forecast features, and ERA5-backed Heat/Rain labels | `mart_city_score_*`, `mart_ml_forecast_features_vintage`, `mart_city_realized_weather_daily`, `mart_ml_training_examples`, `mart_ml_serving_features_current` | dbt-managed; deployment and freshness require runtime verification |
 
 > The ingest job creates active-source **Bronze tables only after the `raw`
-> dataset exists**. **Silver** and **Gold** models are managed by dbt. A
-> scheduled ingest can still finish green when its embedded dbt step fails, and
-> scheduled runs do not execute `dbt test`; verify mart freshness independently.
+> dataset exists**. **Silver** and **Gold** models are managed by dbt. Source
+> partial failures and embedded dbt failures propagate as a failed Cloud Run
+> execution. Scheduled runs do not execute `dbt test`; `make deploy` adds a
+> final dbt seed/run/test after the ingestion job completes.
 
 ---
 
@@ -258,6 +263,22 @@ uses city-local calendar dates as a mitigation, not as a timestamp correction.
 | Warsaw | PL | 52.229 | 21.011 | ✅ |
 | Lisbon | PT | 38.716 | −9.133 | — |
 | Stockholm | SE | 59.329 | 18.068 | — |
+| Vienna | AT | 48.208 | 16.374 | ✅ |
+| Brussels | BE | 50.850 | 4.352 | — |
+| Copenhagen | DK | 55.676 | 12.568 | — |
+| Dublin | IE | 53.350 | −6.260 | — |
+| Oslo | NO | 59.914 | 10.752 | — |
+| Helsinki | FI | 60.170 | 24.938 | — |
+| Prague | CZ | 50.076 | 14.438 | — |
+| Budapest | HU | 47.498 | 19.040 | ✅ |
+| Zurich | CH | 47.377 | 8.542 | — |
+| Bucharest | RO | 44.427 | 26.103 | — |
+
+All 20 cities feed the operational current-score and city-detail marts. Vienna,
+Brussels, Copenhagen, Dublin, Oslo, Helsinki, Prague, Budapest, Zurich and
+Bucharest are deliberately absent from `forecast_city_allowlist.csv`; they do
+not enter forecast-vintage features, ML training, forecast serving, or the
+forecast page's original 10-city selector.
 
 ---
 
@@ -267,7 +288,7 @@ ClimaSentinel documents a four-tier branching strategy (`feature/*` → `dev` �
 `staging` → `main`) and validates it with GitHub Actions. Branch protection is
 configured outside the repository and must be verified in GitHub:
 
-1. **PR validation (`dev`):** Runs Python unit and integration tests, frontend lint/build checks, and a Docker build.
+1. **PR validation (`dev`):** Validates the city registry/normals/forecast-scope contract, unit-tests ingestion failure propagation alongside the backend suite, runs frontend lint/build checks, and builds both backend and ingestion Docker images.
 2. **Staging environment (`staging`):** Extracts a point-in-time snapshot, trains and evaluates the six-output Heat/Rain challenger, and deploys the transparent all-rule baseline. Railway deployments run in attached mode; CI verifies the frontend release marker before a limited Chromium/Paris Playwright path exercises all three horizons. Training jobs do not currently receive GitHub Environment isolation, and staging promotion can move the shared MLflow `Production` stage/`champion` alias.
 3. **Production gate (`main`):** A candidate must have non-negative component R², beat the exact matching rule MAE by at least 5%, and satisfy horizon-aware absolute MAE ceilings. Authentication, provenance or artifact-contract failures remain fatal. Railway production deployment is currently disabled, and the operational response continues to serve all five same-vintage rules without model intervals.
 
@@ -288,7 +309,11 @@ current limits:
   Terraform. The state bucket, Artifact Registry and `raw` dataset lifecycle are
   outside that state, so Quick Start is not a complete clean-room recreation.
 - **Data transformations:** dbt defines Silver and Gold, but requires initialized
-  Bronze sources and successful credentials/source access.
+  Bronze sources and successful credentials/source access. All 240 monthly
+  normals rows are structurally validated. The new cities' 120 rows have a
+  checked-in generator and provenance manifest for their 2014–2023 Open-Meteo
+  procedure; the retained legacy 120 rows predate that generator and are not
+  claimed to be exactly reproducible from a provider dataset that can change.
 - **Machine learning:** MLflow records runs, but the DVC pointer on the current
   `dev` line is a legacy snapshot that predates the schema-v3 six-output
   training contract. Workflow-generated pointer commits are branch-local, so

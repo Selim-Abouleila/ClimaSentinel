@@ -14,7 +14,7 @@ The ingestion process relies on three core Google Cloud services:
 1. **Cloud Scheduler**: Fires an HTTP request to the Cloud Run job once a day at
    `06:00 UTC` (`0 6 * * *`).
 2. **Cloud Run Job**: Executes the Python runner that pulls the APIs and invokes
-   dbt.
+   dbt, with a 1,200-second timeout sized for the sequential 20-city workload.
 3. **BigQuery**: Stores appended raw rows in time-partitioned tables and hosts
    the dbt relations.
 
@@ -26,11 +26,13 @@ pushes its image.
 
 ## Configuration: The City List
 
-The ingestion script iterates over 10 major European cities configured in
+The ingestion script iterates over 20 major European cities configured in
 `config/cities.csv`. To add or remove cities, update the CSV, then rebuild and
 redeploy the ingestion image; pushing the file alone does not update the running
 Cloud Run Job. The `river_enabled` column controls whether flood/river discharge
-data is fetched for that city.
+data is fetched for that city. `make validate-cities` requires every active city
+to have exactly 12 monthly-normal rows and keeps the separate forecast-city
+contract frozen to its original 10 IDs.
 
 | City | Country | Latitude | Longitude | River Monitoring |
 |---|---|---|---|---|
@@ -44,6 +46,28 @@ data is fetched for that city.
 | Warsaw | PL | 52.229 | 21.011 | ✅ |
 | Lisbon | PT | 38.716 | -9.133 | — |
 | Stockholm | SE | 59.329 | 18.068 | — |
+| Vienna | AT | 48.208 | 16.374 | ✅ |
+| Brussels | BE | 50.850 | 4.352 | — |
+| Copenhagen | DK | 55.676 | 12.568 | — |
+| Dublin | IE | 53.350 | -6.260 | — |
+| Oslo | NO | 59.914 | 10.752 | — |
+| Helsinki | FI | 60.170 | 24.938 | — |
+| Prague | CZ | 50.076 | 14.438 | — |
+| Budapest | HU | 47.498 | 19.040 | ✅ |
+| Zurich | CH | 47.377 | 8.542 | — |
+| Bucharest | RO | 44.427 | 26.103 | — |
+
+The new 10 cities are operational-dashboard scope only. They are intentionally
+absent from `transform/seeds/forecast_city_allowlist.csv`, so their raw rows do
+not enter forecast-vintage staging, point-in-time ML training/features, or
+forecast serving. Expanding `config/cities.csv` therefore does not expand the
+beta forecast page.
+
+Of the additions, only Vienna and Budapest have river ingestion enabled. Their
+configured city-centre GloFAS cells currently represent large rivers above the
+mart's `>50 m³/s` velocity gate. The other eight new cells were below that gate
+or not representative of the intended urban river, so they remain disabled
+instead of manufacturing a zero or irrelevant river signal.
 
 ---
 
@@ -84,10 +108,13 @@ different count; the loader inserts the response it receives.
 
 ### 3. River Discharge (`raw.flood_daily`)
 - **Endpoint**: `flood-api.open-meteo.com/v1/flood`
-- **Cadence**: Daily (river-enabled cities only — Paris, Amsterdam, Warsaw)
+- **Cadence**: Daily (river-enabled cities only — Paris, Amsterdam, Warsaw,
+  Vienna and Budapest)
 - **Time Window**: Next 7 Days (Daily) = **7 rows per city per day**
 - **Variables Retrieved**:
-  - `river_discharge_m3s` (River discharge in m³/s — nearest river within 5 km of coordinates)
+  - `river_discharge_m3s` (GloFAS river discharge in m³/s at roughly 5 km grid
+    resolution; the selected grid cell is not proof that it represents the
+    intended urban river)
 
 ### 4. Historical Weather — ERA5 Reanalysis (`raw.historical_weather_daily`)
 - **Endpoint**: `archive-api.open-meteo.com/v1/archive`
@@ -123,12 +150,12 @@ different count; the loader inserts the response it receives.
 
 | Source | Rows/city/run | Cities | Frequency | Daily Total |
 |---|---|---|---|---|
-| Weather Forecast | 168 | 10 | Daily | 1,680 |
-| Air Quality | 120 | 10 | Daily | 1,200 |
-| River Discharge | 7 | 3 | Daily | 21 |
-| Historical (ERA5) | 7 | 10 | Daily | 70 |
-| Climate (CMIP6) | ~3,650 | 10 | Disabled | 0 scheduled |
-| **Daily total** | | | | **~2,971** |
+| Weather Forecast | 168 | 20 | Daily | 3,360 |
+| Air Quality | 120 | 20 | Daily | 2,400 |
+| River Discharge | 7 | 5 | Daily | 35 |
+| Historical (ERA5) | 7 | 20 | Daily | 140 |
+| Climate (CMIP6) | ~3,650 | 20 | Disabled | 0 scheduled |
+| **Daily total** | | | | **~5,935** |
 
 ---
 
@@ -152,7 +179,11 @@ Each city/source request is attempted once by the application with a request
 timeout; there is no application-level retry or backoff. A source failure is
 logged and processing continues with the remaining city/source pairs. If any
 rows were inserted, the run is classified as a partial failure and still
-attempts dbt.
+attempts dbt; after the transform attempt it exits non-zero so Cloud Run and a
+waiting deploy cannot mistake the partial load for success. Terraform sets the
+Cloud Run task's `max_retries` to `0`: a failed whole-job execution is not
+automatically replayed because another run would append overlapping raw rows
+under a new run ID. After correcting the cause, rerun the job deliberately.
 
 Raw writes use BigQuery streaming inserts without an application-supplied
 idempotency key. Re-executing the job creates a new `ingestion_run_id` and can
@@ -220,15 +251,14 @@ environment isolation comes from the active credentials and
 | Scenario | Outcome |
 |---|---|
 | All active fetch/insert attempts fail (errors and 0 rows inserted) | Job exits with code 1 — dbt is **not** triggered |
-| Ingestion partial success (some rows inserted) | dbt seed/run is attempted against the available data |
-| `dbt seed` or `dbt run` fails | Logged as `ERROR`, but the process currently returns normally and the Cloud Run execution can still appear successful |
+| Ingestion partial success (some rows inserted) | dbt seed/run is attempted against the available data, then the job exits with code 1 |
+| `dbt seed` or `dbt run` fails | The subprocess failure propagates and the Cloud Run execution exits non-zero; already inserted raw rows remain durable |
 | dbt tests | **Not run** by the scheduled ingestion job; run `make dbt-test` or `dbt test` separately |
 
-> **Operational warning:** a green Cloud Run execution does not prove that the
-> Silver and Gold layers refreshed. Raw streaming inserts are already durable
-> before dbt starts, so swallowing a dbt error is not required to preserve
-> them. Until the runner propagates transform failures, monitor the dbt log
-> markers explicitly and run tests in a separate validation step.
+`make deploy` executes this job with `--wait`; any non-zero outcome stops the
+deploy. After a successful job it runs a final local `dbt seed`, `dbt run` and
+`dbt test`. A daily Scheduler-triggered execution still omits tests, so test and
+freshness monitoring remain separate operational checks.
 
 ### Verifying in logs
 
@@ -249,9 +279,11 @@ If dbt fails, the log will show:
 
 ## Automated-Validation Boundary
 
-The current GitHub pull-request, staging and production workflows do not run
-the ingestion job or execute `dbt compile`, `dbt run`, `dbt test` or source
-freshness checks. A green application CI run therefore does not validate raw
-schemas, BigQuery SQL or warehouse data contracts. Transform changes require a
-separate authenticated BigQuery/dbt validation; the scheduled job is also not a
-substitute because it omits tests and can mask dbt failure in its exit status.
+The pull-request workflow validates the checked-in city registry, monthly
+normals and frozen forecast allowlist, unit-tests ingestion failure propagation,
+and builds both backend and ingestion images. It does not run a live ingestion
+or execute authenticated `dbt compile`, `dbt run`, `dbt test` or
+source-freshness checks. A green application CI run therefore does not validate
+raw schemas, BigQuery SQL or warehouse data. Transform changes still require
+authenticated BigQuery/dbt validation. The scheduled job propagates ingest/dbt
+failures but omits tests and source freshness checks.

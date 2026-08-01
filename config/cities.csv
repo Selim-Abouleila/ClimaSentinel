@@ -9,3 +9,13 @@ athens_gr,Athens,GR,37.98376,23.72784,Europe/Athens,Southern Europe,true,false,7
 warsaw_pl,Warsaw,PL,52.22977,21.01178,Europe/Warsaw,Central Europe,true,true,8
 lisbon_pt,Lisbon,PT,38.71667,-9.13333,Europe/Lisbon,Southern Europe,true,false,9
 stockholm_se,Stockholm,SE,59.32938,18.06871,Europe/Stockholm,Northern Europe,true,false,10
+vienna_at,Vienna,AT,48.2082,16.3738,Europe/Vienna,Central Europe,true,true,11
+brussels_be,Brussels,BE,50.8503,4.3517,Europe/Brussels,Western Europe,true,false,12
+copenhagen_dk,Copenhagen,DK,55.6761,12.5683,Europe/Copenhagen,Northern Europe,true,false,13
+dublin_ie,Dublin,IE,53.3498,-6.2603,Europe/Dublin,Western Europe,true,false,14
+oslo_no,Oslo,NO,59.9139,10.7522,Europe/Oslo,Northern Europe,true,false,15
+helsinki_fi,Helsinki,FI,60.1699,24.9384,Europe/Helsinki,Northern Europe,true,false,16
+prague_cz,Prague,CZ,50.0755,14.4378,Europe/Prague,Central Europe,true,false,17
+budapest_hu,Budapest,HU,47.4979,19.0402,Europe/Budapest,Central Europe,true,true,18
+zurich_ch,Zurich,CH,47.3769,8.5417,Europe/Zurich,Central Europe,true,false,19
+bucharest_ro,Bucharest,RO,44.4268,26.1025,Europe/Bucharest,Eastern Europe,true,false,20

@@ -292,10 +292,11 @@ The vintage staging tests remain part of the dependency contract. A mart test
 passing cannot compensate for a failed same-vintage staging lineage test.
 
 These checks run only when `dbt test` is invoked. The scheduled Cloud Run
-ingestion path currently runs `dbt seed` and `dbt run` without tests and also
-logs dbt failures without propagating a nonzero process exit. A green scheduled
-execution therefore does not by itself establish that the marts refreshed or
-that these contracts passed.
+ingestion path runs `dbt seed` and `dbt run` without tests. Source partial
+failures and dbt subprocess failures propagate a nonzero job exit; whole-job
+retries are disabled because raw writes are append-only. A green scheduled
+execution therefore establishes that the models ran, but not that the separate
+dbt test contracts passed.
 
 The GitHub pull-request, staging and production workflows do not currently
 compile or test dbt either, and the dbt sources have no configured freshness

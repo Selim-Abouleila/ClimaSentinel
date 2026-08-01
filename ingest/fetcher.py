@@ -87,7 +87,8 @@ def fetch_flood_discharge(city: dict) -> list[dict]:
     """
     Fetch daily river discharge forecast for the next 7 days.
     Only meaningful for cities where river_enabled=true in cities.csv.
-    The flood API returns the closest river within 5 km of the coordinates.
+    The flood API resolves the coordinates onto its roughly 5 km GloFAS grid;
+    that selected cell is not guaranteed to represent the intended river.
     Intended cadence: once daily (cron: 0 6 * * *)
     Returns a list of flat row dicts ready for BigQuery insertion.
     """

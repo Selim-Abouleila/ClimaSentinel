@@ -1,0 +1,160 @@
+{
+  "schema_version": 1,
+  "seed": "transform/seeds/city_monthly_normals.csv",
+  "scope": "Operational live-dashboard city climatology; forecast-city membership is controlled separately.",
+  "checked_in_snapshot": {
+    "city_count": 20,
+    "row_count": 240,
+    "sha256": "a61f2413353327bfadff9d3365e0285d3b16b0911156958cbf1df7ab86f41733"
+  },
+  "source": {
+    "provider": "Open-Meteo Historical Weather API",
+    "endpoint": "https://archive-api.open-meteo.com/v1/archive",
+    "documentation": "https://open-meteo.com/en/docs/historical-weather-api",
+    "citation": "https://doi.org/10.5281/ZENODO.7970649",
+    "model_selector": "best_match",
+    "period": {
+      "start_date": "2014-01-01",
+      "end_date": "2023-12-31"
+    },
+    "daily_variables": [
+      "temperature_2m_mean",
+      "temperature_2m_max",
+      "precipitation_sum",
+      "wind_speed_10m_max"
+    ],
+    "timezone": "Per-city IANA timezone from config/cities.csv",
+    "temperature_unit": "celsius",
+    "precipitation_unit": "mm",
+    "wind_speed_unit": "km/h",
+    "timeformat": "iso8601",
+    "cell_selection": "land"
+  },
+  "method": {
+    "aggregation": "Arithmetic mean of every daily value in the period, grouped by local calendar month.",
+    "missing_data_policy": "Fail if any requested date or variable is absent, non-numeric, or non-finite.",
+    "rounding": "Decimal ROUND_HALF_UP to two decimal places.",
+    "expected_daily_rows_per_city": 3652,
+    "expected_daily_rows_by_month": {
+      "1": 310,
+      "2": 282,
+      "3": 310,
+      "4": 300,
+      "5": 310,
+      "6": 300,
+      "7": 310,
+      "8": 310,
+      "9": 300,
+      "10": 310,
+      "11": 300,
+      "12": 310
+    }
+  },
+  "cohorts": [
+    {
+      "name": "legacy_initial_10",
+      "city_count": 10,
+      "row_count": 120,
+      "introduced_by_commit": "00dfcbf19d0bd134db72ee7b9fd1fb54deee5231",
+      "original_retrieval_metadata": "Not recorded by the introducing commit.",
+      "preservation": "All 120 legacy values are retained byte-for-byte.",
+      "reproduction_check": {
+        "checked_on_utc": "2026-08-01",
+        "request_contract": "The source and method fields in this file, with models=best_match.",
+        "metric_count": 480,
+        "exact_matches": 368,
+        "mean_absolute_difference": 0.0044,
+        "maximum_absolute_difference": 0.03,
+        "interpretation": "The near-exact match identifies the legacy methodology; sub-hundredth differences are consistent with upstream archive revisions, so legacy values were not silently refreshed."
+      }
+    },
+    {
+      "name": "live_dashboard_expansion_2026_08_01",
+      "retrieved_at_utc": "2026-08-01T15:10:11Z",
+      "city_count": 10,
+      "row_count": 120,
+      "standalone_generated_csv_sha256": "92e02532fca1e0cc480c62bce90f61ed46b023f4552b80e4438f025cf8c64539",
+      "city_ids": [
+        "vienna_at",
+        "brussels_be",
+        "copenhagen_dk",
+        "dublin_ie",
+        "oslo_no",
+        "helsinki_fi",
+        "prague_cz",
+        "budapest_hu",
+        "zurich_ch",
+        "bucharest_ro"
+      ],
+      "source_grid": [
+        {
+          "city_id": "vienna_at",
+          "latitude": 48.189804,
+          "longitude": 16.377296,
+          "elevation_m": 179.0
+        },
+        {
+          "city_id": "brussels_be",
+          "latitude": 50.861156,
+          "longitude": 4.3315506,
+          "elevation_m": 26.0
+        },
+        {
+          "city_id": "copenhagen_dk",
+          "latitude": 55.641476,
+          "longitude": 12.596349,
+          "elevation_m": 10.0
+        },
+        {
+          "city_id": "dublin_ie",
+          "latitude": 53.391914,
+          "longitude": -6.171417,
+          "elevation_m": 11.0
+        },
+        {
+          "city_id": "oslo_no",
+          "latitude": 59.8594,
+          "longitude": 10.808314,
+          "elevation_m": 21.0
+        },
+        {
+          "city_id": "helsinki_fi",
+          "latitude": 60.210896,
+          "longitude": 25.023365,
+          "elevation_m": 8.0
+        },
+        {
+          "city_id": "prague_cz",
+          "latitude": 50.08787,
+          "longitude": 14.475525,
+          "elevation_m": 251.0
+        },
+        {
+          "city_id": "budapest_hu",
+          "latitude": 47.486816,
+          "longitude": 19.06404,
+          "elevation_m": 113.0
+        },
+        {
+          "city_id": "zurich_ch",
+          "latitude": 47.34622,
+          "longitude": 8.543372,
+          "elevation_m": 409.0
+        },
+        {
+          "city_id": "bucharest_ro",
+          "latitude": 44.46397,
+          "longitude": 26.088955,
+          "elevation_m": 72.0
+        }
+      ]
+    }
+  ],
+  "regeneration": {
+    "generator": "transform/scripts/generate_city_monthly_normals.py",
+    "city_registry": "config/cities.csv",
+    "usage": "Repeat --city-id for the intended cohort, write CSV and metadata to temporary files, review both, then merge rows explicitly. The generator never edits the seed in place.",
+    "example": "python transform/scripts/generate_city_monthly_normals.py --city-id vienna_at --output /tmp/vienna_normals.csv --metadata-output /tmp/vienna_normals.metadata.json"
+  },
+  "reproducibility_note": "Open-Meteo's best_match archive may be revised or its seamless model mix may evolve. The request contract, response grid, retrieval timestamp, and SHA-256 checksums identify the checked-in snapshot."
+}

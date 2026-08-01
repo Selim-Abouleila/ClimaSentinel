@@ -21,7 +21,7 @@ export interface CityDetail {
 
 export async function fetchCurrentScores(): Promise<CityScore[]> {
   try {
-    const res = await fetch(`${API_BASE_URL}/data/current-scores?limit=10`, { cache: 'no-store' });
+    const res = await fetch(`${API_BASE_URL}/data/current-scores`, { cache: 'no-store' });
     if (!res.ok) throw new Error('Failed to fetch current scores');
     return res.json();
   } catch (error) {

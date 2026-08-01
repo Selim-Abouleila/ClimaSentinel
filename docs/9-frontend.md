@@ -31,6 +31,12 @@ factor scores from `GET /data/city/{city_id}/scores`. These pages describe the
 current operational marts; they must not be interpreted as model-validation
 results.
 
+The current-score client no longer hard-codes `limit=10`; it uses the API's
+bounded default of 100. The overview renders every returned city card and
+derives the monitored-city count and explanatory copy from the response. After
+the expanded ingestion and marts are refreshed, that operational surface
+contains 20 cities, including the 10 dashboard-only additions.
+
 The underlying mart selects the two UTC dates “today + tomorrow,” not a rolling
 48-hour interval. The current overview and city page still display “48-hour”
 copy, which is a known product-label mismatch. Both pages also use legacy marts
@@ -55,9 +61,14 @@ horizon. A selection calls
 `GET /data/city/{city_id}/forecast?horizon_days={1|2|3}`; the client never creates
 a shorter horizon by reusing Day +3 output.
 
-The ten city choices are hard-coded in the client rather than discovered from
-the API or `config/cities.csv`; backend configuration changes must be mirrored
-manually.
+The forecast selector remains deliberately hard-coded to the original 10-city
+contract: Paris, London, Madrid, Berlin, Rome, Amsterdam, Athens, Warsaw,
+Lisbon and Stockholm. Vienna, Brussels, Copenhagen, Dublin, Oslo, Helsinki,
+Prague, Budapest, Zurich and Bucharest appear on the operational dashboard but
+are absent from the forecast selector and `forecast_city_allowlist.csv`; they do
+not enter point-in-time forecast features, ML training or serving. Any future
+forecast expansion requires an explicit coordinated allowlist, backend and
+frontend contract change rather than following operational registry growth.
 
 The page gives a prominent global beta disclosure and validation-scope note:
 
@@ -102,7 +113,7 @@ The API exposes method, availability and validation fields and keeps all model
 uncertainty nullable. Backend and frontend should therefore be promoted as one
 release. The staging Playwright smoke test verifies the
 `forecast_rules_baseline` API contract for Paris across all three horizons and
-checks the global beta disclosure. It does not verify visible per-factor
-validation labels, the other nine cities, the overview or city-detail pages, or
-an exact backend commit marker. A rejected challenger is not required to be
-deployed.
+checks the global beta disclosure and freezes the selector at the original 10
+choices. It does not verify visible per-factor validation labels, the other nine
+forecast cities, the 20-city overview or city-detail pages, or an exact backend
+commit marker. A rejected challenger is not required to be deployed.
