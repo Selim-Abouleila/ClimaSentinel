@@ -1,0 +1,11 @@
+city_id,forecast_origin_time_zone
+paris_fr,Europe/Paris
+london_gb,Europe/London
+madrid_es,Europe/Madrid
+berlin_de,Europe/Berlin
+rome_it,Europe/Rome
+amsterdam_nl,Europe/Amsterdam
+athens_gr,Europe/Athens
+warsaw_pl,Europe/Warsaw
+lisbon_pt,Europe/Lisbon
+stockholm_se,Europe/Stockholm

@@ -2,7 +2,7 @@
 # CI Pipeline: PR → dev
 #
 # Triggered on every pull request targeting the 'dev' branch.
-# Runs unit tests, integration tests, and builds the Docker image.
+# Runs data-contract, unit and integration tests, then builds both Docker images.
 # ─────────────────────────────────────────────────────────────────────────
 
 name: CI — PR to Dev
@@ -30,8 +30,25 @@ jobs:
           cache: pip
           cache-dependency-path: backend/requirements.txt
 
+      - name: Validate city configuration contracts
+        working-directory: .
+        run: |
+          python scripts/validate_city_configuration.py
+          python -m unittest discover -s scripts/tests -v
+          python -m unittest discover -s transform/scripts/tests -v
+
       - name: Install dependencies
         run: pip install -r requirements.txt
+
+      - name: Install ingestion test dependency
+        run: pip install python-dotenv==1.0.1
+
+      - name: Run ingestion failure-contract tests
+        working-directory: .
+        env:
+          GCP_PROJECT_ID: test-project
+          PYTHONPATH: ingest
+        run: pytest ingest/tests/ -v
 
       - name: Run unit tests
         run: pytest tests/ -v -m "not integration"
@@ -67,7 +84,7 @@ jobs:
         run: npm run build
 
   docker-build:
-    name: Build Docker Image
+    name: Build Docker Images
     runs-on: ubuntu-latest
     needs: test
 
@@ -77,3 +94,6 @@ jobs:
 
       - name: Build Docker image (no push)
         run: docker build -f backend/Dockerfile -t climasentinel-backend:test .
+
+      - name: Build ingestion Docker image (no push)
+        run: docker build -f ingest/Dockerfile -t climasentinel-ingest:test .

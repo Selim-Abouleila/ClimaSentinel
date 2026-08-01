@@ -7,7 +7,8 @@ models:
       run, city, and valid timestamp instead of retaining only the newest
       forecast revision. ingested_at_utc is the ingestion-run start timestamp
       used as ClimaSentinel's availability proxy, not the provider's model
-      initialization time.
+      initialization time. Only cities in forecast_city_allowlist enter this
+      ledger.
     columns:
       - name: ingestion_run_id
         description: UUID identifying the retrieval snapshot.
@@ -73,7 +74,8 @@ models:
     description: >
       Point-in-time air-quality forecast ledger at one row per ingestion run,
       city, and valid timestamp. Separate retrievals forecasting the same hour
-      remain separate vintages.
+      remain separate vintages. Only cities in forecast_city_allowlist enter
+      this ledger.
     columns:
       - name: ingestion_run_id
         tests: [not_null]
@@ -127,7 +129,8 @@ models:
   - name: stg_flood_daily_vintage
     description: >
       Point-in-time river-discharge forecast ledger for river-enabled cities.
-      Forecast runs remain distinct even when they share a valid date.
+      Forecast runs remain distinct even when they share a valid date. Only
+      cities in forecast_city_allowlist enter this ledger.
     columns:
       - name: ingestion_run_id
         tests: [not_null]

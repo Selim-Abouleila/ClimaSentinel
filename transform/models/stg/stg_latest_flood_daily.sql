@@ -1,7 +1,8 @@
 -- stg_latest_flood_daily.sql
 -- Deduplicates raw.flood_daily: keeps only the freshest river discharge reading
 -- for each (city_id, date) pair based on ingestion timestamp.
--- Only river-enabled cities (Paris, Amsterdam, Warsaw) have data in this table.
+-- Only river-enabled cities (Paris, Amsterdam, Warsaw, Vienna and Budapest)
+-- have data in this table.
 
 WITH ranked AS (
     SELECT

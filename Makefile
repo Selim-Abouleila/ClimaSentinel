@@ -4,7 +4,8 @@
 # Usage:
 #   make bootstrap   → Create GCS Terraform state bucket & init backend
 #   make build       → Build & push the ingest Docker image to Artifact Registry
-#   make deploy      → Build image + terraform apply + dbt run (full pipeline)
+#   make validate-cities → Validate city registry, normals and forecast scope
+#   make deploy      → Validate + build + terraform + ingestion + dbt checks
 #   make plan        → Terraform plan only (dry run, no build)
 #   make destroy     → Terraform destroy (tear down all resources)
 #   make dbt-run     → Run all dbt models (stg + mart)
@@ -13,7 +14,7 @@
 #   make help        → Show this help message
 # =============================================================================
 
-.PHONY: bootstrap build deploy plan destroy dbt-run dbt-stg dbt-test help
+.PHONY: bootstrap build validate-cities deploy plan destroy dbt-run dbt-stg dbt-test help
 
 TF_DIR  := infra/terraform
 DBT_DIR := transform
@@ -45,6 +46,10 @@ build:
 		.
 	@echo "Image built and pushed successfully: $(IMAGE_URI)"
 
+## Validate operational city data and the frozen forecast-city contract
+validate-cities:
+	@python scripts/validate_city_configuration.py
+
 ensure-terraform:
 	@if ! terraform version 2>/dev/null | grep -q "Terraform v"; then \
 		echo "── Installing Terraform ────────────────────────────────────────"; \
@@ -54,13 +59,19 @@ ensure-terraform:
 		rm -f /tmp/terraform.zip; \
 	fi
 
-## Full deploy: build image → terraform apply → dbt run (creates stg views)
-deploy: build ensure-terraform
+## Full deploy: build image → terraform apply → ingest → dbt seed/run/test
+deploy: validate-cities build ensure-terraform
 	@terraform -chdir=$(TF_DIR) plan -out=tfplan \
 		-var="project_id=$(GCP_PROJECT_ID)" \
 		-var="region=$(GCP_REGION)" \
 		-var="ingest_image=$(IMAGE_URI)"
 	@terraform -chdir=$(TF_DIR) apply tfplan
+	@echo ""
+	@echo "Running the updated ingestion job"
+	@gcloud run jobs execute clima-sentinel-ingest \
+		--region $(GCP_REGION) \
+		--project $(GCP_PROJECT_ID) \
+		--wait
 	@echo ""
 	@echo "── Installing dbt (if needed) ──────────────────────────────────"
 	@pip install -q -r $(DBT_DIR)/requirements.txt
@@ -105,7 +116,8 @@ help:
 	@echo "  ─────────────────────────────────────────"
 	@echo "  make bootstrap   Init GCS state bucket & Terraform backend"
 	@echo "  make build       Build & push ingest Docker image"
-	@echo "  make deploy      Build + terraform + dbt (full pipeline)"
+	@echo "  make validate-cities  Validate city config, normals, and forecast scope"
+	@echo "  make deploy      Build + terraform + ingest + dbt validation"
 	@echo "  make plan        Dry run (plan only, no build or apply)"
 	@echo "  make destroy     Tear down all GCP resources"
 	@echo "  make dbt-run     Run all dbt models (stg + mart)"

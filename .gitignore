@@ -1,6 +1,20 @@
 # Environment variables — never commit secrets
 .env
 
+# Local dashboard credentials — never commit
+/.streamlit/secrets.toml
+/dashboard/.streamlit/secrets.toml
+/service-account-key.json
+/service_account_key.json
+/gcp-service-account-key.json
+/gcp_service_account_key.json
+/google-service-account.json
+/dashboard/service-account-key.json
+/dashboard/service_account_key.json
+/dashboard/gcp-service-account-key.json
+/dashboard/gcp_service_account_key.json
+/dashboard/google-service-account.json
+
 # Terraform
 infra/terraform/.terraform/
 infra/terraform/*.tfstate

@@ -4,9 +4,9 @@
 
 -- ── mart_city_score_detail ────────────────────────────────────────────────
 -- Exposes the five individual tipping sub-scores (heat, wind, rain, air,
--- river) for every city within the current 48-hour operational window.
+-- river) for every city across today and tomorrow in UTC.
 --
--- Grain      : one row per city (the day with the highest global score wins).
+-- Grain      : one row per city (a maximum-score date supplies each value).
 -- Depends on : mart_city_score_history  (NOT mart_city_score_current — kept
 --              fully independent so existing dashboard is unaffected).
 -- Consumers  : GET /data/city/{city_id}/scores  (FastAPI)
@@ -36,12 +36,13 @@ WITH current_window AS (
         river_discharge_m3s
 
     FROM {{ ref('mart_city_score_history') }}
-    -- Same 48-hour window used by mart_city_score_current
+    -- Same two-date UTC calendar window used by mart_city_score_current.
     WHERE date BETWEEN CURRENT_DATE('UTC') AND DATE_ADD(CURRENT_DATE('UTC'), INTERVAL 1 DAY)
 ),
 
--- For each city pick the single day that produced the highest global score.
--- All sub-scores, raw values, and the primary driver come from that same day.
+-- For each city select values from a date with the highest global score.
+-- A unique maximum identifies one date. On a tie, the separate ANY_VALUE
+-- aggregates can choose nondeterministically among the tied dates.
 worst_day AS (
     SELECT
         city_id,

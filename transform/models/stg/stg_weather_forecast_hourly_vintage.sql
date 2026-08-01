@@ -11,26 +11,24 @@
 
 WITH ranked AS (
     SELECT
-        *,
+        raw_weather.*,
+        forecast_city.forecast_origin_time_zone,
         ROW_NUMBER() OVER (
-            PARTITION BY ingestion_run_id, city_id, valid_ts_utc
+            PARTITION BY
+                raw_weather.ingestion_run_id,
+                raw_weather.city_id,
+                raw_weather.valid_ts_utc
             ORDER BY
-                ingested_at_utc DESC,
-                temperature_2m DESC,
-                precipitation_mm DESC,
-                wind_speed_10m DESC,
-                wind_gusts_10m DESC,
-                weather_code DESC
+                raw_weather.ingested_at_utc DESC,
+                raw_weather.temperature_2m DESC,
+                raw_weather.precipitation_mm DESC,
+                raw_weather.wind_speed_10m DESC,
+                raw_weather.wind_gusts_10m DESC,
+                raw_weather.weather_code DESC
         ) AS _row_num
-    FROM {{ source('raw', 'weather_forecast_hourly') }}
-),
-
-canonical AS (
-    SELECT
-        *,
-        {{ forecast_origin_time_zone('city_id') }} AS forecast_origin_time_zone
-    FROM ranked
-    WHERE _row_num = 1
+    FROM {{ source('raw', 'weather_forecast_hourly') }} AS raw_weather
+    INNER JOIN {{ ref('forecast_city_allowlist') }} AS forecast_city
+        ON raw_weather.city_id = forecast_city.city_id
 )
 
 SELECT
@@ -51,4 +49,5 @@ SELECT
     wind_speed_10m,
     wind_gusts_10m,
     weather_code
-FROM canonical
+FROM ranked
+WHERE _row_num = 1

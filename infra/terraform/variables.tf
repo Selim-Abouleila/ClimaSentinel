@@ -19,5 +19,5 @@ variable "ingest_image" {
 variable "ingest_schedule" {
   description = "Cron schedule for the Cloud Scheduler trigger (UTC)"
   type        = string
-  default     = "0 6 * * *"  # daily at 06:00 UTC
+  default     = "0 6 * * *" # daily at 06:00 UTC
 }
