@@ -1,77 +1,103 @@
-# 10. MLOps Monitoring Dashboard (Prometheus & Grafana)
+# 10. Local Monitoring Demo (Prometheus and Grafana)
 
-This document explains the production monitoring architecture for ClimaSentinel, detailing how backend metrics are collected, stored, and visualized using Prometheus and Grafana. It also provides step-by-step instructions for running and verifying the monitoring stack locally.
+The repository includes a local Docker Compose demonstration that scrapes the
+public FastAPI `/metrics` endpoint and visualizes the resulting Prometheus
+series in Grafana. It is **not a deployed production monitoring service**.
 
----
+## Current architecture
 
-## 🏛️ Architecture Overview
-
-The monitoring pipeline follows a standard modern MLOps pull-based architecture:
-
-```
-[Live Python Backend] <───scrapes─── [Local Prometheus] <───queries─── [Local Grafana]
-     (/metrics)                       (Time-Series DB)                (Visual Dashboard)
+```text
+Local Prometheus --scrapes every 15 s--> Railway backend /metrics
+Local Grafana    --queries-------------> Local Prometheus
 ```
 
-1. **Python Backend (`/metrics`)**: Exposes live application health, request counters, error rates, and prediction latencies using official Prometheus client libraries.
-2. **Prometheus Scraper**: Wakes up every 15 seconds, reaches out to the backend's public `/metrics` endpoint, fetches the current metrics, and stores them in its time-series database.
-3. **Grafana Dashboard**: Connects to Prometheus as a data source to render rich visual graphs and real-time alerts.
+The checked-in Prometheus configuration targets
+`climasentinel-production.up.railway.app` over HTTPS. Change
+`monitoring/prometheus/prometheus.yml` if the backend hostname changes or if a
+different environment should be observed. The hostname and the provisioned
+dashboard title contain “production,” but that label does not make this local
+Compose stack a production deployment. The current `main` workflow does not
+deploy Railway production, and Compose neither provisions nor verifies this
+remote target; confirm its ownership, release and availability separately in
+Prometheus's target-status page.
 
----
+The backend uses `prometheus-fastapi-instrumentator`, which exposes generic HTTP
+and Python-process metrics. These series cover all instrumented routes; they are
+not model-specific prediction-quality, drift or business-outcome metrics.
 
-## 📊 Monitored Metrics
+## What the provisioned panels actually show
 
-The dashboard tracks four core metrics essential for production machine learning systems:
-- **Total Prediction Requests (`http_requests_total`)**: Measures the overall request volume hitting the model serving API.
-- **Prediction Request Latency (`http_request_duration_seconds`)**: Measures the duration (in seconds) required to serve a prediction, ensuring SLAs are met.
-- **Failed Requests (Error Rate)**: Tracks 4xx and 5xx HTTP response codes to monitor backend stability and data validation failures.
-- **Backend Uptime / Health (`up`)**: Monitors whether the serving service is currently active and reachable.
+| Panel | Current query | Semantics |
+|---|---|---|
+| Total Request Volume | `sum(http_requests_total)` | A cumulative counter across all instrumented HTTP routes, not a request rate and not forecast-only traffic |
+| Prediction Request Latency (p95) | `histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket[5m])) by (le))` | An aggregate p95 over all included handlers/statuses; the current query does not isolate the forecast endpoint |
+| Failed Requests (Error Rate) | `sum(http_requests_total{status=~"5.."})` | A cumulative count of 5xx responses, not a rate and not 4xx + 5xx |
+| Backend Uptime / Health | `time() - process_start_time_seconds` | Backend process age in seconds; it is not dependency readiness or Prometheus target health |
 
----
+The panel titles “Prediction Request Latency,” “Error Rate” and “Health” are
+therefore legacy labels and are broader or stronger than their actual queries.
+Grafana refreshes every 5 seconds while Prometheus scrapes every 15 seconds, so
+several dashboard refreshes can legitimately show the same sample.
 
-## 💻 How to Run Monitoring Locally
+Prometheus's own `up{job="climasentinel-backend"}` series indicates whether the
+scrape target is reachable. The provisioned dashboard does not currently use
+that series. The backend `/health` route is also only process liveness and does
+not test BigQuery.
 
-Running Prometheus and Grafana locally is the recommended approach for development, testing, and presentations. It allows you to monitor live production traffic without incurring unnecessary cloud hosting costs.
+## Important limitations
 
-### Prerequisites
-- Make sure **Docker Desktop** is open and running on your machine.
+- Prometheus and Grafana run on the developer's Docker host. Their published
+  ports are not restricted to loopback in the Compose file and may be reachable
+  through other host interfaces, depending on Docker and firewall settings.
+- No Prometheus alert rules, Grafana alert rules, notification contact points or
+  paging integrations are provisioned.
+- Neither service has a persistent data volume. Prometheus history and Grafana
+  runtime changes can be lost when containers are removed or recreated.
+- The Compose file uses floating `latest` image tags.
+- Grafana allows anonymous Viewer access and uses the default
+  `admin` / `admin` administrator credentials.
+- Prometheus is exposed on local port `9090` and Grafana on `3000`; the latter
+  conflicts with the frontend's default development port.
+- The backend `/metrics` endpoint is public and unauthenticated.
 
-### Step 1: Start the Monitoring Stack
-Open your terminal (PowerShell), navigate to the `monitoring` directory, and launch the Docker Compose stack in the background:
+These defaults are acceptable only for a local demonstration on a trusted
+machine. Do not expose this Compose stack to a shared or public network without
+pinning images, changing credentials, disabling anonymous access, restricting
+network access, adding persistence and configuring alerts.
+
+## Run locally
+
+Prerequisite: Docker Desktop or another Docker Compose-compatible runtime.
 
 ```powershell
 cd monitoring
 docker compose up -d
 ```
 
-### Step 2: Access the Services
-Once the containers are successfully running, open the following URLs in your browser:
+Open:
 
-- **Grafana Dashboard**: [http://localhost:3000](http://localhost:3000)
-  - *Authentication*: Anonymous access is enabled by default (`Viewer` role). You can view the dashboard instantly without logging in.
-  - *Admin Login*: If you need to make edits to the dashboard panels, click **Sign In** in the top right. (Username: `admin` | Password: `admin`).
-- **Prometheus UI**: [http://localhost:9090](http://localhost:9090)
-  - *Target Status*: Open [http://localhost:9090/targets](http://localhost:9090/targets) to verify that Prometheus is successfully connecting to the live backend.
+- Grafana: `http://localhost:3000`
+- Prometheus: `http://localhost:9090`
+- Prometheus target status: `http://localhost:9090/targets`
 
-### Step 3: Generating Live Traffic
-If your Grafana graphs show `No data`, it means the backend has not received any prediction requests recently. 
-To populate the dashboard with real-time data:
-1. Open your live Railway application (Frontend or Backend API) in a new browser tab.
-2. Submit 5–10 prediction requests.
-3. Return to Grafana, set the time window (top right) to **Last 5 minutes**, and watch the metrics populate instantly.
+If the frontend is already using port `3000`, stop it or change the Grafana port
+mapping before starting the stack.
 
----
+Any backend HTTP traffic can increment the request counter. To generate a small
+sample, open the configured backend, `/docs`, or a data endpoint several times,
+then select a recent time range in Grafana. `No data` can mean the target is
+down, the hostname is stale, the metric name/query does not match the exposed
+series, or no samples have been scraped yet; it does not necessarily mean there
+were no forecast requests.
 
-## 🛑 Stopping & Cleaning Up
+## Stop the demo
 
-When you are finished testing or presenting, you can stop the containers and completely free up your system resources.
-
-To stop the containers:
 ```powershell
 docker compose down
 ```
 
-To stop the containers and delete the downloaded Docker images to save disk space:
+To also remove the downloaded images:
+
 ```powershell
 docker compose down --rmi all
 ```

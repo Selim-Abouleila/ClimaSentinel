@@ -83,8 +83,12 @@ resource "google_cloud_run_v2_job" "ingest" {
         }
       }
 
-      # Max runtime for the job (10 min is plenty for 10 cities)
-      timeout = "600s"
+      # A retry re-appends raw rows under a new run_id, so surface failures once
+      # and require an intentional rerun after the underlying issue is fixed.
+      max_retries = 0
+
+      # Allow enough headroom for sequential ingestion across 20 active cities.
+      timeout = "1200s"
     }
   }
 
@@ -140,11 +144,11 @@ resource "google_cloud_scheduler_job" "ingest_daily" {
   schedule         = var.ingest_schedule
   time_zone        = "UTC"
   attempt_deadline = "600s"
-  region           = "europe-west1"  # Scheduler is not available in europe-west9
+  region           = "europe-west1" # Scheduler is not available in europe-west9
 
   http_target {
     http_method = "POST"
-    uri = "https://${var.region}-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/${var.project_id}/jobs/${google_cloud_run_v2_job.ingest.name}:run"
+    uri         = "https://${var.region}-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/${var.project_id}/jobs/${google_cloud_run_v2_job.ingest.name}:run"
 
     oauth_token {
       service_account_email = google_service_account.scheduler_sa.email

@@ -11,6 +11,11 @@ This boundary avoids both training/serving skew and false claims. Training a
 five-component model against later forecasts would teach it to reproduce
 another forecast, not validate it against reality.
 
+> **Evidence scope (reviewed 2026-07-28).** This document describes the
+> repository's implemented contracts and gates. It is not an inventory of the
+> mutable DagsHub/MLflow registry, and the repository does not pin a current
+> schema-v3 run ID, registered version, alias target or evaluation report.
+
 ## End-to-end architecture
 
 ```text
@@ -24,7 +29,7 @@ mart_ml_forecast_features_vintage     mart_city_realized_weather_daily
         └──────────────► mart_ml_training_examples ◄┘
                                    │
                                    ▼
-                         DVC training snapshot
+                 DVC snapshot generated for the run
                                    │
                                    ▼
                    schema-v3 multi-output Random Forest
@@ -54,7 +59,8 @@ canonical `(city_id, forecast_origin_date)` example with:
 - the same ordered feature names used by
   `mart_ml_serving_features_current`;
 - exact Day +1, Day +2 and Day +3 target dates;
-- six mature realized targets: Heat and Rain for each horizon; and
+- six realized targets whose outcomes are available: Heat and Rain for each
+  horizon; and
 - feature and label run/timestamp provenance.
 
 Labels are built only from `mart_city_realized_weather_daily`, backed by ERA5
@@ -63,6 +69,29 @@ the corresponding reanalysis has been ingested. Air-quality and flood forecast
 features remain nullable; their upstream mart also retains explicit source
 presence/completeness flags for rule-serving decisions. Extraction does not
 forward-fill, backward-fill or replace a missing optional source with zero.
+
+### Tracked snapshot compatibility
+
+On the current `dev` line, `model/data/training_snapshot.csv.dvc` references
+legacy object MD5 `44a4b85de5546b4cf649c71414468f52` (99,126 bytes), first
+committed in `486889d`. That object predates the schema-v3 point-in-time
+contract. It is not compatible with `mart_ml_training_examples_v1` and must not
+be used to reproduce, benchmark or promote the current challenger.
+
+The reusable MLOps workflow performs a fresh authorized extraction and runs
+`dvc add` before training. Local work must do the same until a schema-v3
+snapshot has been pushed and its updated pointer committed. A plain `dvc pull`
+from the current pointer does not establish reproducibility for this model.
+Any evaluation report must identify the exact Git commit, updated DVC hash,
+MLflow run ID/model version, data date range and held-out sample counts.
+
+Snapshot auto-commits are branch-local. For example, a `staging` workflow can
+advance its pointer without updating `dev`, so always inspect the pointer in the
+exact revision being run. The MLflow run logs the workflow's checked-out source
+commit plus the newly generated DVC object hash; the later automated pointer
+commit has a different Git ID. Those two identifiers must therefore be retained
+together—the logged source commit alone does not locate the fresh snapshot
+pointer.
 
 The realized score definitions are clipped to `0-100`:
 
@@ -80,8 +109,10 @@ random city rows.
 
 ## Schema-v3 model contract
 
-The shared contract lives in `backend/app/ml_pipeline.py`. Training and serving
-both call the same preprocessing and feature-order functions.
+The shared contract lives in `backend/app/ml_pipeline.py`. Training and any
+future learned-model serving integration must call the same preprocessing and
+feature-order functions. The current operational endpoint serves rules and
+does not load this challenger.
 
 The six ordered outputs are:
 
@@ -121,7 +152,8 @@ also rejected rather than partially sliced.
 ## Training, tracking and challenger evaluation
 
 `model/train.py` logs the challenger to DagsHub MLflow under
-`ClimaSentinel_HeatRainForecaster`. Every run records:
+`ClimaSentinel_HeatRainForecaster`. A successfully executed current-contract
+run records:
 
 - Git commit and DVC snapshot hash;
 - schema and data-contract versions;
@@ -166,6 +198,21 @@ artifact-contract, metadata and unexpected operational failures remain fatal.
 The reusable MLOps workflow publishes the DVC object and Git pointer only after
 training and registration succeed.
 
+### Registry state and manual promotion
+
+The repository proves the registration and promotion logic through code and
+tests; it does not prove which external model version currently owns
+`champion` or MLflow's `Production` stage. Registry state can change outside a
+documentation commit and staging and production currently share it.
+
+CI passes the exact version returned by the training job through
+`MLFLOW_MODEL_VERSION`. In contrast, `python -m model.promote` without that
+variable searches the registry and selects the numerically latest version.
+That fallback is convenient for isolated local work but is ambiguous when
+another run can register concurrently. A reviewed promotion should always pin
+the version printed as `REGISTERED_MODEL_VERSION` by the corresponding training
+run.
+
 ## Operational rule policy
 
 The FastAPI endpoint does not load the latest candidate merely because training
@@ -204,14 +251,18 @@ data is `unavailable`, not zero.
 
 ## Validation evidence and uncertainty
 
-The July 2026 snapshot contained only 81 distinct forecast-origin dates. In its
-chronological holdout, the Heat rule materially outperformed the first Random
-Forest challenger, but this remains limited seasonal evidence rather than a
-mature validation claim. The Rain challenger produced negative held-out R² and
-also failed to beat the simple Rain rule. Rain is therefore described as
-observation-backtested with insufficient skill, not as lacking observations.
-Counts and metrics continue to be logged per run as the snapshot grows; product
-copy does not freeze a dynamic day count.
+The repository does not currently contain a schema-v3-compatible DVC snapshot
+pointer or a pinned evaluation report that would make an exact row count,
+metric value or performance comparison independently reproducible. Do not
+quote a fixed sample count, R², MAE or improvement claim from this document.
+
+Reviewed prior evidence supports only the product's conservative status:
+Heat has limited ERA5 backtest evidence, while Rain was ERA5-backtested but did
+not demonstrate sufficient predictive skill. Those labels are not a current
+benchmark result. The authoritative result for a future run is the evaluation
+record tied to its Git commit, updated DVC hash, MLflow run/model version, date
+range and per-target held-out counts. Until that record is published, neither
+component should be described as mature or production-validated.
 
 Deterministic rules do not provide empirical prediction intervals. Every
 component and top-level confidence/interval field is therefore null and every
@@ -222,9 +273,14 @@ uncertainty method is `none`.
 From the repository root:
 
 ```bash
+# Required while the checked-in DVC pointer is legacy: extract a fresh
+# schema-v3 snapshot with authorized BigQuery access.
 python -m model.extract_data
 dvc add model/data/training_snapshot.csv
 python -m model.train
+
+# Replace 123 with the exact REGISTERED_MODEL_VERSION printed above.
+export MLFLOW_MODEL_VERSION=123
 python -m model.promote
 
 # CI/release mode: report an ordinary quality rejection without deploying it
@@ -238,9 +294,15 @@ cd backend
 pytest tests/ -v
 ```
 
-Production and staging challenger evaluation requires DagsHub/MLflow
+Production and staging challenger evaluation require DagsHub/MLflow
 credentials, while extraction and serving require BigQuery access. A rejected
 challenger leaves the rule endpoint and `champion` alias unchanged.
+
+Do not use `dvc pull` on the current checked-in pointer as the input to
+`model.train`. Do not infer current registry state from this document. Once a
+compatible pointer is published on `dev`, update this section with its DVC hash
+and add a pinned evaluation record containing the run ID, registered version,
+alias decision and held-out support.
 
 ## Current limitation
 

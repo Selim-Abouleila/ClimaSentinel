@@ -19,7 +19,7 @@ they demonstrate value beyond those baselines.
 |---|---|
 | `backend/app/main.py` | Routes, BigQuery orchestration and rule-baseline response assembly |
 | `backend/app/db.py` | Authenticated BigQuery client creation |
-| `backend/app/config.py` | Environment-based application, BigQuery and MLflow settings |
+| `backend/app/config.py` | Environment-based application and BigQuery settings |
 | `backend/app/ml_pipeline.py` | Shared schema-v3 preprocessing, target ordering, horizon slicing, purge rules and artifact validation |
 | `backend/app/forecast_rules.py` | Pure same-vintage Heat, Rain, Wind, AQ and River forecast rules |
 | `backend/app/schemas.py` | Typed API contract, including availability, method, validation and uncertainty provenance |
@@ -28,7 +28,7 @@ they demonstrate value beyond those baselines.
 
 The dashboard endpoints continue to read the operational score marts:
 
-- `GET /health` returns service health and uptime;
+- `GET /health` returns process liveness and uptime;
 - `GET /data/current-scores` reads `mart_city_score_current`;
 - `GET /data/history-scores` reads `mart_city_score_history`;
 - `GET /data/current-zones` reads `mart_city_zone_current`; and
@@ -36,6 +36,50 @@ The dashboard endpoints continue to read the operational score marts:
 
 These marts calculate all five factors from operational inputs. They are not the
 realized-label source used to validate the forecast model.
+
+Despite legacy “48-hour” wording elsewhere in the product,
+`mart_city_score_current` and `mart_city_score_detail` actually select the two
+UTC calendar dates `CURRENT_DATE('UTC')` and the following day. This is not a
+rolling 48-hour interval. `mart_city_score_history` is also a rebuilt table of
+target dates from the currently transformed forecast, not an archive of
+successive forecast runs.
+
+`mart_city_score_detail` uses separate `ANY_VALUE(... HAVING MAX ...)`
+aggregates. When both dates tie on the global score, BigQuery may select factor
+fields from different tied rows; the detail response is not guaranteed to
+represent one deterministic date in that case. See
+[Mart Layer](4-mart-layer.md#mart_city_score_detail-view).
+
+`GET /data/history-scores` has a known schema mismatch on this branch: the route
+orders by `prediction_date`, while `mart_city_score_history` exposes the date
+column as `date`. Until the route is corrected, the BigQuery query is expected
+to fail with a `500` response.
+
+## Current API exposure and hardening gaps
+
+The current service is suitable for the public demonstration dashboard, not a
+hardened multi-tenant API:
+
+- routes have no application-level authentication or authorization;
+- `/docs`, `/openapi.json` and `/metrics` are public;
+- CORS is hard-coded with `allow_origins=["*"]`,
+  `allow_credentials=True`, and unrestricted methods and headers;
+- `/data/current-scores` bounds `limit` to 1–100, while the history and zone
+  list limits remain unbounded; there is no rate limiting or response cache in
+  the application;
+- each data request can issue a BigQuery query; and
+- unexpected forecast failures currently include the underlying exception text
+  in the HTTP `500` detail.
+
+Only the forecast endpoint has a Pydantic response model. The operational
+current-score, history, zone and city-detail endpoints return BigQuery rows
+directly, so callers should not assume those payloads have the same typed
+response-model validation as `CityForecastResponse`.
+
+`GET /health` is a liveness check only. It always reports the running process as
+healthy and does not test BigQuery credentials, dataset availability, the
+serving mart, DagsHub or MLflow. It must not be used as a dependency-readiness
+guarantee.
 
 ## Rule-baseline Day +1/+2/+3 forecast
 
@@ -60,14 +104,21 @@ All rules consume only raw values from the same forecast vintage. Heat uses the
 selected day's maximum-temperature departure from its monthly normal plus only
 positive next-day temperature velocity. Rain uses selected-day precipitation.
 River consumes next-day discharge when the requested day's discharge
-is above its 50 m³/s activation threshold; River Day +3 therefore uses Day +4
-in that case. Optional source gaps are returned as
+is above its 50 m³/s activation threshold. Heat Day +3 always requires the
+same-vintage Day +4 temperature; River Day +3 also requires Day +4 discharge
+when the Day +3 discharge exceeds the threshold. Optional source gaps are
+returned as
 `available: false`, `estimated_score: null` with an `unavailable_reason`; they
 are never represented as zero risk. A genuine zero is returned only when the
 required source data is present and the rule evaluates to zero.
 
 The total and primary driver are calculated from available component point
-estimates. All component and top-level interval fields are null and
+estimates. Specifically, `estimated_total_tipping_score` is the **maximum**
+available component score, not a sum or average, and the primary driver is the
+component that supplies that maximum. The `current_tipping_score` comparison
+is calculated from the forecast origin day's same-vintage inputs; it is not an
+observed-impact baseline and is separate from the legacy operational mart's
+two-date maximum. All component and top-level interval fields are null and
 `uncertainty_method` is `none`; deterministic formulas do not create model
 confidence intervals.
 

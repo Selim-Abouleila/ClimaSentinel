@@ -24,7 +24,7 @@ models:
   - name: stg_latest_flood_daily
     description: >
       Deduplicated river discharge — one row per (city_id, date).
-      Only river-enabled cities (Paris, Amsterdam, Warsaw).
+      Only river-enabled cities (Paris, Amsterdam, Warsaw, Vienna and Budapest).
     columns:
       - name: city_id
         tests: [not_null]

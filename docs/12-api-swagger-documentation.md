@@ -1,13 +1,30 @@
 # 12. API and Swagger Reference
 
 FastAPI generates the authoritative OpenAPI document at `/openapi.json` and the
-interactive Swagger UI at `/docs`.
+interactive Swagger UI at `/docs`. Only the forecast route declares a response
+model, so OpenAPI does not fully specify the response schemas of the operational
+BigQuery routes.
 
 ## Base information
 
 - Local base URL: `http://127.0.0.1:8000`
 - Content type: `application/json`
 - Forecast horizons: integer `1`, `2` or `3`
+
+## Current security and reliability posture
+
+The API currently has no application-level authentication or authorization.
+Swagger (`/docs`), OpenAPI (`/openapi.json`) and Prometheus metrics (`/metrics`)
+are also public. CORS allows every origin, credentials, methods and headers.
+There is no application rate limiter or response cache, and list-endpoint
+limits are inconsistent: `current-scores` enforces `1..100`, while the history
+and zone routes remain unbounded.
+
+The service is therefore a public demonstration API, not a hardened
+multi-tenant interface. Data endpoints can issue BigQuery queries, so a
+production hardening pass should add explicit origins, authentication where
+needed, bounded pagination on the remaining list routes, rate/cost controls,
+safer error responses and dependency readiness.
 
 ## System endpoints
 
@@ -17,7 +34,7 @@ Returns service metadata and the documentation route.
 
 ```json
 {
-  "service": "ClimaSentinel",
+  "service": "ClimaSentinel Backend",
   "version": "1.0.0",
   "docs": "/docs"
 }
@@ -25,7 +42,9 @@ Returns service metadata and the documentation route.
 
 ### `GET /health`
 
-Returns process health, environment and uptime for deployment checks.
+Returns process liveness, environment and uptime. It does not check BigQuery,
+the serving mart, DagsHub or MLflow and must not be interpreted as dependency
+readiness.
 
 ```json
 {
@@ -35,31 +54,59 @@ Returns process health, environment and uptime for deployment checks.
 }
 ```
 
+### `GET /docs`, `GET /openapi.json` and `GET /metrics`
+
+FastAPI exposes interactive documentation and its OpenAPI schema at the first
+two routes. `prometheus-fastapi-instrumentator` exposes generic HTTP/process
+metrics at `/metrics`. All three are currently unauthenticated.
+
 ## Operational data endpoints
+
+These endpoints return BigQuery rows directly and do not declare Pydantic
+response models. Unlike the forecast response, their values are not passed
+through a typed finite-number sanitization contract.
 
 ### `GET /data/current-scores`
 
-Reads `mart_city_score_current`. `limit` defaults to `10`.
+Reads `mart_city_score_current`. `limit` defaults to `100` and accepts values
+from 1 through 100, leaving headroom above the 20-city operational registry
+without silently truncating the dashboard. Each row contains `city_id`,
+`current_tipping_score`, `current_primary_driver` and `rank`. The mart takes the
+maximum across the two UTC calendar dates “today + tomorrow”; despite legacy UI
+wording, this is not a rolling 48-hour interval or a persisted snapshot.
 
 ### `GET /data/history-scores`
 
 Reads `mart_city_score_history`. Accepts optional `city_id` and a `limit` that
-defaults to `50`.
+defaults to `50`; that limit is currently unbounded.
+
+> **Known issue:** this route currently orders by `prediction_date`, but the dbt
+> mart exposes the column as `date`. On this branch the query is expected to
+> return `500` until the backend route is corrected.
+
+Once that mismatch is corrected, the source table still represents target dates
+from the currently transformed forecast. It is rebuilt by dbt and is not an
+archive of successive forecast runs or observed impacts.
 
 ### `GET /data/current-zones`
 
-Reads `mart_city_zone_current`. `limit` defaults to `20`.
+Reads `mart_city_zone_current`. `limit` defaults to `20` and is currently
+unbounded. The mart emits only occupied zones, so an absent zone means zero
+current rows rather than a guaranteed row with `city_count: 0`.
 
 ### `GET /data/city/{city_id}/scores`
 
 Returns the five current operational factors from `mart_city_score_detail`.
 These are operational score-mart outputs, not claims that all five factors have
-realized-label model validation.
+realized-label model validation. The aggregate covers today and tomorrow UTC,
+not a rolling 48-hour window. If both dates tie on the maximum, separate
+`ANY_VALUE(... HAVING MAX ...)` aggregates can choose fields from different tied
+rows, so the response is not guaranteed to represent one deterministic date.
 
 ```json
 {
   "city_id": "paris_fr",
-  "current_tipping_score": 42.5,
+  "current_tipping_score": 60.0,
   "current_primary_driver": "Heat",
   "heat_score": 60.0,
   "wind_score": 20.0,
@@ -69,6 +116,11 @@ realized-label model validation.
 }
 ```
 
+This example illustrates the intended non-tied relationship between the global
+score and Heat as its driver. Clients must not enforce that relationship as an
+API invariant until the documented tie behavior in
+[Mart Layer](4-mart-layer.md#mart_city_score_detail-view) is corrected.
+
 ## Rule-baseline forecast endpoint
 
 ### `GET /data/city/{city_id}/forecast`
@@ -77,6 +129,8 @@ Returns one genuine horizon from the point-in-time same-vintage rule policy.
 
 - Path: `city_id`, for example `paris_fr`
 - Query: `horizon_days`, default `3`, accepted values `1`, `2`, `3`
+- City scope: the original 10 IDs in `forecast_city_allowlist.csv` only; the 10
+  new operational-dashboard cities are intentionally excluded
 - Rule outputs: Heat, Rain, Wind, Air Quality and River from same-vintage
   forecasts
 - Validation scope: limited ERA5 backtest for Heat; an ERA5 backtest with
@@ -199,6 +253,18 @@ Example response where Heat is the primary driver and AQ is unavailable:
 | `prediction_date` | City-local forecast origin date for the exact serving vintage |
 | `feature_ingestion_run_id` | Exact same-vintage feature run used by the response |
 
+`weather_trajectory` is a display subset, not the complete rule-input
+provenance: it returns temperatures through the selected horizon and target-day
+rain/wind. Heat Day +3 still consumes the same-vintage Day +4 temperature, and
+River Day +3 can consume Day +4 discharge, even though those Day +4 values and
+AQ/River inputs are not exposed in this object.
+
+`estimated_total_tipping_score` is the maximum among available component point
+estimates, not their sum or average. `forecast_primary_driver` names the
+component that provides that maximum. `current_tipping_score` is separately
+calculated from the forecast-origin day's same-vintage inputs; it is not an
+observed-outcome baseline.
+
 `estimated_score: 0.0` means the component had sufficient source data and its
 calculation genuinely evaluated to zero. `estimated_score: null` plus
 `available: false` means the source contract was not satisfied. Clients must not
@@ -214,4 +280,10 @@ statistical confidence interval.
 |---:|---|
 | `404` | No current eligible point-in-time serving row exists for the city |
 | `422` | `horizon_days` is outside `1..3` or another request value is invalid |
-| `500` | BigQuery or unexpected application failure |
+| `500` | BigQuery or unexpected application failure. The forecast route currently includes the underlying exception text in `detail`, so clients should not treat that text as a stable contract. |
+
+Vienna, Brussels, Copenhagen, Dublin, Oslo, Helsinki, Prague, Budapest, Zurich
+and Bucharest can return current operational scores but have no eligible
+forecast serving rows. Their forecast requests return `404` unless a future
+change explicitly expands the frozen allowlist and the complete point-in-time
+forecast contract.

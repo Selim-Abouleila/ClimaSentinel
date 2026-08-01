@@ -1,19 +1,38 @@
 # 2. Ingestion Pipeline
 
-The ClimaSentinel ingestion pipeline is a serverless, automated data pipeline running entirely on Google Cloud Platform. It scales to zero when idle and automatically fetches daily weather, air quality, river discharge, historical reanalysis, and long-term climate projection data for a configurable set of cities directly into BigQuery.
+The ClimaSentinel ingestion pipeline is a serverless, automated data pipeline
+running on Google Cloud Platform. It scales to zero when idle and actively
+fetches weather forecasts, air-quality forecasts, river-discharge forecasts and
+lagged historical reanalysis for a configurable set of cities. Support code for
+long-term CMIP6 projections remains in the repository, but that fetch is
+disabled in scheduled ingestion.
 
 ## Architecture
 
-The ingestion process relies on three core Google Cloud services, all provisioned via Terraform:
-1. **Cloud Scheduler**: Acts as a cron job, firing an HTTP request to the Cloud Run job once a day at `06:00 UTC` (`0 6 * * *`).
-2. **Cloud Run Job**: Executes the Python runner which contains the application logic to pull from APIs and transform the results.
-3. **BigQuery**: Provides the data warehouse where processed, raw climate data is appended into time-partitioned tables.
+The ingestion process relies on three core Google Cloud services:
 
-Additionally, **Artifact Registry** is used to store the Docker container image built via **Cloud Build**.
+1. **Cloud Scheduler**: Fires an HTTP request to the Cloud Run job once a day at
+   `06:00 UTC` (`0 6 * * *`).
+2. **Cloud Run Job**: Executes the Python runner that pulls the APIs and invokes
+   dbt, with a 1,200-second timeout sized for the sequential 20-city workload.
+3. **BigQuery**: Stores appended raw rows in time-partitioned tables and hosts
+   the dbt relations.
+
+Terraform manages the Cloud Run Job, Scheduler, service accounts and their IAM
+bindings. The `raw` dataset is a manual prerequisite and the Python loader
+creates active source tables on first use. The bootstrap script, rather than
+Terraform, creates the Artifact Registry repository; Cloud Build builds and
+pushes its image.
 
 ## Configuration: The City List
 
-The ingestion script iterates over 10 major European cities configured in `config/cities.csv`. To add or remove cities, simply update the CSV and push. The `river_enabled` column controls whether flood/river discharge data is fetched for that city.
+The ingestion script iterates over 20 major European cities configured in
+`config/cities.csv`. To add or remove cities, update the CSV, then rebuild and
+redeploy the ingestion image; pushing the file alone does not update the running
+Cloud Run Job. The `river_enabled` column controls whether flood/river discharge
+data is fetched for that city. `make validate-cities` requires every active city
+to have exactly 12 monthly-normal rows and keeps the separate forecast-city
+contract frozen to its original 10 IDs.
 
 | City | Country | Latitude | Longitude | River Monitoring |
 |---|---|---|---|---|
@@ -27,12 +46,43 @@ The ingestion script iterates over 10 major European cities configured in `confi
 | Warsaw | PL | 52.229 | 21.011 | ✅ |
 | Lisbon | PT | 38.716 | -9.133 | — |
 | Stockholm | SE | 59.329 | 18.068 | — |
+| Vienna | AT | 48.208 | 16.374 | ✅ |
+| Brussels | BE | 50.850 | 4.352 | — |
+| Copenhagen | DK | 55.676 | 12.568 | — |
+| Dublin | IE | 53.350 | -6.260 | — |
+| Oslo | NO | 59.914 | 10.752 | — |
+| Helsinki | FI | 60.170 | 24.938 | — |
+| Prague | CZ | 50.076 | 14.438 | — |
+| Budapest | HU | 47.498 | 19.040 | ✅ |
+| Zurich | CH | 47.377 | 8.542 | — |
+| Bucharest | RO | 44.427 | 26.103 | — |
+
+The new 10 cities are operational-dashboard scope only. They are intentionally
+absent from `transform/seeds/forecast_city_allowlist.csv`, so their raw rows do
+not enter forecast-vintage staging, point-in-time ML training/features, or
+forecast serving. Expanding `config/cities.csv` therefore does not expand the
+beta forecast page.
+
+Of the additions, only Vienna and Budapest have river ingestion enabled. Their
+configured city-centre GloFAS cells currently represent large rivers above the
+mart's `>50 m³/s` velocity gate. The other eight new cells were below that gate
+or not representative of the intended urban river, so they remain disabled
+instead of manufacturing a zero or irrelevant river signal.
 
 ---
 
 ## APIs & Data Retrieved
 
-The Cloud Run job fetches data from **five Open-Meteo endpoints** for each city, formats it as JSON, and streams it into the `raw` BigQuery dataset. Because tables are time-partitioned, no data is overwritten — historical forecasts are accumulated continuously over time allowing for forecast deviation monitoring.
+The scheduled Cloud Run job actively calls four Open-Meteo endpoint families,
+formats the responses as JSON, and streams them into the `raw` BigQuery dataset.
+Flood is called only for river-enabled cities. A fifth CMIP6 client exists but
+is not invoked by `ingest/main.py`. Because active tables are time-partitioned,
+no data is overwritten; historical forecast vintages accumulate over time.
+
+The hourly row counts below are configured expectations, not validated source
+contracts. They assume 24 distinct provider timestamps per civil day. Partial
+responses and any 23/25-hour daylight-saving-time representation can produce a
+different count; the loader inserts the response it receives.
 
 ### 1. Weather Forecast (`raw.weather_forecast_hourly`)
 - **Endpoint**: `api.open-meteo.com/v1/forecast`
@@ -58,16 +108,21 @@ The Cloud Run job fetches data from **five Open-Meteo endpoints** for each city,
 
 ### 3. River Discharge (`raw.flood_daily`)
 - **Endpoint**: `flood-api.open-meteo.com/v1/flood`
-- **Cadence**: Daily (river-enabled cities only — Paris, Amsterdam, Warsaw)
+- **Cadence**: Daily (river-enabled cities only — Paris, Amsterdam, Warsaw,
+  Vienna and Budapest)
 - **Time Window**: Next 7 Days (Daily) = **7 rows per city per day**
 - **Variables Retrieved**:
-  - `river_discharge_m3s` (River discharge in m³/s — nearest river within 5 km of coordinates)
+  - `river_discharge_m3s` (GloFAS river discharge in m³/s at roughly 5 km grid
+    resolution; the selected grid cell is not proof that it represents the
+    intended urban river)
 
 ### 4. Historical Weather — ERA5 Reanalysis (`raw.historical_weather_daily`)
 - **Endpoint**: `archive-api.open-meteo.com/v1/archive`
 - **Cadence**: Daily (all cities)
 - **Time Window**: Rolling 7-day window (`today-12` to `today-6`) = **7 rows per city per day**
-- **Note**: ERA5 has a ~5-day publication lag. The fetch window is offset to guarantee only confirmed, non-partial data is ingested.
+- **Note**: ERA5 has a publication lag. The fetch window is deliberately offset
+  to reduce the chance of ingesting partial recent data; source completeness
+  should still be checked rather than assumed.
 - **Variables Retrieved**:
   - `temperature_2m_mean` (Daily mean temperature in °C)
   - `temperature_2m_max` (Daily maximum temperature in °C)
@@ -75,9 +130,12 @@ The Cloud Run job fetches data from **five Open-Meteo endpoints** for each city,
   - `precipitation_sum_mm` (Total daily precipitation in mm)
   - `wind_speed_10m_max` (Maximum daily wind speed in km/h)
 
-### 5. Climate Projections — CMIP6 (`raw.climate_projections_daily`)
+### 5. Climate Projections — CMIP6 (implemented, scheduled fetch disabled)
+
+- **Scheduled status**: Disabled; `ingest/main.py` does not currently invoke the
+  fetch or loader, so no monthly rows or table creation should be expected
 - **Endpoint**: `climate-api.open-meteo.com/v1/climate`
-- **Cadence**: Monthly (1st of month only — all cities)
+- **Guard if invoked directly**: 1st of month only
 - **Time Window**: Next 10 years (Daily) = **~3,650 rows per city per month**
 - **Model**: `MRI_AGCM3_2_S` (high-resolution atmospheric model)
 - **Variables Retrieved**:
@@ -88,16 +146,16 @@ The Cloud Run job fetches data from **five Open-Meteo endpoints** for each city,
 
 ---
 
-## Daily Volume Summary
+## Nominal Daily Volume Summary
 
 | Source | Rows/city/run | Cities | Frequency | Daily Total |
 |---|---|---|---|---|
-| Weather Forecast | 168 | 10 | Daily | 1,680 |
-| Air Quality | 120 | 10 | Daily | 1,200 |
-| River Discharge | 7 | 3 | Daily | 21 |
-| Historical (ERA5) | 7 | 10 | Daily | 70 |
-| Climate (CMIP6) | ~3,650 | 10 | Monthly | ~36,500/mo |
-| **Daily total** | | | | **~2,971** |
+| Weather Forecast | 168 | 20 | Daily | 3,360 |
+| Air Quality | 120 | 20 | Daily | 2,400 |
+| River Discharge | 7 | 5 | Daily | 35 |
+| Historical (ERA5) | 7 | 20 | Daily | 140 |
+| Climate (CMIP6) | ~3,650 | 20 | Disabled | 0 scheduled |
+| **Daily total** | | | | **~5,935** |
 
 ---
 
@@ -110,46 +168,97 @@ Every row inserted into BigQuery is stamped with two metadata fields for traceab
 | `ingestion_run_id` | `STRING` | UUID v4 unique to each pipeline run |
 | `ingested_at_utc` | `TIMESTAMP` | UTC timestamp when the run started |
 
-These fields enable deduplication in the staging layer and full audit trail of when each row was loaded.
+These fields support staging deduplication and retrieval-run lineage. They are
+not complete source provenance: `ingested_at_utc` is captured once at the start
+of the whole job, and the raw schema does not retain the provider's model issue
+time, a per-city request time, response headers or source-version metadata.
+
+## Delivery and Retry Semantics
+
+Each city/source request is attempted once by the application with a request
+timeout; there is no application-level retry or backoff. A source failure is
+logged and processing continues with the remaining city/source pairs. If any
+rows were inserted, the run is classified as a partial failure and still
+attempts dbt; after the transform attempt it exits non-zero so Cloud Run and a
+waiting deploy cannot mistake the partial load for success. Terraform sets the
+Cloud Run task's `max_retries` to `0`: a failed whole-job execution is not
+automatically replayed because another run would append overlapping raw rows
+under a new run ID. After correcting the cause, rerun the job deliberately.
+
+Raw writes use BigQuery streaming inserts without an application-supplied
+idempotency key. Re-executing the job creates a new `ingestion_run_id` and can
+append overlapping rows. That is expected in Bronze: the operational staging
+path selects the latest row, while the vintage path deliberately retains
+separate retrievals. Do not interpret raw row count as a count of unique
+forecast instants.
 
 ## Table Auto-Creation
 
-You do not need to manage BigQuery table schemas manually or via Terraform. The Python script (`loader.py`) uses `client.create_table(exists_ok=True)` to dynamically spin up all five raw tables on its very first run, saving you from writing extensive and verbose DDL files.
+The active Python loaders use `client.create_table(exists_ok=True)` to create
+their four raw tables on first successful use. They do **not** create the `raw`
+dataset itself; it must already exist in the configured BigQuery location, as
+described in [Doc 1](1-bootstrap-initialization.md). The optional
+`climate_projections_daily` table is not auto-created while the CMIP6 call
+remains disabled.
 
 ---
 
 ## Post-Ingestion: Automated dbt Run
 
-After all raw data has been successfully loaded into BigQuery, the Cloud Run Job **automatically triggers `dbt run`** to rebuild the Silver (staging views) and Gold (mart tables) layers in the same execution.
+Unless the run records source errors and inserts zero rows, the Cloud Run Job
+invokes `dbt seed` and then `dbt run` to rebuild the Silver staging views and
+Gold mart relations in the same execution. Partial ingestion therefore still
+starts the transform step; an unusual zero-row run with no recorded exception
+does too.
 
 ### How it works
 
 ```
 Cloud Scheduler (06:00 UTC)
     → Cloud Run Job starts
-        → [1] Ingest: fetch 5 APIs × 10 cities → raw.* tables   ✅
-        → [2] Transform: dbt run → stg.* views + mart.* tables   ✅
+        → [1] Ingest: fetch 4 active source families → raw.* tables
+        → [2] Transform: dbt seed + dbt run → stg.* + mart.*
     → Job exits
 ```
 
-The `run_dbt()` function in `main.py` invokes dbt as a subprocess using the `transform/` directory bundled inside the Docker image:
+The `run_dbt()` function in `main.py` invokes dbt as subprocesses using the
+`transform/` directory bundled inside the Docker image and the `prod` target:
 
 ```python
-subprocess.run([sys.executable, "-m", "dbt", "run",
+subprocess.run([
+    "dbt", "--no-use-colors", "seed",
     "--project-dir", "/app/transform",
     "--profiles-dir", "/app/transform",
-    "--no-use-colors"])
+    "--target", "prod",
+], check=True)
+
+subprocess.run([
+    "dbt", "--no-use-colors", "run",
+    "--project-dir", "/app/transform",
+    "--profiles-dir", "/app/transform",
+    "--target", "prod",
+], check=True)
 ```
 
-Authentication is handled automatically via the Cloud Run Job's service account — no JSON key file is required (`method: oauth` in `profiles.yml`).
+Authentication is handled automatically via the Cloud Run Job's service account
+— no JSON key file is required (`method: oauth` in `profiles.yml`). The
+committed `dev` and `prod` dbt targets currently have the same settings;
+environment isolation comes from the active credentials and
+`GCP_PROJECT_ID`, not from selecting the target name.
 
 ### Failure behaviour
 
 | Scenario | Outcome |
 |---|---|
-| Ingestion fails entirely (0 rows inserted) | Job exits with code 1 — dbt is **not** triggered |
-| Ingestion partial success (some rows inserted) | dbt **is** triggered — mart tables are refreshed with available data |
-| dbt fails (model error, schema change, etc.) | Logged as `ERROR` — job exits **0** so raw data is always preserved |
+| All active fetch/insert attempts fail (errors and 0 rows inserted) | Job exits with code 1 — dbt is **not** triggered |
+| Ingestion partial success (some rows inserted) | dbt seed/run is attempted against the available data, then the job exits with code 1 |
+| `dbt seed` or `dbt run` fails | The subprocess failure propagates and the Cloud Run execution exits non-zero; already inserted raw rows remain durable |
+| dbt tests | **Not run** by the scheduled ingestion job; run `make dbt-test` or `dbt test` separately |
+
+`make deploy` executes this job with `--wait`; any non-zero outcome stops the
+deploy. After a successful job it runs a final local `dbt seed`, `dbt run` and
+`dbt test`. A daily Scheduler-triggered execution still omits tests, so test and
+freshness monitoring remain separate operational checks.
 
 ### Verifying in logs
 
@@ -167,3 +276,14 @@ If dbt fails, the log will show:
 ```
 ── dbt run FAILED (exit 1) — mart tables may be stale. Check logs above for details.
 ```
+
+## Automated-Validation Boundary
+
+The pull-request workflow validates the checked-in city registry, monthly
+normals and frozen forecast allowlist, unit-tests ingestion failure propagation,
+and builds both backend and ingestion images. It does not run a live ingestion
+or execute authenticated `dbt compile`, `dbt run`, `dbt test` or
+source-freshness checks. A green application CI run therefore does not validate
+raw schemas, BigQuery SQL or warehouse data. Transform changes still require
+authenticated BigQuery/dbt validation. The scheduled job propagates ingest/dbt
+failures but omits tests and source freshness checks.

@@ -8,14 +8,14 @@ WITH current_window AS (
         global_tipping_score,
         primary_driver
     FROM {{ ref('mart_city_score_history') }}
-    -- Look at the 48-hour operational window (today and tomorrow)
+    -- Look at the two UTC calendar dates: today and tomorrow.
     WHERE date BETWEEN CURRENT_DATE('UTC') AND DATE_ADD(CURRENT_DATE('UTC'), INTERVAL 1 DAY)
 ),
 
 aggregated AS (
     SELECT
         city_id,
-        -- Take the maximum score over the next 48 hours to represent current tension
+        -- Take the maximum score across those two dates.
         MAX(global_tipping_score) AS current_tipping_score,
         
         -- We string_agg the primary drivers in case they change between today and tomorrow,
