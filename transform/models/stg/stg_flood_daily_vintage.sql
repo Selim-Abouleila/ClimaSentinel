@@ -7,20 +7,20 @@
 
 WITH ranked AS (
     SELECT
-        *,
+        raw_flood.*,
+        forecast_city.forecast_origin_time_zone,
         ROW_NUMBER() OVER (
-            PARTITION BY ingestion_run_id, city_id, date
-            ORDER BY ingested_at_utc DESC, river_discharge_m3s DESC
+            PARTITION BY
+                raw_flood.ingestion_run_id,
+                raw_flood.city_id,
+                raw_flood.date
+            ORDER BY
+                raw_flood.ingested_at_utc DESC,
+                raw_flood.river_discharge_m3s DESC
         ) AS _row_num
-    FROM {{ source('raw', 'flood_daily') }}
-),
-
-canonical AS (
-    SELECT
-        *,
-        {{ forecast_origin_time_zone('city_id') }} AS forecast_origin_time_zone
-    FROM ranked
-    WHERE _row_num = 1
+    FROM {{ source('raw', 'flood_daily') }} AS raw_flood
+    INNER JOIN {{ ref('forecast_city_allowlist') }} AS forecast_city
+        ON raw_flood.city_id = forecast_city.city_id
 )
 
 SELECT
@@ -37,4 +37,5 @@ SELECT
     ) AS horizon_days,
     river_discharge_m3s,
     river_discharge_m3s IS NOT NULL AS has_river_discharge_value
-FROM canonical
+FROM ranked
+WHERE _row_num = 1

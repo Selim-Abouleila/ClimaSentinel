@@ -86,10 +86,11 @@ transform/
 │   │   └── stg_city_signal_vintage.sql   ← Point-in-time ML staging input
 │   └── mart/                        # Gold — operational + 4 point-in-time ML marts + legacy feature table
 ├── macros/
-│   ├── forecast_origin_time_zone.sql # City ID → IANA timezone contract
 │   └── generate_schema_name.sql      # Preserve explicit stg/mart datasets
 ├── seeds/
-│   └── city_monthly_normals.csv      # Static monthly climate baselines
+│   ├── _seeds.yml                    # Seed docs + schema tests
+│   ├── city_monthly_normals.csv      # Static monthly climate baselines
+│   └── forecast_city_allowlist.csv   # Forecast city + IANA timezone contract
 └── tests/                           # Singular lineage, grain, and coverage tests
 ```
 
@@ -125,10 +126,14 @@ raw.historical_weather_daily ──→ stg_latest_historical_daily ──→ mar
 ```
 
 The vintage path keeps `ingestion_run_id` in its grain and joins sources only
-within the same run. It exposes `forecast_origin_time_zone` and derives
-`forecast_origin_date` from the UTC ingestion timestamp in each city's IANA
-timezone, so late or manual runs retain the correct local Day `0–6` weather
-trajectory.
+within the same run. Each vintage entry model first joins
+`forecast_city_allowlist`, which admits only the intentional forecast cities
+and supplies `forecast_origin_time_zone`. The models derive
+`forecast_origin_date` from the UTC ingestion timestamp in that timezone, so
+late or manual runs retain the correct local Day `0–6` weather trajectory.
+Operational dashboard cities absent from the seed do not enter point-in-time
+forecast features, training or serving outputs. Realized-weather history and
+the unused legacy feature table intentionally remain outside this filter.
 
 The raw field named `valid_ts_utc` is currently populated from offset-free
 city-local provider strings and must not be treated as a trustworthy UTC
@@ -145,8 +150,7 @@ implemented.
 Build and validate the vintage path independently with:
 
 ```bash
-dbt run --profiles-dir . --select tag:forecast_vintage
-dbt test --profiles-dir . --select tag:forecast_vintage
+dbt build --profiles-dir . --select tag:forecast_vintage
 ```
 
 The scheduled ingestion job runs `dbt seed` and `dbt run`, but not `dbt test`;

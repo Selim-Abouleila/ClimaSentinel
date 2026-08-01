@@ -1,0 +1,19 @@
+version: 2
+
+seeds:
+  - name: forecast_city_allowlist
+    description: >
+      Explicit city and timezone contract for the forecast-vintage path.
+      Operational dashboard cities that are absent from this seed do not enter
+      point-in-time forecast features, training, or serving outputs.
+    config:
+      tags: [forecast_vintage]
+    columns:
+      - name: city_id
+        description: Stable city identifier admitted to the forecast pipeline.
+        tests:
+          - not_null
+          - unique
+      - name: forecast_origin_time_zone
+        description: IANA timezone used to derive the city-local forecast origin date.
+        tests: [not_null]

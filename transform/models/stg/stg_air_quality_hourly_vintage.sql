@@ -8,26 +8,24 @@
 
 WITH ranked AS (
     SELECT
-        *,
+        raw_air_quality.*,
+        forecast_city.forecast_origin_time_zone,
         ROW_NUMBER() OVER (
-            PARTITION BY ingestion_run_id, city_id, valid_ts_utc
+            PARTITION BY
+                raw_air_quality.ingestion_run_id,
+                raw_air_quality.city_id,
+                raw_air_quality.valid_ts_utc
             ORDER BY
-                ingested_at_utc DESC,
-                european_aqi DESC,
-                pm2_5 DESC,
-                pm10 DESC,
-                no2 DESC,
-                o3 DESC
+                raw_air_quality.ingested_at_utc DESC,
+                raw_air_quality.european_aqi DESC,
+                raw_air_quality.pm2_5 DESC,
+                raw_air_quality.pm10 DESC,
+                raw_air_quality.no2 DESC,
+                raw_air_quality.o3 DESC
         ) AS _row_num
-    FROM {{ source('raw', 'air_quality_hourly') }}
-),
-
-canonical AS (
-    SELECT
-        *,
-        {{ forecast_origin_time_zone('city_id') }} AS forecast_origin_time_zone
-    FROM ranked
-    WHERE _row_num = 1
+    FROM {{ source('raw', 'air_quality_hourly') }} AS raw_air_quality
+    INNER JOIN {{ ref('forecast_city_allowlist') }} AS forecast_city
+        ON raw_air_quality.city_id = forecast_city.city_id
 )
 
 SELECT
@@ -48,4 +46,5 @@ SELECT
     pm10,
     no2,
     o3
-FROM canonical
+FROM ranked
+WHERE _row_num = 1
