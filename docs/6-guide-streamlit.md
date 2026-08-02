@@ -21,8 +21,9 @@ credentials, variables secrètes ou captures contenant ces valeurs.
 L'application doit afficher de façon visible :
 
 > **Prévision bêta.** Scores ponctuels déterministes sans intervalle de
-> confiance. Heat dispose d'un backtest ERA5 limité ; Rain a montré une compétence
-> insuffisante ; Wind, Air Quality et River ne sont pas validés sur des
+> confiance. Heat dispose d'un backtest limité sur les données
+> d'archive/réanalyse Open-Meteo ; Rain a montré une compétence insuffisante ;
+> Wind, Air Quality et River ne sont pas validés sur des
 > observations. Une donnée manquante peut être masquée dans ces marts
 > opérationnels hérités.
 
@@ -56,6 +57,12 @@ L'application doit afficher de façon visible :
 | `mart_city_score_current` | `city_id`, `current_tipping_score`, `current_primary_driver`, `rank` | Vue de classement sur les deux dates calendaires UTC « aujourd'hui + demain » ; ni snapshot persistant, ni fenêtre glissante de 48 heures |
 | `mart_city_score_history` | `city_id`, `date`, `global_tipping_score`, `heat_score`, `wind_score`, `rain_score`, `air_score`, `river_score`, `primary_driver` | Dates cibles de la prévision actuellement transformée ; la table reconstruite n'archive ni les exécutions précédentes, ni des impacts observés |
 | `mart_city_zone_current` | `zone_name`, `city_count`, `cities_in_zone`, `drivers_in_zone` | Résumé des zones opérationnelles occupées ; une zone sans ville n'apparaît pas |
+
+Après un rafraîchissement complet, ces marts opérationnels sont destinés à
+contenir les 20 villes actives. L'application doit dériver son compteur, son
+classement et ses sélecteurs des lignes réellement retournées, sans limite
+codée en dur à 10. Une couverture inférieure à 20 doit rester visible comme
+un état de données incomplet ou obsolète.
 
 ---
 
@@ -133,8 +140,8 @@ Créer un fichier `app.py` dans le dossier `dashboard/` qui réalise les opérat
    - Le cartouche bêta obligatoire indiqué au début de ce guide
    - Un bouton pour forcer le rechargement des données
 4. **Section 1 — Vue Globale :** Afficher les zones présentes dans `mart_city_zone_current` ; si l'interface doit toujours montrer les 4 zones, compléter explicitement les zones absentes avec un compteur à zéro
-5. **Section 2 — Classement :** Un tableau et un graphique en barres montrant jusqu'aux 10 villes configurées, selon les lignes réellement disponibles dans `mart_city_score_current`
-6. **Section 3 — Horizon courant :** Un graphique en courbes par date cible avec un sélecteur de villes (`mart_city_score_history`), sans le présenter comme un historique des runs ou des observations
+5. **Section 2 — Classement :** Un tableau et un graphique en barres montrant toutes les lignes opérationnelles réellement disponibles dans `mart_city_score_current` (20 après un rafraîchissement complet), sans Top 10 codé en dur
+6. **Section 3 — Horizon courant :** Un graphique en courbes par date cible avec un sélecteur dynamique couvrant toutes les villes présentes dans `mart_city_score_history`, sans le présenter comme un historique des runs ou des observations
 7. **Section 4 — Décomposition :** Un graphique montrant la contribution de chaque règle de facteur (Heat, Wind, Rain, Air, River) au score, sans la présenter comme une causalité
 
 ---

@@ -15,8 +15,9 @@ Ce guide est destiné aux membres de l'équipe chargés du dashboard. Il détail
 Tout dashboard publié doit afficher clairement :
 
 > **Prévision bêta.** Scores ponctuels déterministes sans intervalle de
-> confiance. Heat dispose d'un backtest ERA5 limité ; Rain a montré une compétence
-> insuffisante ; Wind, Air Quality et River ne sont pas validés sur des
+> confiance. Heat dispose d'un backtest limité sur les données
+> d'archive/réanalyse Open-Meteo ; Rain a montré une compétence insuffisante ;
+> Wind, Air Quality et River ne sont pas validés sur des
 > observations. Une donnée manquante peut être masquée dans ces marts
 > opérationnels hérités.
 
@@ -112,6 +113,14 @@ Dans le **Navigateur** qui s'affiche :
 
 4. Cliquez sur **Charger**
 
+Après une ingestion et une reconstruction dbt complètes, ces marts
+opérationnels sont destinés à couvrir les **20 villes actives**. Ne conservez
+aucun filtre Top 10 hérité. Pour une recette de données, vérifiez que
+`COUNT(DISTINCT city_id)` vaut 20 dans `mart_city_score_current` et que la somme
+des `city_count` des zones présentes vaut également 20. Une valeur inférieure
+doit être traitée comme un problème de fraîcheur/couverture, pas complétée
+artificiellement.
+
 ---
 
 ## Étape 5 — Choisir le Mode de Connexion
@@ -133,7 +142,7 @@ Voici les visuels recommandés et les colonnes à utiliser depuis les tables mar
 
 ### 🗺️ Carte de Tension (Vue Globale)
 - **Visuel :** Carte (Map)
-- **Localisation :** Colonne `city_id` (vous devrez peut-être ajouter une table de coordonnées séparée avec lat/lon)
+- **Localisation :** dimension de coordonnées revue pour les 20 villes, dérivée de `config/cities.csv` ; ne supposez pas que des identifiants comme `vienna_at` seront géocodés correctement
 - **Couleur des bulles :** `current_tipping_score` de `mart_city_score_current` (gradient Vert → Rouge)
 
 ### 🏆 Classement des Villes
@@ -141,6 +150,7 @@ Voici les visuels recommandés et les colonnes à utiliser depuis les tables mar
 - **Source :** `mart_city_score_current`
 - **Colonnes :** `rank`, `city_id`, `current_tipping_score`, `current_primary_driver`
 - **Trier par :** `rank` croissant
+- **Couverture :** toutes les lignes opérationnelles disponibles, sans limite codée en dur à 10
 
 ### 📈 Évolution du Score (Historique)
 - **Visuel :** Graphique en courbes
@@ -186,11 +196,11 @@ Pour que le dashboard se mette à jour automatiquement chaque matin :
    - Activez le **Rafraîchissement planifié** → Fréquence : `Quotidien` → Heure : `06:30 UTC`
 
 > Le rafraîchissement proposé est planifié 30 minutes après le déclenchement du
-> job d'ingestion à 06:00 UTC. Ce délai ne garantit ni que l'ingestion et dbt sont
-> terminés, ni que dbt a réussi : l'orchestrateur actuel journalise certains
-> échecs dbt sans faire échouer le job Cloud Run. Vérifiez les journaux de
-> transformation et la fraîcheur réelle des tables avant de publier le
-> dashboard.
+> job d'ingestion à 06:00 UTC. Ce délai ne garantit pas que le traitement
+> séquentiel des 20 villes et dbt soit terminé. Le job sort désormais en échec
+> lorsqu'une source ou dbt échoue, mais le rafraîchissement Power BI ne dépend
+> pas automatiquement de ce statut. Vérifiez une exécution Cloud Run réussie,
+> puis la fraîcheur et la présence des 20 villes avant de publier le dashboard.
 
 ---
 
@@ -199,7 +209,7 @@ Pour que le dashboard se mette à jour automatiquement chaque matin :
 ```
 Cloud Scheduler (06:00 UTC)
         ↓
-Cloud Run (Ingestion Python, puis tentative dbt)
+Cloud Run (Ingestion Python, puis dbt ; échec propagé)
         ↓
 BigQuery raw.*  →  dbt (Silver)  →  stg.*
                                          ↓
@@ -219,6 +229,6 @@ BigQuery raw.*  →  dbt (Silver)  →  stg.*
 | Problème | Solution |
 |---|---|
 | "Accès refusé" lors de la connexion | Faire vérifier l'accès nominatif au dataset `mart` et le droit minimal d'exécuter des jobs BigQuery |
-| Les tables `mart` n'apparaissent pas | Vérifier séparément que les datasets existent, que les sources `raw` ont été initialisées et qu'un `dbt run` a réellement réussi ; `make deploy` seul ne prouve pas que le mart contient des données |
+| Les tables `mart` n'apparaissent pas | Vérifier que les datasets existent et qu'un `make deploy` complet s'est terminé sans erreur ; contrôler ensuite la fraîcheur et les 20 `city_id`, car des données antérieures peuvent rester interrogeables après un run inhabituel |
 | Le rafraîchissement échoue sur Power BI Service | Vérifier l'identité dédiée, son périmètre IAM et l'état de son secret dans le gestionnaire approuvé ; ne pas échanger de clé par messagerie |
 | Données vides / NULL dans les graphiques | Attendu pour les colonnes `river_*` des villes dont `river_enabled=false`; Paris, Amsterdam, Varsovie, Vienne et Budapest sont les villes actuellement activées |

@@ -44,11 +44,13 @@ does not constitute full-repository or live-environment validation.
 |---|---|
 | **Checkout code** | `actions/checkout@v4` |
 | **Set up Python 3.11** | `actions/setup-python@v5` with pip caching from `backend/requirements.txt` |
-| **Install dependencies** | `pip install -r requirements.txt` |
+| **Validate city contracts** | Runs the standard-library city validator plus its unit tests and the normals-generator tests. This validates the current 20-city registry, 240-row normals/provenance snapshot and frozen 10-city forecast allowlist before application dependencies are installed. |
+| **Install backend/ingestion test dependencies** | Installs `backend/requirements.txt` plus the ingestion test dependency used outside the backend working directory. |
+| **Run ingestion contract tests** | Runs `ingest/tests/` to verify that source partial failures and embedded dbt failures propagate as a failed job instead of reporting false success. |
 | **Run unit tests** | `pytest tests/ -v -m "not integration"` — runs all tests *not* marked as integration |
 | **Run integration tests** | `pytest tests/ -v -m integration` — runs only tests marked `@pytest.mark.integration` |
 | **Check frontend** | `npm ci`, `npm run lint` and `npm run build` lint and compile the production bundle; they do not execute browser behavior |
-| **Build Docker image** | `docker build -f backend/Dockerfile -t climasentinel-backend:test .` — verifies the image compiles but does **not** push to any registry |
+| **Build both Docker images** | Builds the backend and ingestion images without pushing them, verifying that both release contexts compile. |
 
 > If any step fails, its check fails. Whether that blocks the merge depends on
 > the repository's externally configured required-status-check rules.
@@ -84,6 +86,12 @@ Unlike the PR workflow, staging does not explicitly rerun `npm run lint` or
 therefore carrying the frontend build responsibility at this stage. The E2E job
 also installs packages with `npm install`, not the stricter lockfile-only
 `npm ci`.
+
+The staging workflow is an application/forecast release path on Railway. It
+does **not** rerun the city validator or normals-generator tests, rebuild or
+execute the GCP ingestion image, refresh the 20-city BigQuery data plane, or run
+dbt seed/run/test. The expanded operational marts must already have been
+refreshed by a successful scheduled ingestion or reviewed `make deploy` run.
 
 ---
 
@@ -158,14 +166,19 @@ promotion path.
 
 ## Testing Strategy
 
-All backend tests live in `backend/tests/` and run in the PR-to-`dev` and
-staging workflows. Pytest's `integration` marker separates broader
-application-contract tests from isolated unit tests. Most of these tests still
-use FastAPI's in-process test client and mocks; they are not live BigQuery,
-DagsHub or Railway integration tests.
+Backend tests live in `backend/tests/` and run in the PR-to-`dev` and staging
+workflows. The PR workflow additionally runs the standard-library tests in
+`scripts/tests/`, normals-generator tests in `transform/scripts/tests/`, and
+ingestion failure-contract tests in `ingest/tests/`. Pytest's `integration`
+marker separates broader backend application-contract tests from isolated
+backend unit tests. Most tests still use an in-process client or mocks; they are
+not live BigQuery, Open-Meteo, DagsHub or Railway integration tests.
 
 | Test module | Main contract covered |
 |---|---|
+| `scripts/tests/` | City schema, identifiers, coordinates, time zones, ordering, booleans, normals completeness/provenance and frozen forecast scope |
+| `transform/scripts/tests/` | Deterministic normals generation, validation and safe output behavior |
+| `ingest/tests/` | Partial-source and embedded-dbt failure propagation from the Cloud Run entrypoint |
 | `test_health.py` | Root/health, CORS, OpenAPI, metrics, mocked current-score behavior and selected error paths |
 | `test_forecast_rules.py` | All five rule formulas, clipping, source coverage, target-month Heat normal and Day +3 use of same-vintage Day +4 context |
 | `test_model_extraction.py` | Direct training-mart extraction, exact schema/provenance and absence of leaky filling |

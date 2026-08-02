@@ -37,6 +37,12 @@ The dashboard endpoints continue to read the operational score marts:
 These marts calculate all five factors from operational inputs. They are not the
 realized-label source used to validate the forecast model.
 
+After a complete ingestion/dbt refresh, the current-score and city-detail
+routes can expose all 20 active operational cities. `GET /data/current-scores`
+defaults to a bounded limit of 100 so the expanded registry is not truncated by
+the former 10-city assumption. Actual row availability still depends on the
+warehouse; the API does not synthesize missing cities.
+
 Despite legacy “48-hour” wording elsewhere in the product,
 `mart_city_score_current` and `mart_city_score_detail` actually select the two
 UTC calendar dates `CURRENT_DATE('UTC')` and the following day. This is not a
@@ -90,12 +96,19 @@ relabeling an old forecast as today's vintage. The query also resolves the
 city's temperature normal for the requested **target date month**, avoiding an
 origin-month error when a horizon crosses a month boundary.
 
+Forecast serving remains restricted to the original 10 IDs in
+`forecast_city_allowlist.csv`. Vienna, Brussels, Copenhagen, Dublin, Oslo,
+Helsinki, Prague, Budapest, Zurich and Bucharest can have operational score
+responses but have no eligible forecast-serving row and normally return `404`
+from this endpoint. The shared `{city_id}` route shape does not imply identical
+city scope across operational and forecast endpoints.
+
 Every response component has `method: forecast_rule`:
 
 | Component | Method | Outcome validation | Uncertainty |
 |---|---|---|---|
-| Heat | `forecast_rule` | Limited same-vintage backtest against realized ERA5 | None |
-| Rain | `forecast_rule` | Backtested against realized ERA5; insufficient predictive skill | None |
+| Heat | `forecast_rule` | Limited same-vintage backtest against realized archive/reanalysis labels | None |
+| Rain | `forecast_rule` | Backtested against realized archive/reanalysis labels; insufficient predictive skill | None |
 | Wind | `forecast_rule` | No observed gust label yet | None |
 | Air quality | `forecast_rule` | No observed AQ label yet | None |
 | River | `forecast_rule` | No observed discharge label yet | None |

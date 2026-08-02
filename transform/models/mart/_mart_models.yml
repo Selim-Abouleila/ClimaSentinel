@@ -137,7 +137,7 @@ models:
 
   - name: mart_city_realized_weather_daily
     description: >
-      Realized ERA5 reanalysis label boundary at one row per city and valid
+      Realized Open-Meteo archive/reanalysis label boundary at one row per city and valid
       date. Heat and Rain are the only supported realized scores. Wind is
       retained as raw context only because observed gust is unavailable;
       observed AQ and river
@@ -173,7 +173,7 @@ models:
   - name: mart_ml_training_examples
     description: >
       Point-in-time-safe supervised examples. Selects the latest complete exact
-      forecast vintage per city/local-origin date and joins mature ERA5 Heat and
+      forecast vintage per city/local-origin date and joins mature archive-backed Heat and
       Rain labels for Day +1, Day +2, and Day +3. Label availability must be
       strictly later than forecast ingestion. No unsupported component is
       exposed as a trainable target.

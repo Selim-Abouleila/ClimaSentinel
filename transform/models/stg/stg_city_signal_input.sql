@@ -6,7 +6,7 @@
 --
 -- Grain: one row per city per date.
 -- River discharge is nullable (only available for river-enabled cities).
--- Historical weather is nullable (ERA5 has a ~5-day publication lag).
+-- Historical weather is nullable because the archive source is deliberately lagged.
 
 SELECT
     w.city_id,
@@ -32,7 +32,7 @@ SELECT
     -- ── River discharge (nullable — only river-enabled cities) ───────────
     fl.river_discharge_m3s,
 
-    -- ── Historical baseline (nullable — ERA5 lag) ────────────────────────
+    -- ── Historical baseline (nullable — archive lag) ─────────────────────
     h.temperature_2m_mean   AS hist_temperature_2m_mean,
     h.temperature_2m_max    AS hist_temperature_2m_max,
     h.temperature_2m_min    AS hist_temperature_2m_min,

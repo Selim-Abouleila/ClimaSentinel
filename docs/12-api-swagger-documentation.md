@@ -133,9 +133,9 @@ Returns one genuine horizon from the point-in-time same-vintage rule policy.
   new operational-dashboard cities are intentionally excluded
 - Rule outputs: Heat, Rain, Wind, Air Quality and River from same-vintage
   forecasts
-- Validation scope: limited ERA5 backtest for Heat; an ERA5 backtest with
-  insufficient predictive skill for Rain; no observed-label validation yet for
-  Wind, Air Quality and River
+- Validation scope: limited Open-Meteo archive/reanalysis backtest for Heat; a
+  backtest against the same source with insufficient predictive skill for Rain;
+  no observed-label validation yet for Wind, Air Quality and River
 
 Example response where Heat is the primary driver and AQ is unavailable:
 
@@ -252,6 +252,11 @@ Example response where Heat is the primary driver and AQ is unavailable:
 | `model_version` | `null`; offline challenger registration is not serving provenance |
 | `prediction_date` | City-local forecast origin date for the exact serving vintage |
 | `feature_ingestion_run_id` | Exact same-vintage feature run used by the response |
+
+The literal `era5_*` validation statuses and the legacy ERA5 wording in the
+current `method_reason` response are compatibility labels. The active archive
+request does not pin `models=era5` or persist a returned source model/version,
+so clients must not interpret those strings as per-row ERA5 provenance.
 
 `weather_trajectory` is a display subset, not the complete rule-input
 provenance: it returns temperatures through the selected horizon and target-day

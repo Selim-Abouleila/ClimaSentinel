@@ -7,7 +7,7 @@
 -- run, city, and valid date. A failed source therefore remains visibly absent
 -- instead of silently falling back to another forecast vintage.
 --
--- ERA5 history is intentionally excluded: it is a later realized-label source,
+-- Archive/reanalysis history is intentionally excluded: it is a later realized-label source,
 -- not a forecast feature available in the same vintage.
 
 SELECT

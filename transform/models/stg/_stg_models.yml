@@ -33,7 +33,8 @@ models:
 
   - name: stg_latest_historical_daily
     description: >
-      Deduplicated ERA5 historical weather — one row per (city_id, date).
+      Deduplicated Open-Meteo archive/reanalysis weather — one row per
+      (city_id, date).
     columns:
       - name: city_id
         tests: [not_null]
@@ -93,4 +94,4 @@ models:
       - name: river_discharge_m3s
         description: River discharge in m³/s (NULL for non-river-enabled cities)
       - name: hist_temperature_2m_mean
-        description: ERA5 historical mean temp (NULL if date outside ERA5 lag window)
+        description: Archive/reanalysis historical mean temp (NULL when no lagged archive date matches)

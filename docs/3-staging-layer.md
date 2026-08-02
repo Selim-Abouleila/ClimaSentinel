@@ -77,8 +77,9 @@ misrepresenting the legacy half of the seed.
 
 The standard-library city validator checks unique city/month keys, exactly 12
 months for every active city, finite physical ranges, registry consistency and
-the frozen original forecast IDs before deployment. dbt adds not-null/month
-domain checks and a warehouse-side 12-month completeness test.
+the frozen original forecast IDs before deployment. dbt adds seed-level
+not-null checks plus a singular month-domain and warehouse-side 12-month
+completeness test.
 
 ### Deduplication Views (4)
 
@@ -121,7 +122,8 @@ These views roll up deduplicated hourly data into daily summaries.
   existing AQ day, the legacy averages convert missing pollutant readings to
   zero.
 - `river_discharge_m3s`: NULL for non-river-enabled cities (15 of 20)
-- `hist_*` columns: NULL for dates outside the ERA5 lag window (most recent 6 days)
+- `hist_*` columns: NULL wherever no matching lagged archive/reanalysis date
+  exists, including recent and future forecast dates
 
 These rules belong only to the legacy operational path. They can suppress a
 risk factor when source measurements are missing, so this path must not be used
@@ -155,7 +157,9 @@ that UTC timestamp into the city's local `forecast_origin_date`.
 | `stg_flood_daily_vintage` | `(ingestion_run_id, city_id, valid_date)` | Retains every river-discharge forecast revision |
 | `stg_city_signal_vintage` | `(ingestion_run_id, city_id, valid_date)` | Same-run weather/AQ/flood signal view anchored on weather |
 
-The vintage path does not join ERA5. ERA5 is published later and belongs to a future realized-outcome/label path, not to the forecast snapshot that was available at prediction time.
+The vintage path does not join lagged archive/reanalysis outcomes. Those values
+are published later and belong to the realized-outcome/label path, not to the
+forecast snapshot that was available at prediction time.
 
 **Vintage nullability and coverage rules:**
 
@@ -235,7 +239,7 @@ gcloud auth application-default login
 | Command | Description |
 |---|---|
 | `make validate-cities` | Validate the operational registry, 240-row normals seed, and frozen forecast allowlist |
-| `make deploy` | Full pipeline: validate + build + Terraform + waited ingestion + dbt seed/run/test |
+| `make deploy` | Full GCP data pipeline: validate + build + Terraform + waited ingestion + dbt seed/run/test |
 | `make dbt-stg` | Run staging models only |
 | `make dbt-run` | Run all models (stg + mart) |
 | `make dbt-test` | Run schema and singular data tests |
