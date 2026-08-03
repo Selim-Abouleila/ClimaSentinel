@@ -291,7 +291,7 @@ export default async function Dashboard() {
 
               {snapshot && (
                 <div
-                  className={`dashboard-freshness dashboard-freshness--overview-footer ${snapshot.stale ? 'is-stale' : ''}`}
+                  className={`dashboard-freshness dashboard-freshness--content-footer ${snapshot.stale ? 'is-stale' : ''}`}
                   role="status"
                   aria-label={snapshot.stale ? 'Data snapshot is stale' : 'Selected data snapshot'}
                 >
