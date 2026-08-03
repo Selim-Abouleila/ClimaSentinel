@@ -88,7 +88,10 @@ jobs:
           MLFLOW_MODEL_VERSION: ${{ needs.train-model.outputs.model_version }}
 
       - name: Install Railway CLI
-        run: npm install -g @railway/cli
+        run: npm install -g @railway/cli@5.30.4
+
+      - name: Report Railway CLI version
+        run: railway --version
 
       - name: Stamp Frontend Release
         run: |
@@ -98,43 +101,11 @@ jobs:
             > "frontend/public/releases/${release_id}.txt"
 
       - name: Deploy Frontend to Railway
-        run: railway up --environment staging --service ${{ secrets.RAILWAY_FRONTEND_SERVICE_ID }}
+        run: railway up --detach --environment staging --service ${{ secrets.RAILWAY_FRONTEND_SERVICE_ID }}
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
           RAILWAY_PROJECT_ID: ${{ secrets.RAILWAY_PROJECT_ID }}
           RAILWAY_SERVICE_ID: ${{ secrets.RAILWAY_FRONTEND_SERVICE_ID }}
-
-      - name: Verify Frontend Release Before Backend Cutover
-        env:
-          STAGING_FRONTEND_URL: ${{ secrets.STAGING_FRONTEND_URL }}
-        run: |
-          : "${STAGING_FRONTEND_URL:?STAGING_FRONTEND_URL is required}"
-          release_id="${GITHUB_SHA}-${GITHUB_RUN_ID}"
-          release_url="${STAGING_FRONTEND_URL%/}/releases/${release_id}.txt"
-          response_file="${RUNNER_TEMP}/climasentinel-${release_id}.txt"
-
-          for attempt in {1..36}; do
-            if curl \
-              --fail \
-              --silent \
-              --show-error \
-              --location \
-              --connect-timeout 5 \
-              --max-time 10 \
-              --header "Cache-Control: no-cache" \
-              --header "Pragma: no-cache" \
-              --output "${response_file}" \
-              "${release_url}?attempt=${attempt}" \
-              && grep --fixed-strings --line-regexp --quiet \
-                "${release_id}" "${response_file}"; then
-              echo "Staging frontend is serving release ${release_id}."
-              exit 0
-            fi
-            echo "Waiting for staging frontend release ${release_id} (${attempt}/36)..."
-            sleep 10
-          done
-          echo "Staging frontend did not serve release ${release_id} after 36 attempts."
-          exit 1
 
       - name: Verify V2 City Score Marts Before Backend Cutover
         env:
@@ -404,12 +375,122 @@ jobs:
           )
           PY
 
+      - name: Verify Frontend Release Before Backend Cutover
+        env:
+          STAGING_FRONTEND_URL: ${{ secrets.STAGING_FRONTEND_URL }}
+        run: |
+          : "${STAGING_FRONTEND_URL:?STAGING_FRONTEND_URL is required}"
+          release_id="${GITHUB_SHA}-${GITHUB_RUN_ID}"
+          release_url="${STAGING_FRONTEND_URL%/}/releases/${release_id}.txt"
+          response_file="${RUNNER_TEMP}/climasentinel-${release_id}.txt"
+
+          deadline_seconds=600
+          deadline=$((SECONDS + deadline_seconds))
+          attempt=0
+
+          while (( SECONDS < deadline )); do
+            attempt=$((attempt + 1))
+            remaining=$((deadline - SECONDS))
+            request_timeout=$((remaining < 10 ? remaining : 10))
+            if curl \
+              --fail \
+              --silent \
+              --show-error \
+              --location \
+              --connect-timeout 5 \
+              --max-time "${request_timeout}" \
+              --header "Cache-Control: no-cache" \
+              --header "Pragma: no-cache" \
+              --output "${response_file}" \
+              "${release_url}?attempt=${attempt}" \
+              && grep --fixed-strings --line-regexp --quiet \
+                "${release_id}" "${response_file}"; then
+              echo "Staging frontend is serving release ${release_id}."
+              exit 0
+            fi
+            remaining=$((deadline - SECONDS))
+            if (( remaining <= 0 )); then
+              break
+            fi
+            sleep_seconds=$((remaining < 10 ? remaining : 10))
+            echo "Waiting for staging frontend release ${release_id} (attempt ${attempt}; ${remaining}s remaining)..."
+            sleep "${sleep_seconds}"
+          done
+          echo "Staging frontend did not serve release ${release_id} within ${deadline_seconds} seconds."
+          exit 1
+
+      - name: Stamp Backend Release
+        run: |
+          release_id="${GITHUB_SHA}-${GITHUB_RUN_ID}"
+          printf '%s\n' "${release_id}" > backend/app/release_id.txt
+
       - name: Deploy Backend to Railway
-        run: railway up --environment staging --service ${{ secrets.RAILWAY_SERVICE_ID }}
+        run: railway up --detach --environment staging --service ${{ secrets.RAILWAY_SERVICE_ID }}
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
           RAILWAY_PROJECT_ID: ${{ secrets.RAILWAY_PROJECT_ID }}
           RAILWAY_SERVICE_ID: ${{ secrets.RAILWAY_SERVICE_ID }}
+
+      - name: Verify Backend Release Before E2E
+        env:
+          STAGING_FRONTEND_URL: ${{ secrets.STAGING_FRONTEND_URL }}
+        run: |
+          : "${STAGING_FRONTEND_URL:?STAGING_FRONTEND_URL is required}"
+          release_id="${GITHUB_SHA}-${GITHUB_RUN_ID}"
+          health_url="${STAGING_FRONTEND_URL%/}/api/backend-health"
+          response_file="${RUNNER_TEMP}/climasentinel-backend-${release_id}.json"
+
+          matches_expected_release() {
+            EXPECTED_RELEASE_ID="${release_id}" \
+            RESPONSE_FILE="${response_file}" \
+            python - <<'PY'
+          import json
+          import os
+
+          with open(os.environ["RESPONSE_FILE"], encoding="utf-8") as response:
+              payload = json.load(response)
+
+          if (
+              payload.get("status") != "healthy"
+              or payload.get("release_id") != os.environ["EXPECTED_RELEASE_ID"]
+          ):
+              raise SystemExit(1)
+          PY
+          }
+
+          deadline_seconds=600
+          deadline=$((SECONDS + deadline_seconds))
+          attempt=0
+
+          while (( SECONDS < deadline )); do
+            attempt=$((attempt + 1))
+            remaining=$((deadline - SECONDS))
+            request_timeout=$((remaining < 10 ? remaining : 10))
+            if curl \
+              --fail \
+              --silent \
+              --show-error \
+              --location \
+              --connect-timeout 5 \
+              --max-time "${request_timeout}" \
+              --header "Cache-Control: no-cache" \
+              --header "Pragma: no-cache" \
+              --output "${response_file}" \
+              "${health_url}?attempt=${attempt}" \
+              && matches_expected_release; then
+              echo "Staging backend is serving release ${release_id}."
+              exit 0
+            fi
+            remaining=$((deadline - SECONDS))
+            if (( remaining <= 0 )); then
+              break
+            fi
+            sleep_seconds=$((remaining < 10 ? remaining : 10))
+            echo "Waiting for staging backend release ${release_id} (attempt ${attempt}; ${remaining}s remaining)..."
+            sleep "${sleep_seconds}"
+          done
+          echo "Staging backend did not serve release ${release_id} within ${deadline_seconds} seconds."
+          exit 1
 
   e2e-test:
     name: E2E Playwright Test
@@ -453,6 +534,55 @@ jobs:
             sleep 10
           done
           echo "Staging frontend did not serve release ${release_id} after 36 attempts."
+          exit 1
+
+      - name: Reconfirm the deployed staging backend release
+        env:
+          STAGING_FRONTEND_URL: ${{ secrets.STAGING_FRONTEND_URL }}
+        run: |
+          : "${STAGING_FRONTEND_URL:?STAGING_FRONTEND_URL is required}"
+          release_id="${GITHUB_SHA}-${GITHUB_RUN_ID}"
+          health_url="${STAGING_FRONTEND_URL%/}/api/backend-health"
+          response_file="${RUNNER_TEMP}/climasentinel-backend-e2e-${release_id}.json"
+
+          matches_expected_release() {
+            EXPECTED_RELEASE_ID="${release_id}" \
+            RESPONSE_FILE="${response_file}" \
+            python - <<'PY'
+          import json
+          import os
+
+          with open(os.environ["RESPONSE_FILE"], encoding="utf-8") as response:
+              payload = json.load(response)
+
+          if (
+              payload.get("status") != "healthy"
+              or payload.get("release_id") != os.environ["EXPECTED_RELEASE_ID"]
+          ):
+              raise SystemExit(1)
+          PY
+          }
+
+          for attempt in {1..6}; do
+            if curl \
+              --fail \
+              --silent \
+              --show-error \
+              --location \
+              --connect-timeout 5 \
+              --max-time 10 \
+              --header "Cache-Control: no-cache" \
+              --header "Pragma: no-cache" \
+              --output "${response_file}" \
+              "${health_url}?e2e_attempt=${attempt}" \
+              && matches_expected_release; then
+              echo "Staging backend still serves release ${release_id}."
+              exit 0
+            fi
+            echo "Waiting to reconfirm staging backend release ${release_id} (${attempt}/6)..."
+            sleep 5
+          done
+          echo "Staging backend release changed or became unavailable before E2E."
           exit 1
 
       - name: Setup Node

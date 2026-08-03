@@ -15,13 +15,13 @@ implemented
 | | Database | ✅ | Ingestion, dbt and API code target BigQuery raw, staging and mart layers; live dataset state is external to this review. |
 | **Git model** | `feature/*` → `dev` → `staging` → `main` | ⚠️ | Workflows target these branches, but branch-protection rules are external to the repository. The MLOps workflow can also push a DVC pointer directly to its invoking branch. |
 | **PR CI** | Tests for PRs to `dev` | ⚠️ | City/normals/monitoring/provenance contracts, generator behavior, ingestion failure propagation, backend unit/marker-labelled integration tests and a credential-free `dbt parse` run in separate jobs. Most “integration” tests use mocks or an in-process client; CI does not exercise live source fetchers, BigQuery loader writes or authenticated dbt run/test. |
-| | Frontend lint/unit/build | ✅ | `npm ci`, lint, the Playwright-powered pure availability unit suite and production build run for PRs to `dev`. |
+| | Frontend lint/unit/build | ✅ | `npm ci`, lint, the Playwright-powered pure availability and backend-health proxy unit suite, and production build run for PRs to `dev`. |
 | | Backend and ingestion Docker builds without push | ✅ | Both release images are built after the test job; neither is pushed by PR CI. |
 | **Staging CI/CD** | Full backend tests and Docker build | ✅ | Both run on pushes to `staging`. |
 | | Train and register challenger | ✅ | Reusable workflow is implemented to extract a BigQuery snapshot, train six Heat/Rain outputs and register an exact MLflow version. A successful current run/version is not pinned in this repository. |
 | | Evaluate promotion gates | ⚠️ | Quality/provenance gates are implemented, but staging and production share the same `champion` alias; a passing staging run can move MLflow's Production state. |
-| | Deploy application | ✅ | After `make deploy` has created v2 alongside legacy rollback marts, staging deploys/marker-verifies the compatibility frontend, gates v2 schemas, 20-city current/detail membership, one coherent selected run and snapshot age ≤36h, then deploys the v2 backend with the operational all-rule forecast policy. |
-| | Live E2E | ⚠️ | Playwright covers Paris Day +1/+2/+3, freezes the original 10-city forecast selector and verifies Stockholm's unmonitored River state. It does not pin the backend commit or render/assert the complete 20-city overview, all forecast cities or injected failure states. |
+| | Deploy application | ✅ | With pinned Railway CLI and detached uploads, staging queues the compatibility frontend, overlaps its build with the read-only v2 readiness gate, exact-marker-verifies it, then queues the v2 backend. A no-cache frontend proxy must report the exact healthy backend release ID before E2E; the two service cutovers are not parallel. |
+| | Live E2E | ⚠️ | Exact frontend/backend commit-run identity is gated before Playwright, which covers Paris Day +1/+2/+3, freezes the original 10-city forecast selector and verifies Stockholm's unmonitored River state. It does not render/assert the complete 20-city overview, all forecast cities, injected failure states or backend dependency readiness. |
 | **Production CI/CD** | Evaluate challenger on `main` | ✅ | The workflow trains and evaluates an exact version; completed quality rejection is nonfatal while contract/operational failures remain fatal. |
 | | Deploy application to Railway production | ⬜ | The production deployment step is explicitly disabled and only prints a notice. |
 | **Configuration and secrets** | Environment-based runtime config | ⚠️ | BigQuery/Railway settings use environment variables, but CORS and several workflow values remain hard-coded. |
@@ -61,8 +61,9 @@ implemented
 4. Separate staging and production registry aliases/credentials and remove
    direct protected-branch data-pointer pushes.
 5. Replace long-lived GCP keys with workload-identity federation.
-6. Add a durable ingestion-run manifest/readiness state, age-aware release and
-   monitoring checks, then add an exact backend release marker.
+6. Add a durable ingestion-run manifest/readiness state plus age-aware release
+   and monitoring checks; the exact backend marker proves build identity but
+   intentionally does not query dependencies.
 7. Expand E2E coverage beyond the current Paris/Stockholm paths.
 8. Treat monitoring as production only after credentials, persistence, alerting
    and deployment are implemented.

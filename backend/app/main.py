@@ -24,6 +24,7 @@ from .ml_pipeline import (
     FEATURE_SCHEMA_VERSION,
     ModelCompatibilityError,
 )
+from .release import RELEASE_ID
 from .schemas import (
     CityForecastResponse,
     CityScoreDetailResponse,
@@ -172,6 +173,7 @@ def health():
     return {
         "status": "healthy",
         "environment": settings.ENVIRONMENT,
+        "release_id": RELEASE_ID,
         "uptime_seconds": round(time.time() - _start_time, 2),
     }
 

@@ -38,6 +38,13 @@ def test_health_returns_healthy():
     assert body["status"] == "healthy"
 
 
+def test_health_exposes_deterministic_release_identity():
+    """GET /health should identify the exact backend image being served."""
+    resp = client.get("/health")
+    assert resp.status_code == 200
+    assert resp.json()["release_id"] == "local-development"
+
+
 # This test verifies that the health check endpoint provides a valid 
 # uptime counter that is at least 0 seconds.
 def test_health_contains_uptime():

@@ -11,7 +11,8 @@ does not query BigQuery or load MLflow artifacts directly.
 - Next.js 16 and React 19;
 - TypeScript API types in `frontend/src/lib/api.ts`;
 - Tailwind CSS v4 plus shared design tokens; and
-- Playwright for pure availability unit tests and live staging end-to-end tests.
+- Playwright for pure availability and backend-health proxy unit tests plus live
+  staging end-to-end tests.
 
 `NEXT_PUBLIC_API_URL` identifies the backend and is embedded into the
 browser-facing bundle at build time. Railway must therefore provide the correct
@@ -136,19 +137,31 @@ The availability release uses a deliberate expand-and-contract order:
    v2 staging/marts while the unsuffixed legacy marts and old application stay
    live.
 2. Deploy the compatibility frontend, which tolerates both the legacy numeric
-   payload and explicit v2 availability metadata, then confirm its exact
-   release marker.
-3. Gate the v2 mart schemas, all 20 configured current/detail city rows, one
-   coherent selected run and a snapshot age no greater than 36 hours.
-4. Deploy the backend that reads v2, then run staging E2E.
+   payload and explicit v2 availability metadata, with `railway up --detach`;
+3. While Railway builds it, gate the v2 mart schemas, all 20 configured
+   current/detail city rows, one coherent selected run and a snapshot age no
+   greater than 36 hours; then confirm the frontend's exact commit/run marker
+   through a bounded no-cache poll.
+4. Stamp and queue the backend that reads v2 with `--detach`, then poll the
+   frontend's `/api/backend-health` proxy until it reports `healthy` with the
+   exact same release ID before running staging E2E.
+
+Both submissions are asynchronous, but the cutovers are intentionally not
+parallel: mart readiness and frontend confirmation must both pass before the
+backend is submitted. Each primary release poll has a strict 600-second
+deadline, caps individual requests at 10 seconds and waits no more than 10
+seconds between attempts. The E2E job reconfirms both identities after its job
+boundary.
 
 The unsuffixed marts remain temporary rollback compatibility and do not expose
 the v2 column contract.
 
-The pure unit suite in `frontend/tests/unit/signal-availability.spec.ts` checks
-legacy compatibility, explicit v2 false precedence, measured zero, unavailable
-factors and aggregation with partial/all-unavailable inputs. It runs in PR CI
-with `npm run test:unit` and does not contact a browser or live service.
+The pure unit suite checks legacy compatibility, explicit v2 false precedence,
+measured zero, unavailable factors and aggregation with partial/all-unavailable
+inputs in `signal-availability.spec.ts`. It also verifies the health proxy's
+no-cache pass-through and unreachable-backend `502` response in
+`backend-health-route.spec.ts`. It runs in PR CI with `npm run test:unit` and
+does not contact a browser or live service.
 
 The staging Playwright smoke test verifies the
 `forecast_rules_baseline` API contract for Paris across all three horizons and
@@ -156,5 +169,6 @@ checks the global beta disclosure and freezes the selector at the original 10
 choices. It also opens Stockholm's operational detail and asserts that its
 unmonitored River factor contains neither `Stable` nor `0.0`. It does not verify
 visible per-factor validation labels, the other nine forecast cities, the full
-20-city overview, an injected temporary source outage, or an exact backend
-commit marker. A rejected challenger is not required to be deployed.
+20-city overview or an injected temporary source outage. The deployment gate,
+rather than Playwright assertions, pins the backend to the exact commit/run
+release. A rejected challenger is not required to be deployed.

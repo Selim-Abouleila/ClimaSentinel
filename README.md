@@ -71,9 +71,12 @@ the FastAPI or Next.js services on Railway; promote the reviewed commit from
 
 For the availability-contract rollout, run `make deploy` first so the new v2
 relations exist while the unsuffixed rollback relations remain live. Staging
-then deploys the backward-compatible frontend, confirms its exact release
-marker, checks the v2 schemas, 20-city coverage, selected-run coherence and
-36-hour snapshot age, and only then deploys the backend that reads v2.
+then queues the backward-compatible frontend asynchronously and checks the v2
+schemas, 20-city coverage, selected-run coherence and 36-hour snapshot age
+while Railway builds it. The workflow next confirms the frontend's exact
+commit/run marker under a strict 10-minute deadline and only then queues the v2
+backend. A second bounded gate polls the frontend's no-cache backend-health
+proxy until the backend reports the same exact release ID before E2E starts.
 
 See the full guide in [docs/1-bootstrap-initialization.md](docs/1-bootstrap-initialization.md).
 
@@ -351,8 +354,8 @@ ClimaSentinel documents a four-tier branching strategy (`feature/*` → `dev` �
 `staging` → `main`) and validates it with GitHub Actions. Branch protection is
 configured outside the repository and must be verified in GitHub:
 
-1. **PR validation (`dev`):** Validates the city registry, normals, monitoring and forecast-scope contracts; unit-tests ingestion failure propagation and backend v2 response invariants; performs a credential-free `dbt parse`; runs frontend lint, availability unit tests and build; and builds both backend and ingestion Docker images.
-2. **Staging environment (`staging`):** After `make deploy` has created the v2 relations alongside legacy rollback marts, extracts a point-in-time snapshot and evaluates the six-output Heat/Rain challenger. It then deploys the compatibility frontend, confirms its exact release marker, gates on the v2 schemas, configured 20-city coverage, one selected run and a snapshot no older than 36 hours with the existing GCP service account, deploys the v2 backend, and runs Chromium E2E coverage for Paris forecasts and Stockholm's unmonitored River state. Training jobs do not currently receive GitHub Environment isolation, and staging promotion can move the shared MLflow `Production` stage/`champion` alias.
+1. **PR validation (`dev`):** Validates the city registry, normals, monitoring and forecast-scope contracts; unit-tests ingestion failure propagation and backend v2 response invariants; performs a credential-free `dbt parse`; runs frontend lint, availability/health-proxy unit tests and build; and builds both backend and ingestion Docker images.
+2. **Staging environment (`staging`):** After `make deploy` has created the v2 relations alongside legacy rollback marts, extracts a point-in-time snapshot and evaluates the six-output Heat/Rain challenger. It then uses a pinned Railway CLI to queue the compatibility frontend with `--detach`, runs the v2 schema/city/run/age gate while Railway builds it, and confirms its exact release marker with a bounded poll. Only after both gates pass does it queue the v2 backend. The backend is accepted only when `/api/backend-health` reports `healthy` with the exact same commit/run release ID; Chromium E2E then covers Paris forecasts and Stockholm's unmonitored River state. Frontend and backend cutovers are deliberately not parallel. Training jobs do not currently receive GitHub Environment isolation, and staging promotion can move the shared MLflow `Production` stage/`champion` alias.
 3. **Production gate (`main`):** A candidate must have non-negative component R², beat the exact matching rule MAE by at least 5%, and satisfy horizon-aware absolute MAE ceilings. Authentication, provenance or artifact-contract failures remain fatal. Railway production deployment is currently disabled, and the operational response continues to serve all five same-vintage rules without model intervals.
 
 PR and staging CI do not currently exercise source fetchers, BigQuery loader
@@ -406,5 +409,5 @@ current limits:
 | [10. Monitoring Dashboard](docs/10-monitoring-dashboard.md) | Local Prometheus + Grafana observability demo, its metric semantics, and production gaps |
 | [11. Machine Learning Model](docs/11-machine-learning-model.md) | Six-output realized Heat/Rain challenger, purged validation, rule baselines, MLflow, and DagsHub registry |
 | [12. API Swagger Documentation](docs/12-api-swagger-documentation.md) | FastAPI endpoint reference and typed availability-aware operational and forecast contracts |
-| [13. End-to-End Testing](docs/13-end-to-end-testing.md) | Frontend-marker-pinned staging readiness/E2E checks plus local availability unit-test coverage |
+| [13. End-to-End Testing](docs/13-end-to-end-testing.md) | Exact frontend/backend release-gated staging E2E plus local availability unit-test coverage |
 | [Archived project material](docs/archive/README.md) | Dated, superseded project artifacts retained with provenance and use restrictions |
