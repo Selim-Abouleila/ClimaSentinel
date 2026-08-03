@@ -367,6 +367,10 @@ body {
   font-size: 0.68rem;
 }
 
+.dashboard-freshness.dashboard-freshness--overview-footer {
+  margin: 24px 0 0;
+}
+
 .dashboard-freshness span {
   color: #9fb4c6;
   font-weight: 650;
