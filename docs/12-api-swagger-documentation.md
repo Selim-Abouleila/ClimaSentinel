@@ -42,15 +42,18 @@ Returns service metadata and the documentation route.
 
 ### `GET /health`
 
-Returns process liveness, environment and uptime. It does not check BigQuery,
-the serving mart, DagsHub or MLflow and must not be interpreted as dependency
-readiness.
+Returns process liveness, environment, uptime and the immutable release identity
+loaded by the running backend. A normal local checkout reports
+`local-development`; staging stamps `${GITHUB_SHA}-${GITHUB_RUN_ID}` before the
+Railway upload. The endpoint does not check BigQuery, the serving mart, DagsHub
+or MLflow and must not be interpreted as dependency readiness.
 
 ```json
 {
   "status": "healthy",
   "environment": "production",
-  "uptime_seconds": 120.5
+  "uptime_seconds": 120.5,
+  "release_id": "local-development"
 }
 ```
 

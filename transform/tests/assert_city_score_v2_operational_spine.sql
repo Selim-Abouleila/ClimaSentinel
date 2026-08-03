@@ -77,15 +77,24 @@ detail_violations AS (
     WHERE row_count != 1
 ),
 
+zone_totals AS (
+    SELECT COALESCE(SUM(city_count), 0) AS actual_city_count
+    FROM {{ ref('mart_city_zone_current_v2') }}
+),
+
+expected_zone_total AS (
+    SELECT COUNT(*) AS expected_city_count
+    FROM {{ ref('city_signal_monitoring') }}
+),
+
 zone_violations AS (
     SELECT
         'zone_city_total_mismatch' AS violation,
         CAST(NULL AS STRING) AS city_id,
         CAST(NULL AS DATE) AS date
-    FROM {{ ref('mart_city_zone_current_v2') }}
-    HAVING COALESCE(SUM(city_count), 0) != (
-        SELECT COUNT(*) FROM {{ ref('city_signal_monitoring') }}
-    )
+    FROM zone_totals
+    CROSS JOIN expected_zone_total
+    WHERE actual_city_count != expected_city_count
 )
 
 SELECT * FROM history_violations

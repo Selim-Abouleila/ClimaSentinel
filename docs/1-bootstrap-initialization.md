@@ -203,10 +203,12 @@ either condition stops the deployment before the final local dbt validation.
 on Railway. For the availability-contract rollout, complete this data deploy
 first, while the legacy unsuffixed marts and old application remain live. Then
 promote the reviewed commit from `dev` to `staging`. The staging workflow
-deploys the compatibility frontend, confirms its exact release marker, checks
-the v2 relation schemas, configured 20-city coverage, selected-run coherence
-and 36-hour snapshot age, and only then deploys the backend that reads v2
-before running the live end-to-end checks.
+queues the compatibility frontend asynchronously, checks the v2 relation
+schemas, configured 20-city coverage, selected-run coherence and 36-hour
+snapshot age while Railway builds it, and then confirms its exact release
+marker with a bounded poll. Only after both gates pass does it queue the backend
+that reads v2. A second bounded gate requires the backend health proxy to report
+the same exact release ID before the live end-to-end checks.
 
 ### All available commands
 

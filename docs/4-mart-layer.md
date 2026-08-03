@@ -378,13 +378,14 @@ sequence:
 1. Run `make deploy` so `dbt seed/run/test` creates the exact-run v2 staging
    and mart relations while the unsuffixed legacy marts and old application
    remain live.
-2. Promote to staging; deploy the compatibility frontend and confirm its exact
-   release marker.
-3. Run the staging readiness gate against v2 schema requirements, all 20
-   configured city IDs, one selected run and a snapshot age no greater than
-   36 hours.
-4. Deploy the backend that reads v2, then run the Paris forecast and Stockholm
-   unmonitored-River E2E checks.
+2. Promote to staging and queue the compatibility frontend.
+3. While Railway builds it, run the staging readiness gate against v2 schema
+   requirements, all 20 configured city IDs, one selected run and a snapshot
+   age no greater than 36 hours; then confirm the frontend's exact commit/run
+   marker with the bounded release poll.
+4. Queue the backend that reads v2, then require its no-cache health proxy to
+   report the same exact release ID before running the Paris forecast and
+   Stockholm unmonitored-River E2E checks.
 5. Keep the unsuffixed relations only for the agreed rollback window; remove
    them in a separately reviewed cleanup after v2 is stable.
 
@@ -399,9 +400,9 @@ For the separate point-in-time ML path:
 6. Train and register a schema-v3 `ClimaSentinel_HeatRainForecaster` candidate.
 7. Evaluate the exact candidate against the same-vintage rule baselines and move
    `champion` only if every Heat/Rain horizon passes.
-8. Deploy the backend and frontend rule policy together, then verify the
-   `forecast_rules_baseline` response in staging E2E tests even when the
-   challenger is rejected.
+8. Queue and verify the compatibility frontend before queueing the backend rule
+   policy, then verify the `forecast_rules_baseline` response in staging E2E
+   tests even when the challenger is rejected.
 
 This is an approval sequence, not one atomic scheduled workflow. In particular,
 the daily ingestion job does not perform the `dbt test` portions of steps 1 and

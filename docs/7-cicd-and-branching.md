@@ -50,7 +50,7 @@ does not constitute full-repository or live-environment validation.
 | **Run ingestion contract tests** | Runs `ingest/tests/` to verify that source partial failures and embedded dbt failures propagate as a failed job instead of reporting false success. |
 | **Run unit tests** | `pytest tests/ -v -m "not integration"` — runs all tests *not* marked as integration |
 | **Run integration tests** | `pytest tests/ -v -m integration` — runs only tests marked `@pytest.mark.integration` |
-| **Check frontend** | `npm ci`, `npm run lint`, `npm run test:unit` and `npm run build` cover linting, pure availability/aggregation logic and the production bundle; the unit suite does not open a browser or contact staging. |
+| **Check frontend** | `npm ci`, `npm run lint`, `npm run test:unit` and `npm run build` cover linting, pure availability/aggregation logic, no-cache backend-health proxy behavior and the production bundle; the unit suite does not open a browser or contact staging. |
 | **Build both Docker images** | Builds the backend and ingestion images without pushing them, verifying that both release contexts compile. |
 
 > If any step fails, its check fails. Whether that blocks the merge depends on
@@ -74,11 +74,21 @@ Railway.
 | **Build Docker image** | Builds `climasentinel-backend:staging` |
 | **Train and register Heat/Rain challenger** | Calls the reusable MLOps workflow and returns the exact schema-v3 `ClimaSentinel_HeatRainForecaster` version for offline evaluation |
 | **Evaluate candidate** | Runs per-horizon gates against same-vintage rule baselines. A passing challenger may receive `champion`; an ordinary quality rejection is reported without blocking the operational rule release. |
-| **Deploy compatibility frontend** | Stamps the exact workflow release ID into the frontend and deploys that backward-compatible frontend before changing the backend. |
-| **Confirm frontend marker** | Polls the deployed marker until the exact `${GITHUB_SHA}-${GITHUB_RUN_ID}` content is served; backend cutover stops if the expected frontend is not live. |
-| **Gate v2 readiness** | With the existing `GCP_SA_KEY`, verifies required columns on all four active v2 marts, exact membership of the checked-in monitoring seed, 20-city current/detail coverage, one coherent selected run and snapshot age no greater than 36 hours. This queries relations created earlier by `make deploy`; it does not run dbt or continuously monitor later source freshness. |
-| **Deploy v2 backend** | Only after the frontend marker and v2 readiness gates pass, deploys the backend that reads `mart_city_score_history_v2`, `mart_city_score_current_v2`, `mart_city_score_detail_v2` and `mart_city_zone_current_v2`. |
-| **Live E2E** | Reconfirms the exact frontend marker, exercises Paris at every forecast horizon and verifies Stockholm's deterministic `River / Flood · Not monitored` detail state without `0.0` or `Stable`. |
+| **Install Railway CLI** | Installs and prints the pinned Railway CLI `5.30.4`, avoiding an unreviewed latest-version change during a release. |
+| **Queue compatibility frontend** | Stamps `${GITHUB_SHA}-${GITHUB_RUN_ID}` into the backward-compatible frontend and submits it with `railway up --detach`, avoiding dependence on Railway's attached build-log stream. |
+| **Gate v2 readiness while frontend builds** | Immediately after frontend submission, uses the existing `GCP_SA_KEY` to verify required columns on all four active v2 marts, exact membership of the checked-in monitoring seed, 20-city current/detail coverage, one coherent selected run and snapshot age no greater than 36 hours. This read-only work overlaps the Railway build; it queries relations created earlier by `make deploy` and does not run dbt or continuously monitor later source freshness. |
+| **Confirm frontend marker** | Polls the deployed static marker under a strict 600-second deadline, with each request capped at 10 seconds and at most 10 seconds between attempts, until the exact release ID is served; backend cutover stops unless both mart readiness and the expected frontend release pass. |
+| **Queue v2 backend** | Only after the frontend marker and v2 readiness gates pass, stamps the same release ID into `backend/app/release_id.txt` and submits the v2 backend with `railway up --detach`. |
+| **Confirm backend release** | Polls the frontend's no-cache `/api/backend-health` proxy under the same strict 600-second deadline. Cutover succeeds only when the proxied backend reports `status=healthy` and the exact release ID. |
+| **Live E2E** | Reconfirms both routed release identities after the job boundary, then exercises Paris at every forecast horizon and verifies Stockholm's deterministic `River / Flood · Not monitored` detail state without `0.0` or `Stable`. |
+
+Detached submission makes the CLI responsible only for accepting each upload;
+the exact marker/health polls are the deployment-success gates. The two
+services are **not** cut over in parallel. Preserving
+`queue frontend → v2 readiness → exact frontend marker → queue/confirm backend`
+uses the frontend build interval for independent read-only validation while
+still ensuring the compatibility frontend is live before the API contract
+changes.
 
 The deployment job references the `staging` GitHub environment and reads
 `RAILWAY_TOKEN`, `RAILWAY_PROJECT_ID`, `RAILWAY_SERVICE_ID` and
@@ -87,10 +97,11 @@ reference that environment, so its required `STAGING_FRONTEND_URL` currently
 must be available as a repository or organization secret.
 
 Unlike the PR workflow, staging does not explicitly rerun `npm run lint` or
-`npm run build` as standalone checks before `railway up`; the Railway build is
-therefore carrying the frontend build responsibility at this stage. The E2E job
-also installs packages with `npm install`, not the stricter lockfile-only
-`npm ci`.
+`npm run build` as standalone checks before `railway up --detach`; the Railway
+build is therefore carrying the frontend build responsibility at this stage.
+The bounded marker poll reports a failed or excessively slow build without
+depending on Railway's attached log stream. The E2E job also installs packages
+with `npm install`, not the stricter lockfile-only `npm ci`.
 
 The staging workflow is an application/forecast release path on Railway. It
 does **not** rerun the city validator or normals-generator tests, rebuild or
@@ -188,7 +199,9 @@ not live BigQuery, Open-Meteo, DagsHub or Railway integration tests.
 | `scripts/tests/` | City schema, identifiers, coordinates, time zones, ordering, booleans, normals completeness/provenance, monitoring-seed synchronization and frozen forecast scope |
 | `transform/scripts/tests/` | Deterministic normals generation, validation and safe output behavior |
 | `ingest/tests/` | Partial-source and embedded-dbt failure propagation from the Cloud Run entrypoint |
-| `test_health.py` | Root/health, CORS, OpenAPI, metrics, mocked current-score behavior and selected error paths |
+| `test_health.py` | Root/health, stamped release identity, CORS, OpenAPI, metrics, mocked current-score behavior and selected error paths |
+| `test_release.py` | CI-stamped release-file loading and deterministic missing-stamp fallback |
+| `test_staging_deployment_workflow.py` | Static staging-CD contract: pinned CLI, detached submissions, ordered gates, exact backend release verification and bounded polls |
 | `test_city_score_contract.py` | v2 relation selection, nullable factor schemas, availability/coverage invariants, aggregate counts and available-factor maximum semantics |
 | `test_forecast_rules.py` | All five rule formulas, clipping, source coverage, target-month Heat normal and Day +3 use of same-vintage Day +4 context |
 | `test_model_extraction.py` | Direct training-mart extraction, exact schema/provenance and absence of leaky filling |
@@ -197,12 +210,14 @@ not live BigQuery, Open-Meteo, DagsHub or Railway integration tests.
 | `test_model_promotion.py` | Baseline-relative gates, horizon-specific ceilings, exact registry-artifact validation, evidence/contract failures and explicit nonfatal quality rejection |
 | `test_model_serving_integration.py` | Registry-independent rule policy, null model provenance/intervals and all three horizons |
 | `frontend/tests/unit/signal-availability.spec.ts` | Legacy numeric compatibility, explicit v2 availability precedence, partial/all-unavailable aggregation, measured zero, missing/unmonitored factors and 36-hour freshness |
+| `frontend/tests/unit/backend-health-route.spec.ts` | Dynamic backend-health proxy target, no-cache request/response headers, exact payload pass-through and unreachable-backend `502` behavior |
 | `assert_city_score_availability_contract.sql`, `assert_city_score_v2_*.sql`, `assert_city_signal_monitoring_contract.sql` and `assert_city_signal_v2_*.sql` | Operational spine, monitoring contract, exact-run coherence, raw-payload consistency, availability semantics and deterministic worst day |
 | `frontend/tests/e2e/dashboard.spec.ts` | Live Paris three-horizon forecast flow and Stockholm unmonitored-River presentation |
 
-The staging Playwright suite adds a live deployment check after challenger
-evaluation and Railway deployment. It verifies the rule-baseline API rather
-than assuming that the newly registered candidate passed. See
+The staging release gates pin the frontend and backend to the same exact
+commit/run identifier before Playwright starts. The suite then verifies the
+rule-baseline API rather than assuming that the newly registered candidate
+passed. See
 [End-to-End Testing](13-end-to-end-testing.md).
 
 ### Checks not provided by the current workflows
@@ -284,12 +299,19 @@ not currently provide an environment-separated production gate.
 
 ## Deployment Platform
 
-The backend and frontend are deployed to Railway staging with the Railway CLI
-(`railway up`). The repository contains a production environment gate, but its
+The backend and frontend are submitted to Railway staging with pinned Railway
+CLI `5.30.4` and `railway up --detach`. Detached mode avoids treating an
+intermittent build-log streaming failure as a failed upload. It does not itself
+prove deployment success: the workflow uses bounded exact-release polls for
+that purpose. The repository contains a production environment gate, but its
 Railway deployment step is currently disabled.
 
 The backend runs as a Docker container built from `backend/Dockerfile` (Python
 3.11-slim, Uvicorn), exposing the port dynamically via Railway's `$PORT`
 variable. The frontend is a Next.js application deployed as a separate Railway
 service. Its `NEXT_PUBLIC_API_URL` value is not supplied by the workflow file;
-it must be configured correctly in Railway before the frontend build.
+it must be configured correctly in Railway before the frontend build. The
+frontend exposes a dynamic, no-cache `/api/backend-health` proxy to that
+configured service. Staging stamps the same `${GITHUB_SHA}-${GITHUB_RUN_ID}`
+into the frontend static marker and `backend/app/release_id.txt`, then verifies
+both identities in frontend-first order.

@@ -19,6 +19,8 @@ they demonstrate value beyond those baselines.
 | Module | Responsibility |
 |---|---|
 | `backend/app/main.py` | Routes, BigQuery orchestration and rule-baseline response assembly |
+| `backend/app/release.py` | Reads the immutable release identity bundled into the running backend image |
+| `backend/app/release_id.txt` | Build-stamped staging release identity returned by the health route; defaults to `local-development` outside a stamped release |
 | `backend/app/db.py` | Authenticated BigQuery client creation |
 | `backend/app/config.py` | Environment-based application and BigQuery settings |
 | `backend/app/ml_pipeline.py` | Shared schema-v3 preprocessing, target ordering, horizon slicing, purge rules and artifact validation |
@@ -29,7 +31,8 @@ they demonstrate value beyond those baselines.
 
 The dashboard endpoints read the availability-aware operational v2 marts:
 
-- `GET /health` returns process liveness and uptime;
+- `GET /health` returns process liveness, uptime and the running build's
+  `release_id`;
 - `GET /data/current-scores` reads `mart_city_score_current_v2`;
 - `GET /data/history-scores` reads `mart_city_score_history_v2`;
 - `GET /data/current-zones` reads `mart_city_zone_current_v2`; and
@@ -97,10 +100,14 @@ as `status=not_monitored` with a numeric score, or `status=unavailable` without
 monitoring/coverage metadata. The zone endpoint still returns BigQuery rows
 directly.
 
-`GET /health` is a liveness check only. It always reports the running process as
-healthy and does not test BigQuery credentials, dataset availability, the
-serving mart, DagsHub or MLflow. It must not be used as a dependency-readiness
-guarantee.
+`GET /health` is a liveness and release-identity check only. It always reports
+the running process as healthy and does not test BigQuery credentials, dataset
+availability, the serving mart, DagsHub or MLflow. During staging CD, the
+workflow overwrites `backend/app/release_id.txt` with
+`${GITHUB_SHA}-${GITHUB_RUN_ID}` before upload and accepts the deployment only
+when the frontend's no-cache health proxy returns that exact ID. This proves
+which backend build is routed; it must not be interpreted as a
+dependency-readiness guarantee.
 
 ## Rule-baseline Day +1/+2/+3 forecast
 
@@ -177,5 +184,8 @@ honest 404/availability response rather than an unidentified prediction.
 `backend/Dockerfile` builds from `python:3.11-slim`, installs
 `backend/requirements.txt` and starts Uvicorn. Runtime BigQuery credentials and
 dataset names are injected as environment variables; service-account keys are
-never baked into the image. MLflow candidate selection belongs to the separate
-training/evaluation workflow and is not consulted by request-time serving.
+never baked into the image. The checked-in release file contains only the local
+development default; staging stamps a run-specific identifier immediately
+before the detached Railway upload. MLflow candidate selection belongs to the
+separate training/evaluation workflow and is not consulted by request-time
+serving.

@@ -64,9 +64,10 @@ npm run test:e2e
 
 Lint, build and `test:unit` are self-contained. The unit suite uses Playwright's
 test runner for pure TypeScript availability, aggregation and 36-hour freshness
-cases; it does not open a browser page. The E2E command does not start the
-frontend or backend, so both must already be running and compatible. It defaults
-to `http://localhost:3000`. For a deployed frontend target:
+cases plus mocked no-cache backend-health proxy behavior; it does not open a
+browser page. The E2E command does not start the frontend or backend, so both
+must already be running and compatible. It defaults to `http://localhost:3000`.
+For a deployed frontend target:
 
 ```bash
 PLAYWRIGHT_TEST_BASE_URL=https://your-staging-frontend.example npm run test:e2e
@@ -76,8 +77,9 @@ The current E2E is a desktop-Chromium staging smoke test for Paris across all
 three forecast horizons, asserts the exact 10-city forecast selector, and
 checks Stockholm's deterministic `River / Flood · Not monitored` detail state.
 It does not cover the complete 20-city surface, every browser, a temporary
-source outage, or an exact backend commit, and it does not run dbt tests or
-prove mart freshness.
+source outage or every backend dependency, and it does not run dbt tests or
+prove mart freshness. The surrounding staging workflow, rather than this test,
+pins both application services to an exact commit/run release ID.
 
 ## Deployment
 
@@ -85,18 +87,28 @@ The availability rollout uses this order:
 
 1. `make deploy` creates/tests the v2 data relations while unsuffixed legacy
    marts and the old application remain live;
-2. staging deploys the compatibility frontend and confirms its exact
-   commit/run marker;
-3. staging gates the v2 schemas, exact 20-city current/detail coverage, one
-   selected run and a snapshot age no greater than 36 hours;
-4. staging deploys the v2 backend and runs E2E.
+2. staging queues the compatibility frontend with `railway up --detach`;
+3. while it builds, staging gates the v2 schemas, exact 20-city current/detail
+   coverage, one selected run and a snapshot age no greater than 36 hours, then
+   confirms the frontend's exact commit/run marker with a bounded poll;
+4. staging stamps and queues the v2 backend with `--detach`, then accepts it
+   only when `/api/backend-health` reports `healthy` and the exact same release
+   ID before running E2E.
+
+The two asynchronous Railway submissions remain sequential: the frontend and
+mart gates must both pass before backend cutover. Both primary release polls
+use strict 600-second deadlines, cap each request at 10 seconds and wait no more
+than 10 seconds between attempts. The E2E job reconfirms both release identities
+after crossing the job boundary.
 
 The unsuffixed marts remain temporary legacy rollback compatibility and should
 not be treated as having v2 availability columns. The repository's Railway
 production deployment is currently disabled.
 `NEXT_PUBLIC_API_URL` is supplied by Railway configuration rather than the
 workflow file and must exist before the staging frontend build. The release
-marker identifies the frontend only.
+marker identifies the frontend build. The dynamic, no-cache
+`/api/backend-health` route proxies the configured backend's `/health` response
+so CI can confirm the matching backend release without rebuilding the frontend.
 
 This Railway application deployment does not rebuild or execute the GCP Cloud
 Run ingestion job and does not refresh or test the expanded BigQuery/dbt data
