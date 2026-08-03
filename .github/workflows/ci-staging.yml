@@ -2,7 +2,8 @@
 # CI Pipeline: dev → staging
 #
 # Triggered when code is pushed to 'staging' (i.e., PR merged from dev).
-# Runs the full test suite, then deploys to staging environment.
+# Runs the full backend pytest suite, deploys and verifies the compatible
+# frontend, validates the v2 mart contract, then cuts the backend over.
 # ─────────────────────────────────────────────────────────────────────────
 
 name: CI — Deploy to Staging
@@ -37,7 +38,7 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Run full test suite
+      - name: Run full backend test suite
         run: pytest tests/ -v
 
   docker-build:
@@ -89,13 +90,6 @@ jobs:
       - name: Install Railway CLI
         run: npm install -g @railway/cli
 
-      - name: Deploy Backend to Railway
-        run: railway up --environment staging --service ${{ secrets.RAILWAY_SERVICE_ID }}
-        env:
-          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
-          RAILWAY_PROJECT_ID: ${{ secrets.RAILWAY_PROJECT_ID }}
-          RAILWAY_SERVICE_ID: ${{ secrets.RAILWAY_SERVICE_ID }}
-
       - name: Stamp Frontend Release
         run: |
           release_id="${GITHUB_SHA}-${GITHUB_RUN_ID}"
@@ -109,6 +103,313 @@ jobs:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
           RAILWAY_PROJECT_ID: ${{ secrets.RAILWAY_PROJECT_ID }}
           RAILWAY_SERVICE_ID: ${{ secrets.RAILWAY_FRONTEND_SERVICE_ID }}
+
+      - name: Verify Frontend Release Before Backend Cutover
+        env:
+          STAGING_FRONTEND_URL: ${{ secrets.STAGING_FRONTEND_URL }}
+        run: |
+          : "${STAGING_FRONTEND_URL:?STAGING_FRONTEND_URL is required}"
+          release_id="${GITHUB_SHA}-${GITHUB_RUN_ID}"
+          release_url="${STAGING_FRONTEND_URL%/}/releases/${release_id}.txt"
+          response_file="${RUNNER_TEMP}/climasentinel-${release_id}.txt"
+
+          for attempt in {1..36}; do
+            if curl \
+              --fail \
+              --silent \
+              --show-error \
+              --location \
+              --connect-timeout 5 \
+              --max-time 10 \
+              --header "Cache-Control: no-cache" \
+              --header "Pragma: no-cache" \
+              --output "${response_file}" \
+              "${release_url}?attempt=${attempt}" \
+              && grep --fixed-strings --line-regexp --quiet \
+                "${release_id}" "${response_file}"; then
+              echo "Staging frontend is serving release ${release_id}."
+              exit 0
+            fi
+            echo "Waiting for staging frontend release ${release_id} (${attempt}/36)..."
+            sleep 10
+          done
+          echo "Staging frontend did not serve release ${release_id} after 36 attempts."
+          exit 1
+
+      - name: Verify V2 City Score Marts Before Backend Cutover
+        env:
+          GCP_PROJECT_ID: clima-sentinel
+          BQ_DATASET: mart
+          BQ_STAGING_DATASET: stg
+          GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import csv
+          from pathlib import Path
+
+          from google.cloud import bigquery
+          from google.oauth2 import service_account
+
+          project = os.environ["GCP_PROJECT_ID"]
+          mart_dataset = os.environ["BQ_DATASET"]
+          staging_dataset = os.environ["BQ_STAGING_DATASET"]
+          credentials = service_account.Credentials.from_service_account_info(
+              json.loads(os.environ["GCP_SA_KEY"])
+          )
+          client = bigquery.Client(project=project, credentials=credentials)
+
+          factor_contract_columns = {
+              f"{factor}_{suffix}"
+              for factor in ("heat", "wind", "rain", "air", "river")
+              for suffix in (
+                  "score",
+                  "status",
+                  "monitored",
+                  "available",
+                  "coverage",
+              )
+          }
+          required_columns = {
+              "mart_city_score_history_v2": {
+                  "operational_ingestion_run_id",
+                  "operational_ingested_at_utc",
+                  "city_id",
+                  "date",
+                  "temperature_2m_max",
+                  "precipitation_sum_mm",
+                  "wind_gusts_10m_max",
+                  "european_aqi_max",
+                  "river_discharge_m3s",
+                  "monitored_factor_count",
+                  "available_factor_count",
+                  "overall_coverage",
+                  "global_tipping_score",
+                  "global_score_available",
+                  "primary_driver",
+              } | factor_contract_columns,
+              "mart_city_score_current_v2": {
+                  "operational_ingestion_run_id",
+                  "operational_ingested_at_utc",
+                  "city_id",
+                  "current_tipping_score",
+                  "current_primary_driver",
+                  "current_score_available",
+                  "monitored_factor_count",
+                  "available_factor_count",
+                  "overall_coverage",
+                  "rank",
+              },
+              "mart_city_score_detail_v2": {
+                  "operational_ingestion_run_id",
+                  "operational_ingested_at_utc",
+                  "city_id",
+                  "score_date",
+                  "current_tipping_score",
+                  "current_primary_driver",
+                  "current_score_available",
+                  "monitored_factor_count",
+                  "available_factor_count",
+                  "overall_coverage",
+              } | factor_contract_columns,
+              "mart_city_zone_current_v2": {
+                  "zone_name",
+                  "city_count",
+                  "cities_in_zone",
+                  "drivers_in_zone",
+              },
+          }
+
+          schema_query = f"""
+              SELECT table_name, column_name
+              FROM `{project}.{mart_dataset}.INFORMATION_SCHEMA.COLUMNS`
+              WHERE table_name IN UNNEST(@table_names)
+          """
+          schema_job_config = bigquery.QueryJobConfig(
+              query_parameters=[
+                  bigquery.ArrayQueryParameter(
+                      "table_names",
+                      "STRING",
+                      sorted(required_columns),
+                  )
+              ]
+          )
+          actual_columns = {}
+          for row in client.query(
+              schema_query,
+              job_config=schema_job_config,
+          ).result():
+              actual_columns.setdefault(row.table_name, set()).add(row.column_name)
+
+          missing_contract = {
+              table: sorted(columns - actual_columns.get(table, set()))
+              for table, columns in required_columns.items()
+              if columns - actual_columns.get(table, set())
+          }
+          if missing_contract:
+              raise SystemExit(
+                  "V2 mart schema is not ready: "
+                  + json.dumps(missing_contract, sort_keys=True)
+              )
+
+          with Path("transform/seeds/city_signal_monitoring.csv").open(
+              encoding="utf-8",
+              newline="",
+          ) as monitoring_file:
+              expected_city_ids = sorted(
+                  row["city_id"] for row in csv.DictReader(monitoring_file)
+              )
+          if not expected_city_ids or len(expected_city_ids) != len(set(expected_city_ids)):
+              raise SystemExit(
+                  "Checked-in city_signal_monitoring seed is empty or duplicated."
+              )
+
+          coverage_query = f"""
+              WITH expected AS (
+                  SELECT city_id FROM UNNEST(@expected_city_ids) AS city_id
+              ),
+              seeded_monitoring AS (
+                  SELECT city_id
+                  FROM `{project}.{staging_dataset}.city_signal_monitoring`
+              ),
+              current_scores AS (
+                  SELECT
+                      city_id,
+                      current_score_available,
+                      operational_ingestion_run_id,
+                      operational_ingested_at_utc
+                  FROM `{project}.{mart_dataset}.mart_city_score_current_v2`
+              ),
+              detail_scores AS (
+                  SELECT city_id, operational_ingestion_run_id
+                  FROM `{project}.{mart_dataset}.mart_city_score_detail_v2`
+              )
+              SELECT
+                  (SELECT COUNT(*) FROM expected) AS expected_city_count,
+                  (SELECT COUNT(*) FROM current_scores) AS current_city_count,
+                  (SELECT COUNT(*) FROM detail_scores) AS detail_city_count,
+                  (
+                      SELECT COUNT(*)
+                      FROM expected
+                      WHERE city_id NOT IN (
+                          SELECT city_id FROM current_scores
+                      )
+                  ) AS missing_current_cities,
+                  (
+                      SELECT COUNT(*)
+                      FROM expected
+                      WHERE city_id NOT IN (
+                          SELECT city_id FROM detail_scores
+                      )
+                  ) AS missing_detail_cities,
+                  (
+                      SELECT COUNT(*)
+                      FROM expected
+                      WHERE city_id NOT IN (
+                          SELECT city_id FROM seeded_monitoring
+                      )
+                  ) AS missing_seed_cities,
+                  (
+                      SELECT COUNT(*)
+                      FROM seeded_monitoring
+                      WHERE city_id NOT IN (
+                          SELECT city_id FROM expected
+                      )
+                  ) AS unexpected_seed_cities,
+                  (
+                      SELECT COUNT(DISTINCT operational_ingestion_run_id)
+                      FROM current_scores
+                  ) AS current_run_count,
+                  (
+                      SELECT COUNT(DISTINCT operational_ingestion_run_id)
+                      FROM detail_scores
+                  ) AS detail_run_count,
+                  (
+                      SELECT COUNT(DISTINCT operational_ingestion_run_id)
+                      FROM (
+                          SELECT operational_ingestion_run_id FROM current_scores
+                          UNION ALL
+                          SELECT operational_ingestion_run_id FROM detail_scores
+                      )
+                  ) AS combined_run_count,
+                  (
+                      SELECT COUNTIF(
+                          operational_ingested_at_utc < TIMESTAMP_SUB(
+                              CURRENT_TIMESTAMP(),
+                              INTERVAL 36 HOUR
+                          )
+                      )
+                      FROM current_scores
+                  ) AS stale_current_rows,
+                  (
+                      SELECT COUNTIF(current_score_available IS NULL)
+                      FROM current_scores
+                  ) AS null_availability_flags
+          """
+          coverage_job_config = bigquery.QueryJobConfig(
+              query_parameters=[
+                  bigquery.ArrayQueryParameter(
+                      "expected_city_ids",
+                      "STRING",
+                      expected_city_ids,
+                  )
+              ]
+          )
+          coverage = next(
+              iter(
+                  client.query(
+                      coverage_query,
+                      job_config=coverage_job_config,
+                  ).result()
+              )
+          )
+          failures = {
+              "expected_city_count": coverage.expected_city_count,
+              "current_city_count": coverage.current_city_count,
+              "detail_city_count": coverage.detail_city_count,
+              "missing_current_cities": coverage.missing_current_cities,
+              "missing_detail_cities": coverage.missing_detail_cities,
+              "missing_seed_cities": coverage.missing_seed_cities,
+              "unexpected_seed_cities": coverage.unexpected_seed_cities,
+              "current_run_count": coverage.current_run_count,
+              "detail_run_count": coverage.detail_run_count,
+              "combined_run_count": coverage.combined_run_count,
+              "stale_current_rows": coverage.stale_current_rows,
+              "null_availability_flags": coverage.null_availability_flags,
+          }
+          if (
+              coverage.expected_city_count == 0
+              or coverage.expected_city_count != len(expected_city_ids)
+              or coverage.current_city_count != coverage.expected_city_count
+              or coverage.detail_city_count != coverage.expected_city_count
+              or coverage.missing_current_cities
+              or coverage.missing_detail_cities
+              or coverage.missing_seed_cities
+              or coverage.unexpected_seed_cities
+              or coverage.current_run_count != 1
+              or coverage.detail_run_count != 1
+              or coverage.combined_run_count != 1
+              or coverage.stale_current_rows
+              or coverage.null_availability_flags
+          ):
+              raise SystemExit(
+                  "V2 mart city coverage is not ready: "
+                  + json.dumps(failures, sort_keys=True)
+              )
+
+          print(
+              "V2 mart readiness verified for "
+              f"{coverage.expected_city_count} configured cities."
+          )
+          PY
+
+      - name: Deploy Backend to Railway
+        run: railway up --environment staging --service ${{ secrets.RAILWAY_SERVICE_ID }}
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          RAILWAY_PROJECT_ID: ${{ secrets.RAILWAY_PROJECT_ID }}
+          RAILWAY_SERVICE_ID: ${{ secrets.RAILWAY_SERVICE_ID }}
 
   e2e-test:
     name: E2E Playwright Test

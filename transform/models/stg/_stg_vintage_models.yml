@@ -155,7 +155,7 @@ models:
       Unified point-in-time forecast view anchored on weather. Air quality and
       flood values join only from the exact same ingestion run, city, and valid
       date; missing sources remain explicit and never fall back to another
-      vintage. ERA5 is intentionally excluded because it belongs to the later
+      vintage. Archive/reanalysis weather is intentionally excluded because it belongs to the later
       realized-outcome path.
     columns:
       - name: ingestion_run_id

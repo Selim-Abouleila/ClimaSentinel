@@ -119,8 +119,30 @@ def test_get_current_scores_mocked(mock_bq_client):
     # Create a mock query job and result
     mock_query_job = MagicMock()
     mock_query_job.result.return_value = [
-        {"city_id": "Paris", "current_tipping_score": 85.5},
-        {"city_id": "London", "current_tipping_score": 72.1}
+        {
+            "operational_ingestion_run_id": "run-1",
+            "operational_ingested_at_utc": "2026-08-03T06:00:00+00:00",
+            "city_id": "Paris",
+            "current_tipping_score": 85.5,
+            "current_primary_driver": "Heat",
+            "current_score_available": True,
+            "monitored_factor_count": 5,
+            "available_factor_count": 5,
+            "overall_coverage": 1.0,
+            "rank": 1,
+        },
+        {
+            "operational_ingestion_run_id": "run-1",
+            "operational_ingested_at_utc": "2026-08-03T06:00:00+00:00",
+            "city_id": "London",
+            "current_tipping_score": 72.1,
+            "current_primary_driver": "Wind",
+            "current_score_available": True,
+            "monitored_factor_count": 4,
+            "available_factor_count": 4,
+            "overall_coverage": 1.0,
+            "rank": 2,
+        },
     ]
     
     # Configure the mock client to return our mock query job

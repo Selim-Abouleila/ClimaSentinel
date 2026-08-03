@@ -1,5 +1,12 @@
 import Link from 'next/link';
 import { fetchCurrentScores } from '@/lib/api';
+import {
+  getSnapshotFreshness,
+  hasCurrentScore,
+  hasPartialFactorCoverage,
+  meanCurrentScore,
+  scoredCurrentCities,
+} from '@/lib/signal-availability';
 
 type RiskTone = 'stable' | 'monitoring' | 'tipping' | 'critical';
 
@@ -38,27 +45,38 @@ export default async function Dashboard() {
   const cityData = await fetchCurrentScores();
 
   const monitoredCities = cityData.length;
+  const scoredCities = scoredCurrentCities(cityData);
+  const unavailableCityCount = monitoredCities - scoredCities.length;
+  const partialCoverageCityCount = cityData.filter(hasPartialFactorCoverage).length;
   const cityNoun = monitoredCities === 1 ? 'city' : 'cities';
   const metropolitanAreaNoun = monitoredCities === 1 ? 'area' : 'areas';
-  const avgRisk = monitoredCities > 0
-    ? cityData.reduce((acc, curr) => acc + curr.current_tipping_score, 0) / monitoredCities
-    : 0;
+  const avgRisk = meanCurrentScore(cityData);
 
-  const highestRiskCity = monitoredCities > 0
-    ? cityData.reduce((prev, current) => (
+  const highestRiskCity = scoredCities.length > 0
+    ? scoredCities.reduce((prev, current) => (
         prev.current_tipping_score >= current.current_tipping_score ? prev : current
       ))
     : null;
   const highestRiskCities = highestRiskCity
-    ? cityData.filter((city) => city.current_tipping_score === highestRiskCity.current_tipping_score)
+    ? scoredCities.filter((city) => city.current_tipping_score === highestRiskCity.current_tipping_score)
     : [];
   const highestRiskLabel = highestRiskCities.length > 1
     ? highestRiskCities.map((city) => formatCity(city.city_id).cityName).join(' & ')
     : highestRiskCity
       ? formatCity(highestRiskCity.city_id).displayName
       : '—';
-  const averageBand = getRiskBand(avgRisk);
+  const averageBand = avgRisk === null ? null : getRiskBand(avgRisk);
   const highestBand = highestRiskCity ? getRiskBand(highestRiskCity.current_tipping_score) : null;
+  const snapshot = getSnapshotFreshness(cityData[0]?.operational_ingested_at_utc);
+  const snapshotLabel = snapshot?.ingestedAt.toLocaleString('en-GB', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+    timeZone: 'UTC',
+  });
 
   return (
     <main className="dashboard-shell">
@@ -75,6 +93,22 @@ export default async function Dashboard() {
               : 'Current climate stress signals and their dominant drivers across the monitored European metropolitan network.'}
           </p>
         </header>
+
+        {snapshot && (
+          <div
+            className={`dashboard-freshness ${snapshot.stale ? 'is-stale' : ''}`}
+            role="status"
+            aria-label={snapshot.stale ? 'Data snapshot is stale' : 'Selected data snapshot'}
+          >
+            <span>{snapshot.stale ? 'Stale data snapshot' : 'Selected data snapshot'}</span>
+            <time dateTime={snapshot.ingestedAt.toISOString()}>{snapshotLabel} UTC</time>
+            <small>
+              {snapshot.stale
+                ? 'The scheduled daily ingestion is overdue; interpret scores cautiously.'
+                : 'One exact ingestion run is used across all available signals.'}
+            </small>
+          </div>
+        )}
 
         {cityData.length === 0 ? (
           <div className="dashboard-empty-state" role="status">
@@ -94,22 +128,33 @@ export default async function Dashboard() {
                 <p>European metropolitan areas</p>
               </article>
 
-              <article className={`summary-card risk-${averageBand.tone}`}>
+              <article className={`summary-card ${averageBand ? `risk-${averageBand.tone}` : 'signal-unavailable'}`}>
                 <div className="summary-card__topline">
                   <span className="summary-card__label">Mean network score</span>
                   <span className="summary-card__index">02</span>
                 </div>
                 <div className="summary-card__metric">
-                  <span className="summary-card__value">{avgRisk.toFixed(1)}</span>
-                  <span className="summary-card__unit">/ 100</span>
+                  <span className="summary-card__value">{avgRisk === null ? '—' : avgRisk.toFixed(1)}</span>
+                  {avgRisk !== null && <span className="summary-card__unit">/ 100</span>}
                 </div>
                 <div className="summary-card__status">
                   <span className="risk-dot" aria-hidden="true" />
-                  {averageBand.label}
+                  {averageBand?.label ?? 'Unavailable'}
                 </div>
+                {avgRisk !== null && (unavailableCityCount > 0 || partialCoverageCityCount > 0) && (
+                  <p>
+                    {unavailableCityCount > 0
+                      ? `${unavailableCityCount} ${unavailableCityCount === 1 ? 'city' : 'cities'} excluded without a score`
+                      : ''}
+                    {unavailableCityCount > 0 && partialCoverageCityCount > 0 ? ' · ' : ''}
+                    {partialCoverageCityCount > 0
+                      ? `${partialCoverageCityCount} scored ${partialCoverageCityCount === 1 ? 'city has' : 'cities have'} partial signal coverage`
+                      : ''}
+                  </p>
+                )}
               </article>
 
-              <article className={`summary-card ${highestBand ? `risk-${highestBand.tone}` : ''}`}>
+              <article className={`summary-card ${highestBand ? `risk-${highestBand.tone}` : 'signal-unavailable'}`}>
                 <div className="summary-card__topline">
                   <span className="summary-card__label">
                     Highest-risk {highestRiskCities.length > 1 ? 'cities' : 'city'}
@@ -120,7 +165,7 @@ export default async function Dashboard() {
                   {highestRiskLabel}
                 </div>
                 <p>
-                  {highestRiskCity ? `${highestRiskCity.current_tipping_score.toFixed(1)} / 100 · ${highestBand?.label}` : 'No current score'}
+                  {highestRiskCity ? `${highestRiskCity.current_tipping_score.toFixed(1)} / 100 · ${highestBand?.label}` : 'Unavailable'}
                 </p>
               </article>
             </section>
@@ -141,7 +186,7 @@ export default async function Dashboard() {
                     <span className="risk-spectrum__band risk-tipping" />
                     <span className="risk-spectrum__band risk-critical" />
                   </div>
-                  {cityData.map((city, index) => {
+                  {scoredCities.map((city, index) => {
                     const cityName = formatCity(city.city_id);
                     const band = getRiskBand(city.current_tipping_score);
                     const safePosition = Math.min(98, Math.max(2, city.current_tipping_score));
@@ -167,6 +212,11 @@ export default async function Dashboard() {
                   <span>81</span>
                   <span>100</span>
                 </div>
+                {unavailableCityCount > 0 && (
+                  <p className="risk-spectrum__availability-note">
+                    {unavailableCityCount} {unavailableCityCount === 1 ? 'city is' : 'cities are'} unavailable and excluded from the score distribution.
+                  </p>
+                )}
               </div>
             </section>
 
@@ -190,22 +240,23 @@ export default async function Dashboard() {
 
               <div className="city-grid">
                 {cityData.map((city, index) => {
-                  const band = getRiskBand(city.current_tipping_score);
+                  const hasScore = hasCurrentScore(city);
+                  const band = hasScore ? getRiskBand(city.current_tipping_score) : null;
                   const cityName = formatCity(city.city_id);
-                  const rank = city.rank ?? index + 1;
+                  const rank = hasScore ? city.rank ?? index + 1 : null;
 
                   return (
                     <Link
                       key={city.city_id}
                       href={`/city/${city.city_id}`}
-                      className={`city-risk-card risk-${band.tone}`}
-                      aria-label={`View ${cityName.displayName} climate risk details`}
+                      className={`city-risk-card ${band ? `risk-${band.tone}` : 'signal-unavailable'}`}
+                      aria-label={`View ${cityName.displayName} climate risk details${hasScore ? '' : ', current score unavailable'}`}
                     >
                       <div className="city-risk-card__header">
-                        <span className="city-risk-card__rank">#{String(rank).padStart(2, '0')}</span>
+                        <span className="city-risk-card__rank">{rank === null ? '—' : `#${String(rank).padStart(2, '0')}`}</span>
                         <span className="city-risk-card__status">
                           <i className="risk-dot" aria-hidden="true" />
-                          {band.label}
+                          {band?.label ?? 'Unavailable'}
                         </span>
                       </div>
 
@@ -215,17 +266,36 @@ export default async function Dashboard() {
                       </div>
 
                       <div className="city-risk-card__score-row">
-                        <strong>{city.current_tipping_score.toFixed(1)}</strong>
-                        <span>/ 100</span>
+                        <strong>{hasScore ? city.current_tipping_score.toFixed(1) : '—'}</strong>
+                        {hasScore && <span>/ 100</span>}
                       </div>
 
-                      <div className="city-risk-card__meter" aria-hidden="true">
-                        <span style={{ width: `${Math.min(100, Math.max(0, city.current_tipping_score))}%` }} />
+                      <div
+                        className="city-risk-card__meter"
+                        role="img"
+                        aria-label={hasScore
+                          ? `${cityName.displayName}: ${city.current_tipping_score.toFixed(1)} out of 100`
+                          : `${cityName.displayName}: current score unavailable`}
+                      >
+                        {hasScore && <span style={{ width: `${Math.min(100, Math.max(0, city.current_tipping_score))}%` }} />}
                       </div>
+
+                      {hasPartialFactorCoverage(city) && (
+                        <div className="city-risk-card__coverage" role="status">
+                          Partial coverage · {city.available_factor_count} / {city.monitored_factor_count} signals available
+                        </div>
+                      )}
 
                       <div className="city-risk-card__footer">
-                        <span>Dominant driver</span>
-                        <strong>{city.current_primary_driver || 'Unknown'}</strong>
+                        <span>{hasScore ? 'Dominant driver' : 'Signal availability'}</span>
+                        <strong>
+                          {hasScore
+                            ? city.current_primary_driver || 'Unknown'
+                            : typeof city.available_factor_count === 'number'
+                                && typeof city.monitored_factor_count === 'number'
+                              ? `${city.available_factor_count} / ${city.monitored_factor_count} available`
+                              : 'Current score unavailable'}
+                        </strong>
                         <svg viewBox="0 0 16 16" fill="none" aria-hidden="true">
                           <path d="M3 8h9M8.5 4.5 12 8l-3.5 3.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
                         </svg>
@@ -236,8 +306,8 @@ export default async function Dashboard() {
               </div>
 
               <footer className="dashboard-data-note">
-                <span>Signal inputs</span>
-                Heat · Wind · Rain · Air quality · River discharge
+                <span>Signal catalogue</span>
+                Heat · Wind · Rain · Air quality · River discharge · Availability varies by city
               </footer>
             </section>
           </>

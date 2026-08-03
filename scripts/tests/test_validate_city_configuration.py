@@ -12,6 +12,7 @@ from scripts.validate_city_configuration import (
     EXPECTED_FORECAST_CITIES,
     FORECAST_ALLOWLIST_COLUMNS,
     NORMALS_COLUMNS,
+    SIGNAL_MONITORING_COLUMNS,
     validate_city_configuration,
 )
 
@@ -24,6 +25,7 @@ class CityConfigurationValidationTests(unittest.TestCase):
         self.normals_path = self.root / "normals.csv"
         self.provenance_path = self.root / "normals.provenance.json"
         self.allowlist_path = self.root / "allowlist.csv"
+        self.monitoring_path = self.root / "signal_monitoring.csv"
         self.city_rows = []
         for display_order, (city_id, timezone) in enumerate(
             EXPECTED_FORECAST_CITIES.items(), start=1
@@ -59,6 +61,17 @@ class CityConfigurationValidationTests(unittest.TestCase):
             {"city_id": city_id, "forecast_origin_time_zone": timezone}
             for city_id, timezone in EXPECTED_FORECAST_CITIES.items()
         ]
+        self.monitoring_rows = [
+            {
+                "city_id": city["city_id"],
+                "heat_monitored": "true",
+                "wind_monitored": "true",
+                "rain_monitored": "true",
+                "air_monitored": "true",
+                "river_monitored": city["river_enabled"],
+            }
+            for city in self.city_rows
+        ]
 
     def tearDown(self) -> None:
         self.temp_dir.cleanup()
@@ -78,6 +91,11 @@ class CityConfigurationValidationTests(unittest.TestCase):
             FORECAST_ALLOWLIST_COLUMNS,
             self.allowlist_rows,
         )
+        self._write_csv(
+            self.monitoring_path,
+            SIGNAL_MONITORING_COLUMNS,
+            self.monitoring_rows,
+        )
         normal_rows = self.normals_path.read_bytes()
         self.provenance_path.write_text(
             json.dumps(
@@ -96,6 +114,7 @@ class CityConfigurationValidationTests(unittest.TestCase):
             self.normals_path,
             self.allowlist_path,
             self.provenance_path,
+            self.monitoring_path,
         )
 
     def test_accepts_complete_configuration(self) -> None:
@@ -141,6 +160,34 @@ class CityConfigurationValidationTests(unittest.TestCase):
         self.assertIn("frozen forecast allowlist is missing city IDs", errors)
         self.assertIn("frozen forecast allowlist has unexpected city IDs", errors)
 
+    def test_rejects_monitoring_seed_drift(self) -> None:
+        removed = self.monitoring_rows.pop()
+        self.city_rows[0]["river_enabled"] = "true"
+        self.monitoring_rows[0]["heat_monitored"] = "false"
+
+        errors = "\n".join(self._validate())
+
+        self.assertIn("monitoring seed is missing active city IDs", errors)
+        self.assertIn(removed["city_id"], errors)
+        self.assertIn("heat_monitored", errors)
+        self.assertIn("river_monitored", errors)
+        self.assertIn("to match the ingestion contract", errors)
+
+    def test_rejects_duplicate_invalid_and_unknown_monitoring_rows(self) -> None:
+        duplicate = dict(self.monitoring_rows[0])
+        self.monitoring_rows.append(duplicate)
+        self.monitoring_rows[1]["air_monitored"] = "TRUE"
+        unknown = dict(self.monitoring_rows[2])
+        unknown["city_id"] = "unknown_xx"
+        self.monitoring_rows.append(unknown)
+
+        errors = "\n".join(self._validate())
+
+        self.assertIn(f"duplicate city_id {duplicate['city_id']!r}", errors)
+        self.assertIn("air_monitored must be exactly 'true' or 'false'", errors)
+        self.assertIn("monitoring city 'unknown_xx' is not registered", errors)
+        self.assertIn("monitoring seed has non-active or unknown city IDs", errors)
+
     def test_rejects_stale_normals_provenance(self) -> None:
         self._write_csv(self.cities_path, CITIES_COLUMNS, self.city_rows)
         self._write_csv(self.normals_path, NORMALS_COLUMNS, self.normal_rows)
@@ -148,6 +195,11 @@ class CityConfigurationValidationTests(unittest.TestCase):
             self.allowlist_path,
             FORECAST_ALLOWLIST_COLUMNS,
             self.allowlist_rows,
+        )
+        self._write_csv(
+            self.monitoring_path,
+            SIGNAL_MONITORING_COLUMNS,
+            self.monitoring_rows,
         )
         self.provenance_path.write_text(
             json.dumps(
@@ -168,6 +220,7 @@ class CityConfigurationValidationTests(unittest.TestCase):
                 self.normals_path,
                 self.allowlist_path,
                 self.provenance_path,
+                self.monitoring_path,
             )
         )
 

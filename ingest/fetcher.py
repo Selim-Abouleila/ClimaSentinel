@@ -116,14 +116,14 @@ def fetch_flood_discharge(city: dict) -> list[dict]:
 
 def fetch_historical_weather(city: dict) -> list[dict]:
     """
-    Fetch ERA5 reanalysis historical daily weather for the last 7 confirmed days.
-    ERA5 has a ~5-day publication lag, so we use a window of today-12 to today-6
-    to guarantee we always land on confirmed, non-partial data.
+    Fetch lagged Open-Meteo archive/reanalysis daily weather for seven days.
+    The window spans today-12 through today-6 to reduce the risk of requesting
+    incomplete recent archive data.
     Intended cadence: once daily (cron: 0 6 * * *)
     Returns a list of flat row dicts ready for BigQuery insertion.
     """
     today      = datetime.now(timezone.utc).date()
-    end_date   = today - timedelta(days=6)    # safely within ERA5 publication lag
+    end_date   = today - timedelta(days=6)    # publication-lag buffer
     start_date = today - timedelta(days=12)   # 7-day rolling window
 
     params = {

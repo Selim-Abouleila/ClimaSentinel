@@ -1,21 +1,22 @@
 """
 main.py — ClimaSentinel ingest job entrypoint
 Reads cities from config/cities.csv, fetches Open-Meteo data, loads into BigQuery raw tables.
-After ingestion, automatically triggers `dbt run` to refresh Silver and Gold layers.
+After ingestion, automatically triggers `dbt seed` and `dbt run` to refresh
+static configuration plus Silver and Gold layers.
 Designed to run as a Cloud Run Job triggered by Cloud Scheduler (daily at 06:00 UTC).
 
 Sources fetched per run:
   All cities:
     - Weather Forecast  → raw.weather_forecast_hourly   (168 rows/city, hourly, 7 days)
     - Air Quality       → raw.air_quality_hourly         (120 rows/city, hourly, 5 days)
-    - Historical (ERA5) → raw.historical_weather_daily   (7 rows/city, daily, rolling)
+    - Historical archive → raw.historical_weather_daily  (7 rows/city, daily, rolling)
   River-enabled cities only:
     - Flood/River       → raw.flood_daily                (7 rows/city, daily, 7 days)
-  All cities, 1st of month only:
-    - Climate (CMIP6)   → raw.climate_projections_daily  (~3650 rows/city, 10-year window)
+  Implemented but disabled in the scheduled run:
+    - Climate (CMIP6)   → raw.climate_projections_daily  (~3,650 rows/city when invoked on the 1st)
 
 Post-ingestion:
-  - dbt run            → refreshes stg views + mart tables (Silver + Gold)
+  - dbt seed + dbt run → refreshes configuration, stg views and mart tables
 """
 
 import csv

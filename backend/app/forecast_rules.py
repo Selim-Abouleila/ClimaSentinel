@@ -2,8 +2,9 @@
 
 The deployed policy intentionally serves these rules while the learned Heat and
 Rain challengers fail promotion. Heat is the one rule that has demonstrated
-useful ERA5 backtest performance. Rain is marked as backtested with insufficient
-skill; Wind, Air Quality and River remain without honest observed labels.
+useful backtest performance against Open-Meteo archive/reanalysis data. Rain is
+marked as backtested with insufficient skill; Wind, Air Quality and River
+remain without honest observed labels.
 """
 
 from dataclasses import dataclass

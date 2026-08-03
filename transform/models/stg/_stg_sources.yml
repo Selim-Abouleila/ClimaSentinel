@@ -75,8 +75,10 @@ sources:
 
       - name: historical_weather_daily
         description: >
-          ERA5 reanalysis daily weather (rolling 7-day window, offset by 6-12 days for publication lag).
-          7 rows per city per daily ingestion run.
+          Open-Meteo Archive/Reanalysis daily weather (rolling 7-day window,
+          offset by 6-12 days for publication lag). The active request does not
+          pin or persist an exact source model/version. 7 rows per city per
+          daily ingestion run.
         columns:
           - name: city_id
             description: City identifier
@@ -100,7 +102,9 @@ sources:
       - name: climate_projections_daily
         description: >
           CMIP6 climate projections (10-year daily window) from Open-Meteo Climate API.
-          Only ingested on the 1st of each month. ~3,650 rows per city per run.
+          Fetch/load support exists, but scheduled ingestion currently does not
+          invoke it. If enabled with its existing guard, it runs only on the 1st
+          of each month and returns ~3,650 rows per city per run.
         columns:
           - name: city_id
             description: City identifier

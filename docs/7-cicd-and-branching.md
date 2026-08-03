@@ -44,11 +44,14 @@ does not constitute full-repository or live-environment validation.
 |---|---|
 | **Checkout code** | `actions/checkout@v4` |
 | **Set up Python 3.11** | `actions/setup-python@v5` with pip caching from `backend/requirements.txt` |
-| **Install dependencies** | `pip install -r requirements.txt` |
+| **Validate city contracts** | Runs the standard-library city validator plus its unit tests and the normals-generator tests. This validates the 20-city registry, 240-row normals/provenance snapshot, 20-row signal-monitoring contract (including River alignment) and frozen 10-city forecast allowlist before application dependencies are installed. |
+| **Parse dbt project** | Installs `transform/requirements.txt` and runs a credential-free `dbt parse --no-partial-parse`; this checks the project graph and SQL/Jinja compilation but does not connect to BigQuery or execute models/tests. |
+| **Install backend/ingestion test dependencies** | Installs `backend/requirements.txt` plus the ingestion test dependency used outside the backend working directory. |
+| **Run ingestion contract tests** | Runs `ingest/tests/` to verify that source partial failures and embedded dbt failures propagate as a failed job instead of reporting false success. |
 | **Run unit tests** | `pytest tests/ -v -m "not integration"` — runs all tests *not* marked as integration |
 | **Run integration tests** | `pytest tests/ -v -m integration` — runs only tests marked `@pytest.mark.integration` |
-| **Check frontend** | `npm ci`, `npm run lint` and `npm run build` lint and compile the production bundle; they do not execute browser behavior |
-| **Build Docker image** | `docker build -f backend/Dockerfile -t climasentinel-backend:test .` — verifies the image compiles but does **not** push to any registry |
+| **Check frontend** | `npm ci`, `npm run lint`, `npm run test:unit` and `npm run build` cover linting, pure availability/aggregation logic and the production bundle; the unit suite does not open a browser or contact staging. |
+| **Build both Docker images** | Builds the backend and ingestion images without pushing them, verifying that both release contexts compile. |
 
 > If any step fails, its check fails. Whether that blocks the merge depends on
 > the repository's externally configured required-status-check rules.
@@ -61,8 +64,9 @@ does not constitute full-repository or live-environment validation.
 does not require the pushed commit to come from `dev`.
 
 This pipeline re-runs the full **backend pytest suite**, builds the backend
-Docker image, trains/evaluates a challenger, and deploys both the backend and
-frontend to the **staging environment** on Railway.
+Docker image, trains/evaluates a challenger, then uses an expand-and-contract
+cutover to deploy the frontend and backend to the **staging environment** on
+Railway.
 
 | Step | Description |
 |---|---|
@@ -70,8 +74,11 @@ frontend to the **staging environment** on Railway.
 | **Build Docker image** | Builds `climasentinel-backend:staging` |
 | **Train and register Heat/Rain challenger** | Calls the reusable MLOps workflow and returns the exact schema-v3 `ClimaSentinel_HeatRainForecaster` version for offline evaluation |
 | **Evaluate candidate** | Runs per-horizon gates against same-vintage rule baselines. A passing challenger may receive `champion`; an ordinary quality rejection is reported without blocking the operational rule release. |
-| **Deploy rule baseline** | After evaluation completes, deploys the backend and frontend with `railway up --environment staging`. Serving remains the transparent same-vintage rule policy independently of challenger acceptance. |
-| **Live E2E** | Exercises Paris at every horizon, checks the rule-baseline API contract and global disclosure, and accepts either live availability state for optional sources. It does not force an unavailable-source case. |
+| **Deploy compatibility frontend** | Stamps the exact workflow release ID into the frontend and deploys that backward-compatible frontend before changing the backend. |
+| **Confirm frontend marker** | Polls the deployed marker until the exact `${GITHUB_SHA}-${GITHUB_RUN_ID}` content is served; backend cutover stops if the expected frontend is not live. |
+| **Gate v2 readiness** | With the existing `GCP_SA_KEY`, verifies required columns on all four active v2 marts, exact membership of the checked-in monitoring seed, 20-city current/detail coverage, one coherent selected run and snapshot age no greater than 36 hours. This queries relations created earlier by `make deploy`; it does not run dbt or continuously monitor later source freshness. |
+| **Deploy v2 backend** | Only after the frontend marker and v2 readiness gates pass, deploys the backend that reads `mart_city_score_history_v2`, `mart_city_score_current_v2`, `mart_city_score_detail_v2` and `mart_city_zone_current_v2`. |
+| **Live E2E** | Reconfirms the exact frontend marker, exercises Paris at every forecast horizon and verifies Stockholm's deterministic `River / Flood · Not monitored` detail state without `0.0` or `Stable`. |
 
 The deployment job references the `staging` GitHub environment and reads
 `RAILWAY_TOKEN`, `RAILWAY_PROJECT_ID`, `RAILWAY_SERVICE_ID` and
@@ -84,6 +91,15 @@ Unlike the PR workflow, staging does not explicitly rerun `npm run lint` or
 therefore carrying the frontend build responsibility at this stage. The E2E job
 also installs packages with `npm install`, not the stricter lockfile-only
 `npm ci`.
+
+The staging workflow is an application/forecast release path on Railway. It
+does **not** rerun the city validator or normals-generator tests, rebuild or
+execute the GCP ingestion image, refresh the 20-city BigQuery data plane, or run
+dbt seed/run/test. The v2 relations must already have been created alongside
+the still-live unsuffixed rollback marts by a reviewed `make deploy` run. Its
+readiness gate checks schema, city membership, selected-run coherence and the
+36-hour cutover age, but it is not a durable ingestion-run manifest or ongoing
+freshness monitor.
 
 ---
 
@@ -158,21 +174,31 @@ promotion path.
 
 ## Testing Strategy
 
-All backend tests live in `backend/tests/` and run in the PR-to-`dev` and
-staging workflows. Pytest's `integration` marker separates broader
-application-contract tests from isolated unit tests. Most of these tests still
-use FastAPI's in-process test client and mocks; they are not live BigQuery,
-DagsHub or Railway integration tests.
+Backend tests live in `backend/tests/` and run in the PR-to-`dev` and staging
+workflows. The PR workflow additionally runs the standard-library tests in
+`scripts/tests/`, normals-generator tests in `transform/scripts/tests/`, and
+ingestion failure-contract tests in `ingest/tests/`, parses dbt, and runs the
+frontend availability unit suite. Pytest's `integration`
+marker separates broader backend application-contract tests from isolated
+backend unit tests. Most tests still use an in-process client or mocks; they are
+not live BigQuery, Open-Meteo, DagsHub or Railway integration tests.
 
 | Test module | Main contract covered |
 |---|---|
+| `scripts/tests/` | City schema, identifiers, coordinates, time zones, ordering, booleans, normals completeness/provenance, monitoring-seed synchronization and frozen forecast scope |
+| `transform/scripts/tests/` | Deterministic normals generation, validation and safe output behavior |
+| `ingest/tests/` | Partial-source and embedded-dbt failure propagation from the Cloud Run entrypoint |
 | `test_health.py` | Root/health, CORS, OpenAPI, metrics, mocked current-score behavior and selected error paths |
+| `test_city_score_contract.py` | v2 relation selection, nullable factor schemas, availability/coverage invariants, aggregate counts and available-factor maximum semantics |
 | `test_forecast_rules.py` | All five rule formulas, clipping, source coverage, target-month Heat normal and Day +3 use of same-vintage Day +4 context |
 | `test_model_extraction.py` | Direct training-mart extraction, exact schema/provenance and absence of leaky filling |
 | `test_ml_pipeline.py` | Schema-v3 challenger preprocessing, six-output order, horizon slicing, four-day purge and endpoint rule semantics |
 | `test_model_training.py` | Heat/Rain challenger metrics, identical-row rule baselines, MLflow/DVC provenance and registered artifact contract |
 | `test_model_promotion.py` | Baseline-relative gates, horizon-specific ceilings, exact registry-artifact validation, evidence/contract failures and explicit nonfatal quality rejection |
 | `test_model_serving_integration.py` | Registry-independent rule policy, null model provenance/intervals and all three horizons |
+| `frontend/tests/unit/signal-availability.spec.ts` | Legacy numeric compatibility, explicit v2 availability precedence, partial/all-unavailable aggregation, measured zero, missing/unmonitored factors and 36-hour freshness |
+| `assert_city_score_availability_contract.sql`, `assert_city_score_v2_*.sql`, `assert_city_signal_monitoring_contract.sql` and `assert_city_signal_v2_*.sql` | Operational spine, monitoring contract, exact-run coherence, raw-payload consistency, availability semantics and deterministic worst day |
+| `frontend/tests/e2e/dashboard.spec.ts` | Live Paris three-horizon forecast flow and Stockholm unmonitored-River presentation |
 
 The staging Playwright suite adds a live deployment check after challenger
 evaluation and Railway deployment. It verifies the rule-baseline API rather
@@ -185,14 +211,16 @@ A green GitHub Actions run does not validate every repository layer:
 
 - the PR workflow tests ingestion failure propagation, but no workflow exercises
   live source fetchers or BigQuery loader behaviour;
-- no workflow installs dbt or runs `dbt parse`, `dbt build` or `dbt test`;
+- PR CI runs a credential-free `dbt parse`, but no workflow executes an
+  authenticated `dbt build` or `dbt test` against BigQuery;
 - Terraform formatting, validation and planning are not CI checks;
-- the PR workflow runs frontend lint/build, but not Playwright;
+- the PR workflow runs frontend lint, Playwright-powered pure unit tests and
+  build, but not the live browser E2E suite;
 - staging runs Playwright, but has no separate frontend lint/build job;
 - the `main` workflow runs challenger training/evaluation but no backend or
   frontend application test suite; and
-- there are no frontend unit/component tests, visual-regression tests or
-  automated accessibility checks.
+- there are no rendered component tests, visual-regression tests or automated
+  accessibility checks.
 
 Consequently, green backend and E2E jobs do not prove the dbt warehouse
 contracts, mart lineage or mart freshness. Those checks must be run separately
@@ -233,7 +261,8 @@ Secret scope follows the job that consumes it:
 |---|---|---|
 | `RAILWAY_TOKEN`, `RAILWAY_PROJECT_ID`, `RAILWAY_SERVICE_ID`, `RAILWAY_FRONTEND_SERVICE_ID` | `deploy-staging` | `staging` GitHub environment |
 | `STAGING_FRONTEND_URL` | `e2e-test` | Repository or organization, because that job has no `environment` |
-| `GCP_SA_KEY`, `DAGSHUB_USERNAME`, `DAGSHUB_TOKEN`, `MLFLOW_TRACKING_URI` | Reusable training workflow | Repository or organization, because the caller jobs have no environment |
+| `GCP_SA_KEY` | Reusable training workflow and staging v2 readiness gate | Repository or organization for the reusable caller; it must also be visible to the `staging` deployment job (a repository secret satisfies both) |
+| `DAGSHUB_USERNAME`, `DAGSHUB_TOKEN`, `MLFLOW_TRACKING_URI` | Reusable training workflow | Repository or organization, because the caller jobs have no environment |
 | `DAGSHUB_USERNAME`, `DAGSHUB_USER_TOKEN` or `DAGSHUB_TOKEN` | Staging promotion | `staging` GitHub environment |
 | `DAGSHUB_USERNAME`, `DAGSHUB_USER_TOKEN` or `DAGSHUB_TOKEN` | Production evaluation | Repository or organization, because that job has no environment |
 
