@@ -74,8 +74,9 @@ several dashboard refreshes can legitimately show the same sample.
 
 Prometheus's own `up{job="climasentinel-backend"}` series indicates whether the
 scrape target is reachable. The provisioned dashboard does not currently use
-that series. The backend `/health` route is also only process liveness and does
-not test BigQuery.
+that series. The backend `/health` route reports process liveness and release
+identity, but it does not test BigQuery; staging CD uses `release_id` only to
+identify the routed build.
 
 ## Important limitations
 

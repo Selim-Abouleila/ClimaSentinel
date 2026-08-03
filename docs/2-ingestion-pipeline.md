@@ -322,9 +322,11 @@ freshness monitoring remain separate operational checks.
 For the v2 availability rollout, `make deploy` is the data-plane prerequisite:
 it creates the v2 staging and mart relations while the legacy application can
 continue reading unsuffixed marts. The staging application workflow then
-deploys and confirms the compatibility frontend, validates the v2 schemas and
-20-city coverage, selected-run coherence and 36-hour snapshot age, and deploys
-the v2 backend in that order.
+queues the compatibility frontend, validates the v2 schemas and 20-city
+coverage, selected-run coherence and 36-hour snapshot age while it builds, then
+marker-confirms the frontend before queueing and exact-release-confirming the v2
+backend. Both Railway submissions use detached mode, but the service cutovers
+remain ordered rather than parallel.
 
 ### Verifying in logs
 
