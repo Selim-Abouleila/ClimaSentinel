@@ -11,42 +11,63 @@ does not query BigQuery or load MLflow artifacts directly.
 - Next.js 16 and React 19;
 - TypeScript API types in `frontend/src/lib/api.ts`;
 - Tailwind CSS v4 plus shared design tokens; and
-- Playwright for live staging end-to-end tests.
+- Playwright for pure availability unit tests and live staging end-to-end tests.
 
 `NEXT_PUBLIC_API_URL` identifies the backend and is embedded into the
 browser-facing bundle at build time. Railway must therefore provide the correct
 value before building the frontend. The backend validates forecast responses
-with its typed `CityForecastResponse` contract, including nullable unavailable
-factors. The TypeScript interface in `frontend/src/lib/api.ts` is compile-time
-only: the browser currently trusts parsed JSON and does not perform an
-independent runtime-schema validation. The operational current-score and
-city-detail endpoints return BigQuery rows directly and do not provide the same
-typed backend response model.
+with `CityForecastResponse` and validates current, history and city-detail
+operational payloads with dedicated Pydantic models. The TypeScript interfaces
+in `frontend/src/lib/api.ts` are compile-time only: the browser currently trusts
+parsed JSON and does not perform independent runtime-schema validation.
 
 ## Main dashboard and city detail
 
 The `/` dashboard renders current operational risk from
-`GET /data/current-scores`. `/city/[city_id]` renders the five operational
-factor scores from `GET /data/city/{city_id}/scores`. These pages describe the
+`GET /data/current-scores`. `/city/[city_id]` renders the five-factor signal
+catalogue from `GET /data/city/{city_id}/scores`, but only factors with complete
+required input coverage receive a numeric score. These pages describe the
 current operational marts; they must not be interpreted as model-validation
 results.
 
 The current-score client no longer hard-codes `limit=10`; it uses the API's
 bounded default of 100. The overview renders every returned city card and
 derives the monitored-city count and explanatory copy from the response. After
-the expanded ingestion and marts are refreshed, that operational surface
-contains 20 cities, including the 10 dashboard-only additions.
+the expanded ingestion and v2 marts are refreshed, the warehouse's configured
+spine keeps that operational surface at 20 cities, including the 10
+dashboard-only additions, even when some selected-run signals are unavailable.
 
 The underlying mart selects the two UTC dates “today + tomorrow,” not a rolling
 48-hour interval. The current overview and city page still display “48-hour”
-copy, which is a known product-label mismatch. Both pages also use legacy marts
-that can mask some missing inputs; unlike `/forecast`, they do not currently
-render the beta/validation disclosure.
+copy, which is a known product-label mismatch. Unlike `/forecast`, they do not
+currently render the beta/validation disclosure.
 
-On the city page, tied maximum dates are not resolved deterministically by the
-current detail-mart SQL, and separately aggregated factor fields can come from
-different tied dates. The frontend renders that payload without detecting the
-tie; see [Mart Layer](4-mart-layer.md#mart_city_score_detail-view).
+Operational factors have three explicit UI states. `available` renders the
+numeric score and risk band; `unavailable` renders a neutral em dash plus the
+reported coverage; `not_monitored` renders “Not monitored / No source
+configured.” Neither missing state receives a green Stable label or meter fill.
+Detail copy reports available versus monitored factor counts and states that
+missing factors are excluded from the overall maximum. A fully covered input
+whose rule genuinely evaluates to zero remains `0.0 · Stable`.
+
+The overview accepts a nullable city-level score. Cities without any available
+factor are excluded from the network mean, highest-risk selection and spectrum,
+but remain visible as Unavailable cards. Tied worst dates resolve to one
+deterministic dbt row before the UI receives them; see
+[Mart Layer](4-mart-layer.md#mart_city_score_detail_v2-view).
+
+A city can still have a score when only a subset of its monitored factors is
+available. Every such scored city card flags its available/monitored count
+(for example `1/4 signals available`), and the network-mean card states how many
+scored cities have partial signal coverage. The mean itself includes scored
+cities only and does not imply that all their monitored factors were available.
+
+Overview and detail responses carry `operational_ingestion_run_id` and
+`operational_ingested_at_utc`. Both pages display the selected snapshot time and
+switch to a visible stale warning after 36 hours. This is a mitigation, not a
+run audit: there is no completed-run manifest yet, so a failed ingestion can
+leave the old snapshot selected and an overlapping/in-progress run can briefly
+appear newest.
 
 The overview converts any API failure into an empty array and shows the same
 empty state as a legitimate zero-row response. The city client converts a
@@ -109,11 +130,31 @@ produce a successful response; only the affected rule cards are unavailable.
 
 ## Deployment compatibility
 
-The API exposes method, availability and validation fields and keeps all model
-uncertainty nullable. Backend and frontend should therefore be promoted as one
-release. The staging Playwright smoke test verifies the
+The availability release uses a deliberate expand-and-contract order:
+
+1. Run `make deploy` to seed `city_signal_monitoring` and create the exact-run
+   v2 staging/marts while the unsuffixed legacy marts and old application stay
+   live.
+2. Deploy the compatibility frontend, which tolerates both the legacy numeric
+   payload and explicit v2 availability metadata, then confirm its exact
+   release marker.
+3. Gate the v2 mart schemas, all 20 configured current/detail city rows, one
+   coherent selected run and a snapshot age no greater than 36 hours.
+4. Deploy the backend that reads v2, then run staging E2E.
+
+The unsuffixed marts remain temporary rollback compatibility and do not expose
+the v2 column contract.
+
+The pure unit suite in `frontend/tests/unit/signal-availability.spec.ts` checks
+legacy compatibility, explicit v2 false precedence, measured zero, unavailable
+factors and aggregation with partial/all-unavailable inputs. It runs in PR CI
+with `npm run test:unit` and does not contact a browser or live service.
+
+The staging Playwright smoke test verifies the
 `forecast_rules_baseline` API contract for Paris across all three horizons and
 checks the global beta disclosure and freezes the selector at the original 10
-choices. It does not verify visible per-factor validation labels, the other nine
-forecast cities, the 20-city overview or city-detail pages, or an exact backend
+choices. It also opens Stockholm's operational detail and asserts that its
+unmonitored River factor contains neither `Stable` nor `0.0`. It does not verify
+visible per-factor validation labels, the other nine forecast cities, the full
+20-city overview, an injected temporary source outage, or an exact backend
 commit marker. A rejected challenger is not required to be deployed.

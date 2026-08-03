@@ -16,7 +16,14 @@ transforms the data with BigQuery and dbt, and supports an optional monthly
 CMIP6 projection source that is currently disabled in scheduled ingestion. The
 operational dashboard path covers all 20 cities once the expanded data plane
 and serving release are current; the beta forecast path remains intentionally
-frozen to its original 10-city allowlist.
+frozen to its original 10-city allowlist. Operational factors preserve missing
+inputs as NULL, distinguish `unavailable` from `not_monitored`, expose input
+coverage, and calculate each city score only from available factors.
+
+The v2 API carries the selected operational run ID/timestamp; overview/detail
+pages show that snapshot, warn after 36 hours, and flag scored cities with
+partial factor coverage. This is visibility rather than a completed-run audit:
+the pipeline does not yet persist a durable run manifest.
 
 > **Forecasting is beta.** The three-day page presents experimental Day +1/+2/+3 point estimates from deterministic same-vintage rules, not a deployed ML model. Heat has limited backtest evidence against Open-Meteo archive/reanalysis data; Rain was backtested against the same source but showed insufficient skill; Wind, Air Quality and River are not observation-validated. Missing inputs remain unavailable, and no confidence intervals are claimed.
 
@@ -62,6 +69,12 @@ make deploy
 the FastAPI or Next.js services on Railway; promote the reviewed commit from
 `dev` to `staging` to run the repository's Railway deployment workflow.
 
+For the availability-contract rollout, run `make deploy` first so the new v2
+relations exist while the unsuffixed rollback relations remain live. Staging
+then deploys the backward-compatible frontend, confirms its exact release
+marker, checks the v2 schemas, 20-city coverage, selected-run coherence and
+36-hour snapshot age, and only then deploys the backend that reads v2.
+
 See the full guide in [docs/1-bootstrap-initialization.md](docs/1-bootstrap-initialization.md).
 
 ### All commands
@@ -70,7 +83,7 @@ See the full guide in [docs/1-bootstrap-initialization.md](docs/1-bootstrap-init
 |---|---|
 | `make bootstrap` | Enable GCP APIs, create Artifact Registry repo, GCS state bucket, init Terraform |
 | `make build` | Build & push the ingest Docker image via Cloud Build |
-| `make validate-cities` | Validate the operational registry, 12 monthly normals per active city, and frozen forecast-city contract |
+| `make validate-cities` | Validate the operational registry, 12 monthly normals per active city, signal-monitoring contract, and frozen forecast-city contract |
 | `make deploy` | Validate city files, build/push, apply Terraform, execute and wait for ingestion, then run dbt seed/run/test |
 | `make plan` | Dry run — show changes without applying |
 | `make destroy` | Destroy Terraform-managed resources only; it does not remove the state bucket, Artifact Registry/images, BigQuery data, enabled APIs, or other imperatively created resources |
@@ -113,15 +126,19 @@ flowchart LR
         BQ_STG["🗄️ BigQuery (Silver)
         ─────────────
         stg.city_monthly_normals (seed)
+        stg.city_signal_monitoring (seed)
         stg.forecast_city_allowlist (seed)
-        stg.stg_latest_*
-        stg.stg_city_daily_*
-        stg.stg_city_signal_input
+        stg.stg_operational_run_v2
+        stg.stg_city_daily_*_v2
+        stg.stg_city_signal_input_v2
         stg.stg_city_signal_vintage"]
 
         BQ_MART["🗄️ BigQuery (Gold)
         ─────────────
-        mart.mart_city_score_*
+        mart.mart_city_score_history_v2
+        mart.mart_city_score_current_v2
+        mart.mart_city_score_detail_v2
+        mart.mart_city_zone_current_v2
         mart.mart_ml_forecast_features_vintage
         mart.mart_city_realized_weather_daily
         mart.mart_ml_training_examples
@@ -130,7 +147,7 @@ flowchart LR
         SCH -->|"HTTP POST (OAuth2)"| CRJ
         CRJ -->|"Streaming inserts"| BQ_RAW
         BQ_RAW --> DBT
-        DBT -->|"Views"| BQ_STG
+        DBT -->|"Views + selected-run table"| BQ_STG
         DBT -->|"Tables + Views"| BQ_MART
     end
 
@@ -255,8 +272,14 @@ of an exact reanalysis model/version.
 | Layer | Dataset | Purpose | Key Tables | Status |
 |---|---|---|---|---|
 | 🥉 Bronze | `raw` | Raw API loads — append-only, partitioned by day | Active: `weather_forecast_hourly`, `air_quality_hourly`, `flood_daily`, `historical_weather_daily`; optional: `climate_projections_daily` | Configured; dataset existence and freshness require runtime verification |
-| 🥈 Silver | `stg` | Static seeds, operational daily views, and exact forecast vintages (dbt) | `city_monthly_normals`, `forecast_city_allowlist`, `stg_latest_*`, `stg_city_signal_input`, `stg_city_signal_vintage` | dbt-managed; deployment and freshness require runtime verification |
-| 🥇 Gold | `mart` | Operational scores, exact-vintage forecast features, and archive/reanalysis-backed Heat/Rain labels | `mart_city_score_*`, `mart_ml_forecast_features_vintage`, `mart_city_realized_weather_daily`, `mart_ml_training_examples`, `mart_ml_serving_features_current` | dbt-managed; deployment and freshness require runtime verification |
+| 🥈 Silver | `stg` | Static seeds, exact-run operational inputs, and exact forecast vintages (dbt) | `city_monthly_normals`, `city_signal_monitoring`, `forecast_city_allowlist`, `stg_operational_run_v2`, `stg_city_daily_weather_v2`, `stg_city_daily_air_quality_v2`, `stg_flood_daily_v2`, `stg_city_signal_input_v2`, `stg_city_signal_vintage` | dbt-managed; deployment and freshness require runtime verification |
+| 🥇 Gold | `mart` | Availability-aware operational scores, exact-vintage forecast features, and archive/reanalysis-backed Heat/Rain labels | `mart_city_score_history_v2`, `mart_city_score_current_v2`, `mart_city_score_detail_v2`, `mart_city_zone_current_v2`, `mart_ml_forecast_features_vintage`, `mart_city_realized_weather_daily`, `mart_ml_training_examples`, `mart_ml_serving_features_current` | dbt-managed; deployment and freshness require runtime verification |
+
+The four unsuffixed operational marts (`mart_city_score_history`,
+`mart_city_score_current`, `mart_city_score_detail` and
+`mart_city_zone_current`) are temporary legacy rollback compatibility only.
+They retain their legacy schema and missing-as-zero behavior; v2 availability
+columns must not be inferred from them.
 
 > The ingest job creates active-source **Bronze tables only after the `raw`
 > dataset exists**. **Silver** and **Gold** models are managed by dbt. Source
@@ -302,21 +325,23 @@ forecast page's original 10-city selector.
 
 Operational coverage is registry-driven rather than implemented with one
 pipeline per city. An active city requires one reviewed `config/cities.csv`
-record, exactly 12 approved rows in `city_monthly_normals.csv`, and a deliberate
-`river_enabled` decision. The expansion cohort added 10 registry records and
-120 monthly-baseline rows, bringing the checked-in contracts to 20 operational
-cities and 240 city-month rows. The normals generator and provenance manifest
+record, exactly 12 approved rows in `city_monthly_normals.csv`, a row in
+`city_signal_monitoring.csv`, and a deliberate `river_enabled` decision. The
+expansion cohort added 10 registry/monitoring records and 120 monthly-baseline
+rows, bringing the checked-in contracts to 20 operational cities, 20 monitoring
+rows and 240 city-month rows. The normals generator and provenance manifest
 record the expansion's 2014–2023 Open-Meteo procedure without silently
 refreshing the original 10 cities' retained values.
 
 Run `make validate-cities` before building or deploying. It checks schemas,
 identifiers, coordinates, IANA time-zone names, display order, strict booleans,
 physical ranges, city/month completeness, the provenance checksum/count
-contract and the separate frozen forecast allowlist. Expanding operational
-coverage does **not** expand the beta forecast path; that requires an explicit,
-separately reviewed change to the allowlist, the independent backend model-city
-vocabulary, training and serving contracts, the frontend selector and their
-tests.
+contract, monitoring-seed membership and exact River alignment with
+`river_enabled`, plus the separate frozen forecast allowlist. Expanding
+operational coverage does **not** expand the beta forecast path; that requires
+an explicit, separately reviewed change to the allowlist, the independent
+backend model-city vocabulary, training and serving contracts, the frontend
+selector and their tests.
 
 ---
 
@@ -326,13 +351,15 @@ ClimaSentinel documents a four-tier branching strategy (`feature/*` → `dev` �
 `staging` → `main`) and validates it with GitHub Actions. Branch protection is
 configured outside the repository and must be verified in GitHub:
 
-1. **PR validation (`dev`):** Validates the city registry/normals/forecast-scope contract, unit-tests ingestion failure propagation alongside the backend suite, runs frontend lint/build checks, and builds both backend and ingestion Docker images.
-2. **Staging environment (`staging`):** Extracts a point-in-time snapshot, trains and evaluates the six-output Heat/Rain challenger, and deploys the transparent all-rule baseline. Railway deployments run in attached mode; CI verifies the frontend release marker before a limited Chromium/Paris Playwright path exercises all three horizons. Training jobs do not currently receive GitHub Environment isolation, and staging promotion can move the shared MLflow `Production` stage/`champion` alias.
+1. **PR validation (`dev`):** Validates the city registry, normals, monitoring and forecast-scope contracts; unit-tests ingestion failure propagation and backend v2 response invariants; performs a credential-free `dbt parse`; runs frontend lint, availability unit tests and build; and builds both backend and ingestion Docker images.
+2. **Staging environment (`staging`):** After `make deploy` has created the v2 relations alongside legacy rollback marts, extracts a point-in-time snapshot and evaluates the six-output Heat/Rain challenger. It then deploys the compatibility frontend, confirms its exact release marker, gates on the v2 schemas, configured 20-city coverage, one selected run and a snapshot no older than 36 hours with the existing GCP service account, deploys the v2 backend, and runs Chromium E2E coverage for Paris forecasts and Stockholm's unmonitored River state. Training jobs do not currently receive GitHub Environment isolation, and staging promotion can move the shared MLflow `Production` stage/`champion` alias.
 3. **Production gate (`main`):** A candidate must have non-negative component R², beat the exact matching rule MAE by at least 5%, and satisfy horizon-aware absolute MAE ceilings. Authentication, provenance or artifact-contract failures remain fatal. Railway production deployment is currently disabled, and the operational response continues to serve all five same-vintage rules without model intervals.
 
 PR and staging CI do not currently exercise source fetchers, BigQuery loader
-writes or dbt compile/run/test; see [Doc 7](docs/7-cicd-and-branching.md) for
-the tested boundaries.
+writes, or an authenticated `dbt run`/`dbt test`. PR CI does parse the dbt graph
+without warehouse credentials, while the staging readiness gate validates the
+already-deployed v2 relations; see [Doc 7](docs/7-cicd-and-branching.md) for the
+tested boundaries.
 
 *For full details on our pipelines and quality gates, please see [Doc 7: CI/CD and Branching Strategy](docs/7-cicd-and-branching.md).*
 
@@ -369,8 +396,8 @@ current limits:
 |---|---|
 | [1. Bootstrap Initialization](docs/1-bootstrap-initialization.md) | How to clone this project in GCP Cloud Shell and initialize the Terraform remote state backend |
 | [2. Ingestion Pipeline](docs/2-ingestion-pipeline.md) | Cloud Run and BigQuery ingestion architecture, source contracts, and fetch cadences |
-| [3. Staging Layer](docs/3-staging-layer.md) | Silver layer: operational latest views plus exact-run weather, AQ, flood and unified signal vintages |
-| [4. Mart Layer](docs/4-mart-layer.md) | Gold layer: operational scores plus point-in-time-safe ML feature, realized-label, training, and serving marts |
+| [3. Staging Layer](docs/3-staging-layer.md) | Silver layer: exact-run availability-aware operational inputs plus point-in-time-safe forecast vintages |
+| [4. Mart Layer](docs/4-mart-layer.md) | Gold layer: active v2 operational scores, temporary legacy rollback marts, and ML feature/label marts |
 | [5. Guide Power BI](docs/5-guide-powerbi.md) | Guide en français pour connecter Power BI Desktop aux tables `mart` et configurer le rafraîchissement automatique |
 | [6. Guide Streamlit](docs/6-guide-streamlit.md) | Guide en français pour connecter Streamlit à BigQuery avec une identité dédiée et des secrets gérés |
 | [7. CI/CD and Branching Strategy](docs/7-cicd-and-branching.md) | Intended branch flow, GitHub Actions behavior, secret scope, and current deployment/registry limitations |
@@ -378,6 +405,6 @@ current limits:
 | [9. Frontend Architecture](docs/9-frontend.md) | Next.js dashboard, beta rule-forecast UI, and transparent validation presentation |
 | [10. Monitoring Dashboard](docs/10-monitoring-dashboard.md) | Local Prometheus + Grafana observability demo, its metric semantics, and production gaps |
 | [11. Machine Learning Model](docs/11-machine-learning-model.md) | Six-output realized Heat/Rain challenger, purged validation, rule baselines, MLflow, and DagsHub registry |
-| [12. API Swagger Documentation](docs/12-api-swagger-documentation.md) | FastAPI endpoint reference, typed forecast contract, raw operational routes, and current hardening gaps |
-| [13. End-to-End Testing](docs/13-end-to-end-testing.md) | Frontend-marker-pinned Paris/Chromium staging smoke test and its coverage limits |
+| [12. API Swagger Documentation](docs/12-api-swagger-documentation.md) | FastAPI endpoint reference and typed availability-aware operational and forecast contracts |
+| [13. End-to-End Testing](docs/13-end-to-end-testing.md) | Frontend-marker-pinned staging readiness/E2E checks plus local availability unit-test coverage |
 | [Archived project material](docs/archive/README.md) | Dated, superseded project artifacts retained with provenance and use restrictions |

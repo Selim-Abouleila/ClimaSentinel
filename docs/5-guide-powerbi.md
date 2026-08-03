@@ -3,14 +3,19 @@
 **ClimaSentinel — Guide Technique DA1 / DA2**  
 Ce guide est destiné aux membres de l'équipe chargés du dashboard. Il détaille pas à pas comment connecter Power BI Desktop aux tables finales de BigQuery.
 
-> **Périmètre bêta — mart opérationnel historique.** Les tables
-> `mart_city_score_*` contiennent des scores dérivés de prévisions et des bandes
+> **Périmètre bêta — mart opérationnel v2.** Les relations
+> `mart_city_score_history_v2`, `mart_city_score_current_v2` et
+> `mart_city_zone_current_v2` contiennent des scores dérivés de prévisions et des bandes
 > opérationnelles ; elles ne constituent ni un historique d'impacts observés, ni
-> des probabilités, ni un modèle prédictif validé. Dans ces marts hérités,
-> certains défauts de source peuvent être masqués par un zéro ou une valeur
-> antérieure. Les libellés Stable / Monitoring / Tipping / Critical ne doivent
+> des probabilités, ni un modèle prédictif validé. Les scores manquants restent
+> NULL avec un statut `unavailable` ou `not_monitored` et une couverture
+> explicite. Les libellés Stable / Monitoring / Tipping / Critical ne doivent
 > donc jamais être reformulés comme « sûr », « danger certain » ou consigne
 > d'action.
+
+Les relations homonymes **sans suffixe `_v2`** sont maintenues temporairement
+pour un retour arrière technique. Leur schéma reste hérité et ne porte pas le
+contrat de disponibilité v2 ; ne les utilisez pas pour un nouveau rapport.
 
 Tout dashboard publié doit afficher clairement :
 
@@ -18,8 +23,8 @@ Tout dashboard publié doit afficher clairement :
 > confiance. Heat dispose d'un backtest limité sur les données
 > d'archive/réanalyse Open-Meteo ; Rain a montré une compétence insuffisante ;
 > Wind, Air Quality et River ne sont pas validés sur des
-> observations. Une donnée manquante peut être masquée dans ces marts
-> opérationnels hérités.
+> observations. Une donnée manquante est exclue du maximum et doit rester
+> affichée comme indisponible ou non suivie, jamais comme `0 · Stable`.
 
 ---
 
@@ -107,19 +112,28 @@ Dans le **Navigateur** qui s'affiche :
 
 | Table | Utilité dans le Dashboard |
 |---|---|
-| ✅ `mart_city_score_history` | Courbe par date cible de la prévision actuellement transformée ; la table est reconstruite et n'est ni un historique des exécutions, ni un historique d'impacts observés |
-| ✅ `mart_city_score_current` | Vue classant les villes sur les deux dates calendaires UTC « aujourd'hui + demain » ; ce n'est ni un snapshot persistant, ni une fenêtre glissante de 48 heures |
-| ✅ `mart_city_zone_current` | Agrégat des zones actuellement occupées (Stable / Monitoring / Tipping / Critical) ; les zones vides ne produisent pas de ligne |
+| ✅ `mart_city_score_history_v2` | Courbe par date cible de l'exécution d'ingestion exacte actuellement sélectionnée ; la table est reconstruite et n'est ni un historique des exécutions, ni un historique d'impacts observés |
+| ✅ `mart_city_score_current_v2` | Vue classant les villes sur les deux dates calendaires UTC « aujourd'hui + demain » ; ce n'est ni un snapshot persistant, ni une fenêtre glissante de 48 heures |
+| ✅ `mart_city_zone_current_v2` | Agrégat des zones actuellement occupées (Stable / Monitoring / Tipping / Critical / Unavailable) ; les zones vides ne produisent pas de ligne |
 
 4. Cliquez sur **Charger**
 
 Après une ingestion et une reconstruction dbt complètes, ces marts
 opérationnels sont destinés à couvrir les **20 villes actives**. Ne conservez
 aucun filtre Top 10 hérité. Pour une recette de données, vérifiez que
-`COUNT(DISTINCT city_id)` vaut 20 dans `mart_city_score_current` et que la somme
+`COUNT(DISTINCT city_id)` vaut 20 dans `mart_city_score_current_v2` et que la somme
 des `city_count` des zones présentes vaut également 20. Une valeur inférieure
-doit être traitée comme un problème de fraîcheur/couverture, pas complétée
-artificiellement.
+constitue une rupture du contrat de squelette à 20 villes, pas une invitation à
+compléter les lignes artificiellement. Une source absente doit conserver la
+ville avec des facteurs NULL et un état indisponible/non suivi.
+
+Affichez `operational_ingested_at_utc` comme horodatage du snapshot sélectionné
+et un avertissement au-delà de 36 heures. Signalez aussi toute ville scorée
+pour laquelle `available_factor_count < monitored_factor_count`, et précisez
+combien de ces villes à couverture partielle entrent dans la moyenne réseau.
+L'identifiant/horodatage ne constitue pas un manifeste de fin d'exécution : un
+run échoué peut laisser l'ancien snapshot et un run concurrent/en cours peut
+être brièvement sélectionné.
 
 ---
 
@@ -143,18 +157,18 @@ Voici les visuels recommandés et les colonnes à utiliser depuis les tables mar
 ### 🗺️ Carte de Tension (Vue Globale)
 - **Visuel :** Carte (Map)
 - **Localisation :** dimension de coordonnées revue pour les 20 villes, dérivée de `config/cities.csv` ; ne supposez pas que des identifiants comme `vienna_at` seront géocodés correctement
-- **Couleur des bulles :** `current_tipping_score` de `mart_city_score_current` (gradient Vert → Rouge)
+- **Couleur des bulles :** `current_tipping_score` de `mart_city_score_current_v2` (gradient Vert → Rouge) uniquement quand `current_score_available=true`; utiliser un état neutre séparé sinon
 
 ### 🏆 Classement des Villes
 - **Visuel :** Tableau ou Graphique en barres
-- **Source :** `mart_city_score_current`
-- **Colonnes :** `rank`, `city_id`, `current_tipping_score`, `current_primary_driver`
+- **Source :** `mart_city_score_current_v2`
+- **Colonnes :** `rank`, `city_id`, `current_tipping_score`, `current_primary_driver`, `available_factor_count`, `monitored_factor_count`, `overall_coverage`
 - **Trier par :** `rank` croissant
 - **Couverture :** toutes les lignes opérationnelles disponibles, sans limite codée en dur à 10
 
 ### 📈 Évolution du Score (Historique)
 - **Visuel :** Graphique en courbes
-- **Source :** `mart_city_score_history`
+- **Source :** `mart_city_score_history_v2`
 - **Axe X :** `date`
 - **Axe Y :** `global_tipping_score`
 - **Légende :** `city_id` (pour comparer les villes)
@@ -165,13 +179,14 @@ plusieurs exécutions, car ce mart n'archive pas les snapshots successifs.
 
 ### 🚦 Résumé par Zone
 - **Visuel :** Graphique en anneau ou Carte de synthèse
-- **Source :** `mart_city_zone_current`
+- **Source :** `mart_city_zone_current_v2`
 - **Colonnes :** `zone_name`, `city_count`, `cities_in_zone`
 
 ### 🔍 Décomposition des Facteurs (Explicabilité)
 - **Visuel :** Graphique en barres empilées
-- **Source :** `mart_city_score_history`
+- **Source :** `mart_city_score_history_v2`
 - **Valeurs :** `heat_score`, `wind_score`, `rain_score`, `air_score`, `river_score`
+- **État obligatoire :** afficher aussi les colonnes `*_status` et `*_coverage`; ne jamais convertir les NULL en zéro
 - **Filtre :** Par `city_id` (pour voir la décomposition d'une ville précise)
 
 Ajoutez à la page principale le cartouche bêta ci-dessus. Ne présentez pas cette
@@ -231,4 +246,4 @@ BigQuery raw.*  →  dbt (Silver)  →  stg.*
 | "Accès refusé" lors de la connexion | Faire vérifier l'accès nominatif au dataset `mart` et le droit minimal d'exécuter des jobs BigQuery |
 | Les tables `mart` n'apparaissent pas | Vérifier que les datasets existent et qu'un `make deploy` complet s'est terminé sans erreur ; contrôler ensuite la fraîcheur et les 20 `city_id`, car des données antérieures peuvent rester interrogeables après un run inhabituel |
 | Le rafraîchissement échoue sur Power BI Service | Vérifier l'identité dédiée, son périmètre IAM et l'état de son secret dans le gestionnaire approuvé ; ne pas échanger de clé par messagerie |
-| Données vides / NULL dans les graphiques | Attendu pour les colonnes `river_*` des villes dont `river_enabled=false`; Paris, Amsterdam, Varsovie, Vienne et Budapest sont les villes actuellement activées |
+| Données vides / NULL dans les graphiques | Lire `*_status`: `not_monitored` est attendu pour River quand `river_enabled=false`; `unavailable` indique une source suivie mais incomplète. Paris, Amsterdam, Varsovie, Vienne et Budapest sont les cinq villes River activées. Ne remplacer aucun NULL par zéro. |

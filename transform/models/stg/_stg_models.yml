@@ -71,10 +71,10 @@ models:
   # ─── Unified signal table ──────────────────────────────────────────────────
   - name: stg_city_signal_input
     description: >
-      ⭐ Key deliverable of the Silver layer.
-      Unified daily signal table — one row per (city_id, date) joining
+      Legacy rollback input for the unsuffixed score marts. Unified daily
+      signal table — one row per (city_id, date) joining
       weather, air quality, river discharge, and historical baseline.
-      This is the sole input for the Gold/mart tipping-score layer.
+      The active nullable dashboard contract uses stg_city_signal_input_v2.
       CMIP6 climate projections are excluded (different grain).
     columns:
       - name: city_id
@@ -95,3 +95,81 @@ models:
         description: River discharge in m³/s (NULL for non-river-enabled cities)
       - name: hist_temperature_2m_mean
         description: Archive/reanalysis historical mean temp (NULL when no lagged archive date matches)
+  # ─── Exact-run v2 operational path ────────────────────────────────────────────────
+  - name: stg_operational_run_v2
+    description: >
+      One latest ingestion run selected across raw weather, air quality,
+      flood, and historical-weather rows. Missing source families remain
+      explicit flags on this single-row contract.
+    columns:
+      - name: operational_ingestion_run_id
+        tests: [not_null, unique]
+      - name: operational_ingested_at_utc
+        tests: [not_null]
+      - name: run_has_weather_source
+        tests: [not_null]
+      - name: run_has_air_quality_source
+        tests: [not_null]
+      - name: run_has_flood_source
+        tests: [not_null]
+      - name: run_has_historical_weather_source
+        tests: [not_null]
+
+  - name: stg_city_daily_weather_v2
+    description: Exact-selected-run daily weather with no older-run fallback.
+    columns:
+      - name: ingestion_run_id
+        tests: [not_null]
+      - name: city_id
+        tests: [not_null]
+      - name: date
+        tests: [not_null]
+      - name: weather_hour_count
+        tests: [not_null]
+
+  - name: stg_city_daily_air_quality_v2
+    description: Exact-selected-run daily air quality with nullable aggregates and value coverage.
+    columns:
+      - name: ingestion_run_id
+        tests: [not_null]
+      - name: city_id
+        tests: [not_null]
+      - name: date
+        tests: [not_null]
+      - name: air_quality_hour_count
+        tests: [not_null]
+
+  - name: stg_flood_daily_v2
+    description: Exact-selected-run daily flood forecast without older-run fallback.
+    columns:
+      - name: ingestion_run_id
+        tests: [not_null]
+      - name: city_id
+        tests: [not_null]
+      - name: date
+        tests: [not_null]
+
+  - name: stg_city_signal_input_v2
+    description: >
+      Monitoring-city/date spine joined only to exact-selected-run source
+      aggregates. Includes all selected forecast-source dates plus UTC Day 0
+      through Day +2 so a city remains present during a complete weather gap.
+    columns:
+      - name: operational_ingestion_run_id
+        tests: [not_null]
+      - name: operational_ingested_at_utc
+        tests: [not_null]
+      - name: city_id
+        tests: [not_null]
+      - name: date
+        tests: [not_null]
+      - name: heat_monitored
+        tests: [not_null]
+      - name: wind_monitored
+        tests: [not_null]
+      - name: rain_monitored
+        tests: [not_null]
+      - name: air_monitored
+        tests: [not_null]
+      - name: river_monitored
+        tests: [not_null]

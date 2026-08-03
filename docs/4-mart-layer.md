@@ -18,11 +18,13 @@ serving selector override it with `view` where appropriate.
 
 ## Operational score marts
 
-The operational score path is registry-wide: after ingestion and dbt refresh,
-all 20 active cities can appear in the history, current, zone and detail marts.
-This scope is independent from the frozen 10-city point-in-time forecast path.
+The active operational score path is registry-wide: its configured spine keeps
+all 20 active cities in the v2 history, current, zone and detail relations even
+when a selected ingestion run is missing source data. Such factors remain NULL
+and unavailable rather than disappearing or becoming zero. This scope is
+independent from the frozen 10-city point-in-time forecast path.
 
-### `mart_city_score_history` (table)
+### `mart_city_score_history_v2` (table)
 
 Calculates the forecast-derived Tipping Score for every city and valid date. It
 combines five component indicators and takes their maximum as the global score.
@@ -34,43 +36,56 @@ Every component is clipped to the `0-100` range before the maximum is taken.
 | Heat | `(Tmax - monthly normal) * 5 + max(0, Tmax[D+1] - Tmax[D]) * 5` |
 | Wind | `max(0, gust_km_h - 40) * 2.5` |
 | Rain | `precipitation_mm * 2` |
-| Air quality | `(European_AQI - 40) * 1.67`, with legacy prior-value fallback |
+| Air quality | `(European_AQI - 40) * 1.67` |
 | River | `max(0, (discharge[D+1] - discharge[D]) / discharge[D]) * 200` when discharge is above 50 m³/s |
 
-This is a legacy operational path, not the strict missingness contract used by
-the forecast-vintage marts. Its upstream daily models convert some missing
-precipitation, wind and pollutant readings to zero, and the score SQL can use a
-prior AQ value or zero when current AQ is absent. Those substitutions keep the
-dashboard calculation available, but they do not prove that the missing signal
-was observed at zero.
+The operational mart has an explicit missingness contract. Every factor carries
+`*_monitored`, `*_available`, `*_status` and `*_coverage` fields. Status is one
+of `available`, `unavailable`, or `not_monitored`; only `available` rows have a
+numeric factor score. Heat, Wind, Rain and Air Quality require complete hourly
+value coverage for their required date(s). Heat and River velocity also require
+an exactly consecutive Day `D+1`. The River monitoring flag comes from
+`city_signal_monitoring.csv`, which is validated against
+`config/cities.csv:river_enabled`.
 
-The velocity SQL currently uses `LEAD(... ORDER BY date)` without verifying that
-the next row is exactly the next calendar date. Under normal complete weather
-coverage that row is Day `D+1`; a gap can instead make it a later date. Do not
-interpret operational velocity as a strict one-day change unless source-date
-continuity has also been checked.
+No missing input is zero-imputed or carried forward. A measured, fully covered
+input may still evaluate to the genuine score `0.0`; unavailable input remains
+NULL. `global_tipping_score` is the maximum across available factors only. If no
+factor is available it is NULL, `global_score_available` is false and the
+driver is `Unavailable`. `overall_coverage` is the mean of monitored-factor
+coverage values; unmonitored factors are excluded from its denominator.
+`operational_ingestion_run_id` and `operational_ingested_at_utc` identify the
+selected snapshot throughout history/current/detail, enabling the 36-hour UI
+freshness warning. They do not replace a completed-run manifest, which is not
+yet implemented; failed or overlapping ingestion remains an operational audit
+gap.
 
 This model is appropriate for operational forecast displays. It is **not a
 realized-outcome label table**: its inputs can be forecast values. The ML
 training path therefore does not treat its component scores as ground truth.
 
-Despite the `history` name, this is a full-refresh table built from
-`stg_latest_*`. It is history by forecast-valid date, not an immutable record of
-what the application showed at each retrieval. Later overlapping forecasts can
-revise a date when the table is rebuilt; use the forecast-vintage marts for
-as-of analysis.
+Despite the `history` name, this is a full-refresh table built from the one
+exact run selected by `stg_city_signal_input_v2`. It is history by
+forecast-valid date, not an immutable record of what the application showed at
+each retrieval. A missing selected-run payload is not filled from an older run,
+and a later build can replace the table's dates; use the forecast-vintage marts
+for as-of analysis.
 
-### `mart_city_score_current` (view)
+### `mart_city_score_current_v2` (view)
 
 Selects the highest forecast-derived score for each city across the two UTC
 calendar dates `CURRENT_DATE('UTC')` and the following day, then ranks cities
 from highest to lowest risk. This is not a rolling 48-hour interval and is not
-anchored separately to each city's local date.
+anchored separately to each city's local date. A scored date always wins over
+an unavailable date; exact ties choose the earlier date deterministically.
+Rows also expose `current_score_available`, monitored/available factor counts
+and `overall_coverage`. Cities without a score rank after scored cities.
 
-### `mart_city_zone_current` (view)
+### `mart_city_zone_current_v2` (view)
 
 Aggregates current city scores into Stable, Monitoring, Tipping and Critical
-operational zones.
+operational zones. A separate Unavailable zone contains rows whose available
+factor set is empty.
 
 | Zone | Score range | Meaning |
 |---|---:|---|
@@ -78,19 +93,30 @@ operational zones.
 | Monitoring | 31 to <61 | Elevated legacy score band |
 | Tipping | 61 to <81 | High legacy score band |
 | Critical | 81-100 | Highest legacy score band |
+| Unavailable | NULL | No factor had sufficient input coverage |
 
 The labels and thresholds are product-defined operational bands, not calibrated
 event probabilities, validated severity classes or response mandates. Their
 names must be presented with the Beta/evidence disclaimer rather than as
 standalone safety advice.
 
-### `mart_city_score_detail` (view)
+### `mart_city_score_detail_v2` (view)
 
-Exposes the five component scores and their raw forecast context for the city
-detail page. It uses separate `ANY_VALUE(... HAVING MAX ...)` aggregates for the
-worst score and each context field. When one date has the unique maximum the
-fields come from that date; tied maximum dates are nondeterministic and the SQL
-does not guarantee a single consistent tie winner across every field.
+Exposes all five nullable component scores, their monitoring/availability/
+coverage metadata and raw forecast context for the city detail page. One
+`ROW_NUMBER` selection chooses the complete worst-day row, ordered by score
+availability, score descending and date ascending. Every returned field
+therefore belongs to the same deterministic date, including on a tie.
+
+### Temporary legacy rollback marts
+
+The unsuffixed `mart_city_score_history`, `mart_city_score_current`,
+`mart_city_score_detail` and `mart_city_zone_current` relations remain during
+the rollout only so the previous application can be restored without a data
+rollback. They retain their legacy schema and scoring semantics, including the
+old treatment of missing input. The active backend does not read them, and v2
+fields such as `*_available`, `*_coverage` and monitored/available aggregate
+counts must not be expected on these unsuffixed relations.
 
 ## Point-in-time ML marts
 
@@ -202,8 +228,9 @@ forecast retrieved ──────────────► outcome occurs 
 Raw air-quality and flood forecast features remain nullable and are accompanied
 by explicit presence/completeness flags; they are not backward-filled,
 forward-filled or zero-imputed. Only the derived `current_tipping_score`
-preserves the legacy operational rule in which an absent optional factor
-contributes zero to that baseline score.
+preserves the legacy forecast-vintage rule in which an absent optional factor
+contributes zero to that baseline score. The available-only/NULL-safe maximum
+described above applies to the operational v2 marts, not this ML feature mart.
 
 ### `mart_ml_serving_features_current` (view)
 
@@ -285,10 +312,13 @@ baseline-relative outcome validation.
 
 ```text
 Operational path
-stg_city_signal_input
-    └──► mart_city_score_history
-             ├──► mart_city_score_current ──► mart_city_zone_current
-             └──► mart_city_score_detail
+stg_city_signal_input_v2
+    └──► mart_city_score_history_v2
+             ├──► mart_city_score_current_v2 ──► mart_city_zone_current_v2
+             └──► mart_city_score_detail_v2
+
+Legacy rollback path (temporary)
+stg_city_signal_input ──► unsuffixed mart_city_score_* relations
 
 Point-in-time ML path
 stg_city_signal_vintage
@@ -305,6 +335,12 @@ stg_latest_historical_daily
 Schema tests in `_mart_models.yml` enforce mandatory keys, timestamps, flags and
 realized Heat/Rain targets. Singular tests additionally verify:
 
+- the v2 operational 20-city spine and monitoring-seed contract;
+- one coherent selected ingestion run and consistent selected-run raw
+  payloads;
+- factor availability/coverage/status invariants, measured-zero preservation,
+  and a global score equal to the maximum of available factors only;
+- deterministic v2 worst-day selection;
 - the declared grain of every new mart;
 - reverse coverage from every eligible source row into its expected mart;
 - exact Day +1/Day +2/Day +3/Day +4 calendar alignment within a forecast row;
@@ -325,12 +361,34 @@ retries are disabled because raw writes are append-only. A green scheduled
 execution therefore establishes that the models ran, but not that the separate
 dbt test contracts passed.
 
-The GitHub pull-request, staging and production workflows do not currently
-compile or test dbt either, and the dbt sources have no configured freshness
-policy. Application CI success, SQL/data-contract success and raw-data freshness
-must therefore be verified separately.
+Pull-request CI performs a credential-free `dbt parse`, but it does not connect
+to BigQuery or execute `dbt run`/`dbt test`. The staging workflow gates backend
+deployment on already-created v2 schemas, configured city coverage, one
+coherent selected run and a snapshot age no greater than 36 hours; it does not
+build the models or run the singular test suite. The dbt sources also have no
+configured ongoing freshness policy. Application CI success, warehouse test
+success and post-cutover raw-data freshness must therefore be verified
+separately.
 
 ## Deployment and approval sequence
+
+For the operational v2 availability contract, use an expand-and-contract
+sequence:
+
+1. Run `make deploy` so `dbt seed/run/test` creates the exact-run v2 staging
+   and mart relations while the unsuffixed legacy marts and old application
+   remain live.
+2. Promote to staging; deploy the compatibility frontend and confirm its exact
+   release marker.
+3. Run the staging readiness gate against v2 schema requirements, all 20
+   configured city IDs, one selected run and a snapshot age no greater than
+   36 hours.
+4. Deploy the backend that reads v2, then run the Paris forecast and Stockholm
+   unmonitored-River E2E checks.
+5. Keep the unsuffixed relations only for the agreed rollback window; remove
+   them in a separately reviewed cleanup after v2 is stable.
+
+For the separate point-in-time ML path:
 
 1. Run the vintage staging models and tests.
 2. Build the four ML marts.

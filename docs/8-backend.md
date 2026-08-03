@@ -10,7 +10,8 @@ they demonstrate value beyond those baselines.
 - FastAPI on Python 3.11;
 - Google BigQuery for dbt mart reads;
 - scikit-learn and MLflow/DagsHub for offline challenger evaluation;
-- Pydantic response models for the rule-baseline forecast contract; and
+- Pydantic response models for operational availability and the rule-baseline
+  forecast contract; and
 - Docker and Railway for deployment.
 
 ## Application components
@@ -26,40 +27,53 @@ they demonstrate value beyond those baselines.
 
 ## Operational endpoints
 
-The dashboard endpoints continue to read the operational score marts:
+The dashboard endpoints read the availability-aware operational v2 marts:
 
 - `GET /health` returns process liveness and uptime;
-- `GET /data/current-scores` reads `mart_city_score_current`;
-- `GET /data/history-scores` reads `mart_city_score_history`;
-- `GET /data/current-zones` reads `mart_city_zone_current`; and
-- `GET /data/city/{city_id}/scores` reads `mart_city_score_detail`.
+- `GET /data/current-scores` reads `mart_city_score_current_v2`;
+- `GET /data/history-scores` reads `mart_city_score_history_v2`;
+- `GET /data/current-zones` reads `mart_city_zone_current_v2`; and
+- `GET /data/city/{city_id}/scores` reads `mart_city_score_detail_v2`.
 
-These marts calculate all five factors from operational inputs. They are not the
-realized-label source used to validate the forecast model.
+These marts calculate up to five factors from operational inputs. They are not
+the realized-label source used to validate the forecast model. A factor score
+is nullable and accompanied by `status`, `monitored`, `available`, and
+`coverage` fields. Missing AQ or River input therefore crosses the API as NULL,
+never as a synthetic green zero.
 
 After a complete ingestion/dbt refresh, the current-score and city-detail
 routes can expose all 20 active operational cities. `GET /data/current-scores`
 defaults to a bounded limit of 100 so the expanded registry is not truncated by
-the former 10-city assumption. Actual row availability still depends on the
-warehouse; the API does not synthesize missing cities.
+the former 10-city assumption. The warehouse v2 spine preserves all 20
+configured cities even when a source payload is absent; the API itself does not
+synthesize cities, factors or scores.
 
 Despite legacy “48-hour” wording elsewhere in the product,
-`mart_city_score_current` and `mart_city_score_detail` actually select the two
+`mart_city_score_current_v2` and `mart_city_score_detail_v2` actually select the two
 UTC calendar dates `CURRENT_DATE('UTC')` and the following day. This is not a
-rolling 48-hour interval. `mart_city_score_history` is also a rebuilt table of
+rolling 48-hour interval. `mart_city_score_history_v2` is also a rebuilt table of
 target dates from the currently transformed forecast, not an archive of
 successive forecast runs.
 
-`mart_city_score_detail` uses separate `ANY_VALUE(... HAVING MAX ...)`
-aggregates. When both dates tie on the global score, BigQuery may select factor
-fields from different tied rows; the detail response is not guaranteed to
-represent one deterministic date in that case. See
-[Mart Layer](4-mart-layer.md#mart_city_score_detail-view).
+The global/current score is the maximum only across available factors. It can
+itself be NULL when no factor is available. The overview payload exposes
+`current_score_available`, monitored/available factor counts and
+`overall_coverage`; unavailable cities sort after scored cities. Detail rows
+are selected as one deterministic complete row, so tied dates can no longer
+mix fields. See [Mart Layer](4-mart-layer.md#mart_city_score_detail_v2-view).
 
-`GET /data/history-scores` has a known schema mismatch on this branch: the route
-orders by `prediction_date`, while `mart_city_score_history` exposes the date
-column as `date`. Until the route is corrected, the BigQuery query is expected
-to fail with a `500` response.
+Current, history and detail payloads also expose
+`operational_ingestion_run_id` and `operational_ingested_at_utc`. They identify
+the exact selected snapshot and let the client display its age; they are not a
+durable run audit. The ingestion pipeline does not yet persist a completed-run
+manifest, so a totally failed run can leave the prior snapshot selected and an
+overlapping/in-progress run can briefly become newest. The frontend's
+36-hour stale-snapshot banner mitigates this visibility gap, but a committed
+run manifest/readiness state remains future hardening.
+
+The unsuffixed operational relations remain temporary legacy rollback
+compatibility. They keep their legacy schemas and are not queried by these v2
+routes.
 
 ## Current API exposure and hardening gaps
 
@@ -77,10 +91,11 @@ hardened multi-tenant API:
 - unexpected forecast failures currently include the underlying exception text
   in the HTTP `500` detail.
 
-Only the forecast endpoint has a Pydantic response model. The operational
-current-score, history, zone and city-detail endpoints return BigQuery rows
-directly, so callers should not assume those payloads have the same typed
-response-model validation as `CityForecastResponse`.
+Current-score, history and city-detail endpoints now have Pydantic response
+models. They validate score bounds and reject contradictory combinations such
+as `status=not_monitored` with a numeric score, or `status=unavailable` without
+monitoring/coverage metadata. The zone endpoint still returns BigQuery rows
+directly.
 
 `GET /health` is a liveness check only. It always reports the running process as
 healthy and does not test BigQuery credentials, dataset availability, the
@@ -130,8 +145,8 @@ estimates. Specifically, `estimated_total_tipping_score` is the **maximum**
 available component score, not a sum or average, and the primary driver is the
 component that supplies that maximum. The `current_tipping_score` comparison
 is calculated from the forecast origin day's same-vintage inputs; it is not an
-observed-impact baseline and is separate from the legacy operational mart's
-two-date maximum. All component and top-level interval fields are null and
+observed-impact baseline and is separate from the operational v2 current
+mart's two-date maximum. All component and top-level interval fields are null and
 `uncertainty_method` is `none`; deterministic formulas do not create model
 confidence intervals.
 

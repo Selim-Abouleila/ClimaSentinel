@@ -29,6 +29,9 @@ DEFAULT_NORMALS_PROVENANCE_PATH = (
 DEFAULT_FORECAST_ALLOWLIST_PATH = (
     REPO_ROOT / "transform" / "seeds" / "forecast_city_allowlist.csv"
 )
+DEFAULT_SIGNAL_MONITORING_PATH = (
+    REPO_ROOT / "transform" / "seeds" / "city_signal_monitoring.csv"
+)
 
 CITIES_COLUMNS = (
     "city_id",
@@ -51,6 +54,14 @@ NORMALS_COLUMNS = (
     "normal_wind_speed_10m_max",
 )
 FORECAST_ALLOWLIST_COLUMNS = ("city_id", "forecast_origin_time_zone")
+SIGNAL_MONITORING_COLUMNS = (
+    "city_id",
+    "heat_monitored",
+    "wind_monitored",
+    "rain_monitored",
+    "air_monitored",
+    "river_monitored",
+)
 
 # This contract intentionally keeps operational city expansion out of the
 # point-in-time forecast, training, and serving path.
@@ -404,6 +415,77 @@ def validate_forecast_allowlist(
         )
 
 
+def validate_signal_monitoring(
+    path: Path,
+    cities: dict[str, dict[str, str]],
+    errors: list[str],
+) -> None:
+    """Keep the dbt monitoring seed synchronized with the ingest registry."""
+
+    rows = _load_csv(path, SIGNAL_MONITORING_COLUMNS, errors)
+    actual: dict[str, dict[str, str]] = {}
+    city_lines: dict[str, int] = {}
+
+    for line_number, row in rows:
+        city_id = row["city_id"]
+        if city_id in city_lines:
+            errors.append(
+                f"{path}:{line_number}: duplicate city_id {city_id!r}; first seen on "
+                f"line {city_lines[city_id]}"
+            )
+        else:
+            city_lines[city_id] = line_number
+            actual[city_id] = row
+
+        for column in SIGNAL_MONITORING_COLUMNS[1:]:
+            if row[column] not in STRICT_BOOLEANS:
+                errors.append(
+                    f"{path}:{line_number}: {column} must be exactly 'true' or 'false', "
+                    f"got {row[column]!r}"
+                )
+
+        city = cities.get(city_id)
+        if city is None:
+            errors.append(
+                f"{path}:{line_number}: monitoring city {city_id!r} is not registered "
+                "in config/cities.csv"
+            )
+        elif city["active"] != "true":
+            errors.append(
+                f"{path}:{line_number}: monitoring city {city_id!r} must be active"
+            )
+
+    active_city_ids = {
+        city_id for city_id, city in cities.items() if city["active"] == "true"
+    }
+    missing = sorted(active_city_ids - set(actual))
+    unexpected = sorted(set(actual) - active_city_ids)
+    if missing:
+        errors.append(f"{path}: monitoring seed is missing active city IDs: {missing}")
+    if unexpected:
+        errors.append(
+            f"{path}: monitoring seed has non-active or unknown city IDs: {unexpected}"
+        )
+
+    for city_id in sorted(active_city_ids & set(actual)):
+        city = cities[city_id]
+        row = actual[city_id]
+        expected = {
+            "heat_monitored": "true",
+            "wind_monitored": "true",
+            "rain_monitored": "true",
+            "air_monitored": "true",
+            "river_monitored": city["river_enabled"],
+        }
+        for column, expected_value in expected.items():
+            if row[column] != expected_value:
+                errors.append(
+                    f"{path}:{city_lines[city_id]}: {column} for {city_id!r} must be "
+                    f"{expected_value!r} to match the ingestion contract, got "
+                    f"{row[column]!r}"
+                )
+
+
 def validate_normals_provenance(
     path: Path,
     normals_path: Path,
@@ -461,6 +543,7 @@ def validate_city_configuration(
     normals_path: Path = DEFAULT_NORMALS_PATH,
     forecast_allowlist_path: Path = DEFAULT_FORECAST_ALLOWLIST_PATH,
     normals_provenance_path: Path | None = DEFAULT_NORMALS_PROVENANCE_PATH,
+    signal_monitoring_path: Path = DEFAULT_SIGNAL_MONITORING_PATH,
 ) -> list[str]:
     """Return all city configuration contract violations."""
 
@@ -468,6 +551,7 @@ def validate_city_configuration(
     cities = validate_cities(cities_path, errors)
     validate_normals(normals_path, cities, errors)
     validate_forecast_allowlist(forecast_allowlist_path, cities, errors)
+    validate_signal_monitoring(signal_monitoring_path, cities, errors)
     if normals_provenance_path is not None:
         validate_normals_provenance(normals_provenance_path, normals_path, errors)
     return errors
@@ -487,6 +571,11 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         type=Path,
         default=DEFAULT_FORECAST_ALLOWLIST_PATH,
     )
+    parser.add_argument(
+        "--signal-monitoring",
+        type=Path,
+        default=DEFAULT_SIGNAL_MONITORING_PATH,
+    )
     return parser.parse_args(argv)
 
 
@@ -497,6 +586,7 @@ def main(argv: list[str] | None = None) -> int:
         normals_path=args.normals,
         forecast_allowlist_path=args.forecast_allowlist,
         normals_provenance_path=args.normals_provenance,
+        signal_monitoring_path=args.signal_monitoring,
     )
     if errors:
         print(
@@ -511,9 +601,14 @@ def main(argv: list[str] | None = None) -> int:
         city_count = sum(1 for _ in csv.DictReader(handle))
     with args.normals.open("r", encoding="utf-8-sig", newline="") as handle:
         normal_count = sum(1 for _ in csv.DictReader(handle))
+    with args.signal_monitoring.open(
+        "r", encoding="utf-8-sig", newline=""
+    ) as handle:
+        monitoring_count = sum(1 for _ in csv.DictReader(handle))
     print(
         "City configuration is valid: "
         f"{city_count} registered cities, {normal_count} monthly normal rows, "
+        f"{monitoring_count} monitoring contracts, "
         f"{len(EXPECTED_FORECAST_CITIES)} frozen forecast cities."
     )
     return 0

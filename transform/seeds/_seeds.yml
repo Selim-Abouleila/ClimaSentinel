@@ -37,3 +37,31 @@ seeds:
       - name: forecast_origin_time_zone
         description: IANA timezone used to derive the city-local forecast origin date.
         tests: [not_null]
+
+  - name: city_signal_monitoring
+    description: >
+      Operational factor-monitoring contract for every active dashboard city.
+      The repository city validator enforces exact membership against
+      config/cities.csv and requires river_monitored to match river_enabled.
+    config:
+      column_types:
+        heat_monitored: boolean
+        wind_monitored: boolean
+        rain_monitored: boolean
+        air_monitored: boolean
+        river_monitored: boolean
+    columns:
+      - name: city_id
+        description: Stable city identifier represented exactly once.
+        tests: [not_null, unique]
+      - name: heat_monitored
+        tests: [not_null]
+      - name: wind_monitored
+        tests: [not_null]
+      - name: rain_monitored
+        tests: [not_null]
+      - name: air_monitored
+        tests: [not_null]
+      - name: river_monitored
+        description: Mirrors river_enabled in config/cities.csv.
+        tests: [not_null]
