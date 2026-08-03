@@ -1,16 +1,18 @@
 # 13. End-to-End Testing
 
-Playwright provides one live staging smoke path through the forecast frontend,
-backend and BigQuery serving mart. MLflow challengers are evaluated separately.
-Unit tests remain responsible for formula boundaries and failure branches. This
-test increases confidence in the live rule policy, but it is not a complete
-release, browser, city or failure-mode test suite.
+Playwright provides live staging smoke paths through the forecast frontend and
+one operational city-detail missingness state. MLflow challengers are evaluated
+separately. Unit/dbt contract tests remain responsible for formula boundaries,
+partial coverage, measured-zero semantics, the 36-hour freshness threshold and
+failure branches. This test increases confidence in the
+deployed contracts, but it is not a complete release, browser, city or
+failure-mode suite.
 
 ## What the staging test verifies
 
-`frontend/tests/e2e/dashboard.spec.ts` opens `/forecast`, selects Paris and
-exercises each genuine Day +1, Day +2 and Day +3 selector in desktop Chromium.
-The test verifies that:
+`frontend/tests/e2e/dashboard.spec.ts` first opens `/forecast`, selects Paris
+and exercises each genuine Day +1, Day +2 and Day +3 selector in desktop
+Chromium. That path verifies that:
 
 - the page and city/horizon controls render without a server error;
 - the forecast selector remains exactly the original 10 eligible cities, in its
@@ -35,6 +37,13 @@ the unavailable UI branch is not exercised. It also does not assert visible
 per-factor method or validation labels; the current page presents validation
 scope in one global note and checks detailed provenance in the API payload.
 
+A second path opens `/city/stockholm_se`. Because Stockholm is deterministically
+`river_monitored=false`, it asserts that the River/Flood row says “Not
+monitored” and “No source configured,” contains an em dash, and contains neither
+`Stable` nor `0.0`. It also verifies the explanation that missing signals are
+excluded from the overall score. This covers configuration absence; it does not
+inject a temporary monitored-source outage.
+
 ## Staging workflow order
 
 The live E2E job runs only from `.github/workflows/ci-staging.yml` after:
@@ -44,9 +53,14 @@ The live E2E job runs only from `.github/workflows/ci-staging.yml` after:
    registered;
 3. the exact challenger is evaluated; quality rejection is recorded without
    moving `champion`, while operational/contract errors still fail the job;
-4. backend and frontend services are deployed to Railway staging using the
-   rule-baseline policy; and
-5. Playwright validates the live rule response.
+4. the compatibility frontend is stamped and deployed, and CI confirms its
+   exact `${GITHUB_SHA}-${GITHUB_RUN_ID}` release marker;
+5. a BigQuery readiness gate verifies the required columns on all four v2
+   marts, exact monitoring-seed and 20-city current/detail membership, one
+   coherent selected run, and a snapshot age no greater than 36 hours;
+6. only then is the v2 backend deployed; and
+7. Playwright reconfirms the frontend marker and validates the live Paris and
+   Stockholm paths.
 
 This order proves that challenger evaluation completed before the smoke test and
 that the rule-baseline path remained available whether the candidate passed or
@@ -68,29 +82,32 @@ the backend was built from the same commit. The BigQuery mart is likewise live
 state rather than a release-stamped artifact. An older backend that already
 serves the same contract can therefore pass.
 
-The workflow's first step is the backend pytest suite only. Neither that step
-nor Playwright runs `dbt parse/build/test`, verifies warehouse lineage, or
-asserts when the live mart was last rebuilt. The smoke path consuming a valid
-live row is therefore not evidence of mart freshness.
+The workflow's first test step is the backend pytest suite. Neither that step,
+the readiness query nor Playwright runs `dbt build/test` or verifies all
+warehouse lineage contracts. PR CI separately performs a credential-free
+`dbt parse`. The staging gate assumes `make deploy` already created/tested v2
+and proves schema/city/run/age readiness at cutover, not ongoing mart freshness
+after deployment.
 
-It also does not execute the GCP ingestion job or prove that the operational
-overview contains all 20 active cities. The city registry, 240-row normals seed
-and frozen forecast allowlist are checked by the PR-to-`dev` workflow, not by
-this live staging browser path.
+It also does not execute the GCP ingestion job or render/assert all 20 cities in
+the operational overview. The readiness gate does require all 20 configured
+IDs in current/detail v2, while the registry, 240-row normals, 20-row monitoring
+seed and frozen forecast allowlist are validated by PR CI and built separately
+by `make deploy`.
 
 ## Deliberate scope limits
 
 The current smoke test does not cover:
 
 - the other nine forecast-eligible cities;
-- the 10 dashboard-only additions or the complete 20-city operational
-  coverage;
-- the `/` overview or any `/city/[city_id]` detail page;
+- the complete 20-city operational coverage or `/` overview;
+- operational detail pages other than Stockholm;
 - Firefox, WebKit, mobile layouts or accessibility conformance;
-- a deliberately missing AQ/River feed or other injected backend failure;
-- authentication, rate limiting, readiness or monitoring; or
+- a deliberately interrupted monitored AQ/River feed or other injected backend failure;
+- authentication, rate limiting, continuous dependency readiness or monitoring;
 - exact backend commit identity;
-- dbt contracts, lineage or live-mart freshness;
+- authenticated dbt builds/tests, complete lineage or live-mart freshness;
+- a completed-run manifest or overlapping/in-progress ingestion behavior;
 - exact rendered score values against the corresponding API fields; or
 - screenshot-based visual regression.
 
@@ -101,9 +118,12 @@ These are coverage gaps, not claims that those paths are broken.
 ```text
 frontend/
 ├── playwright.config.ts
+├── playwright.unit.config.ts
 └── tests/
-    └── e2e/
-        └── dashboard.spec.ts
+    ├── e2e/
+    │   └── dashboard.spec.ts
+    └── unit/
+        └── signal-availability.spec.ts
 ```
 
 ## Running locally
@@ -113,8 +133,14 @@ Install the frontend dependencies and Chromium:
 ```bash
 cd frontend
 npm ci
+npm run test:unit
 npx playwright install --with-deps chromium
 ```
+
+The unit command runs pure TypeScript availability/aggregation cases without a
+browser page or live server. It covers legacy numeric compatibility, explicit
+v2 availability precedence, partial/all-unavailable aggregation, measured zero,
+unavailable AQ, unmonitored River and the exact 36-hour stale threshold.
 
 The Playwright configuration does not start a web server. The frontend must
 already be running at the default target `http://localhost:3000`, built or

@@ -179,3 +179,26 @@ test.describe('ClimaSentinel Forecast E2E', () => {
     }
   });
 });
+
+test.describe('ClimaSentinel signal availability E2E', () => {
+  test('does not present an unmonitored river signal as zero or Stable', async ({ page }) => {
+    await page.goto('/city/stockholm_se');
+
+    await expect(page.getByRole('heading', { name: 'Stockholm' })).toBeVisible();
+
+    const riverSignal = page.getByRole('article', {
+      name: 'River / Flood signal: Not monitored',
+      exact: true,
+    });
+    await expect(riverSignal).toBeVisible();
+    await expect(riverSignal.getByText('Not monitored', { exact: true })).toBeVisible();
+    await expect(riverSignal.getByText('No source configured', { exact: true })).toBeVisible();
+    await expect(riverSignal.getByText('Stable', { exact: true })).toHaveCount(0);
+    await expect(riverSignal.getByText('0.0', { exact: true })).toHaveCount(0);
+    await expect(riverSignal.getByText('—', { exact: true })).toBeVisible();
+
+    await expect(
+      page.getByText('Missing signals are excluded from the overall score.', { exact: false }),
+    ).toBeVisible();
+  });
+});

@@ -23,7 +23,7 @@ the profile reads `GCP_PROJECT_ID` and `GCP_REGION` from the process environment
 through dbt's `env_var()`. dbt does not parse `.env` by itself.
 
 ```bash
-make validate-cities  # Validate registry, normals and frozen forecast scope
+make validate-cities  # Validate registry, normals, monitoring and forecast scope
 make deploy           # Validate → build/Terraform → waited ingest → dbt checks
 make dbt-stg          # Run staging models only (standalone)
 make dbt-test         # Run schema and singular tests (standalone)
@@ -72,30 +72,40 @@ transform/
 ├── profiles.yml                     # BigQuery profile (reads exported environment)
 ├── requirements.txt                 # Python deps (dbt-core + dbt-bigquery)
 ├── models/
-│   ├── stg/                         # Silver layer — staging views
+│   ├── stg/                         # Silver layer — staging relations
 │   │   ├── _stg_sources.yml         # Source definitions (raw.* tables)
 │   │   ├── _stg_models.yml          # Model docs + schema tests
 │   │   ├── _stg_vintage_models.yml  # Vintage model docs + schema tests
+│   │   ├── stg_operational_run_v2.sql
+│   │   ├── stg_city_daily_weather_v2.sql
+│   │   ├── stg_city_daily_air_quality_v2.sql
+│   │   ├── stg_flood_daily_v2.sql
+│   │   ├── stg_city_signal_input_v2.sql  ← ⭐ Active operational input
 │   │   ├── stg_latest_weather_hourly.sql
 │   │   ├── stg_latest_air_quality_hourly.sql
 │   │   ├── stg_latest_flood_daily.sql
 │   │   ├── stg_latest_historical_daily.sql
 │   │   ├── stg_city_daily_weather.sql
 │   │   ├── stg_city_daily_air_quality.sql
-│   │   ├── stg_city_signal_input.sql     ← ⭐ Operational mart input
+│   │   ├── stg_city_signal_input.sql     ← Temporary legacy rollback input
 │   │   ├── stg_weather_forecast_hourly_vintage.sql
 │   │   ├── stg_city_daily_weather_vintage.sql
 │   │   ├── stg_air_quality_hourly_vintage.sql
 │   │   ├── stg_city_daily_air_quality_vintage.sql
 │   │   ├── stg_flood_daily_vintage.sql
 │   │   └── stg_city_signal_vintage.sql   ← Point-in-time ML staging input
-│   └── mart/                        # Gold — operational + 4 point-in-time ML marts + legacy feature table
+│   └── mart/                        # Gold — active v2, rollback and point-in-time ML marts
+│       ├── mart_city_score_history_v2.sql
+│       ├── mart_city_score_current_v2.sql
+│       ├── mart_city_score_detail_v2.sql
+│       └── mart_city_zone_current_v2.sql
 ├── macros/
 │   └── generate_schema_name.sql      # Preserve explicit stg/mart datasets
 ├── seeds/
 │   ├── _seeds.yml                    # Seed docs + schema tests
 │   ├── city_monthly_normals.csv      # Static monthly climate baselines
 │   ├── city_monthly_normals.provenance.json # Expansion retrieval/aggregation record
+│   ├── city_signal_monitoring.csv    # 20-city factor-monitoring contract
 │   └── forecast_city_allowlist.csv   # Forecast city + IANA timezone contract
 ├── scripts/
 │   └── generate_city_monthly_normals.py # Generate reviewable Open-Meteo cohorts
@@ -107,17 +117,22 @@ transform/
 ## Model Dependency Graph
 
 ```
-raw.weather_forecast_hourly ──→ stg_latest_weather_hourly ──→ stg_city_daily_weather ──┐
-raw.air_quality_hourly ────────→ stg_latest_air_quality_hourly → stg_city_daily_air_quality ─┤
-raw.flood_daily ───────────────→ stg_latest_flood_daily ───────────────────────────────────────┤
-raw.historical_weather_daily ──→ stg_latest_historical_daily ──────────────────────────────────┤
-                                                                                                ▼
-                                                                              stg_city_signal_input
-                                                                                        ├──→ mart_city_score_history
-                                                                                                  ├──→ mart_city_score_current
-                                                                                                  │          └──→ mart_city_zone_current
-                                                                                                  └──→ mart_city_score_detail
-                                                                                        └──→ mart_ml_feature_store (legacy)
+raw.weather_forecast_hourly ─┐
+raw.air_quality_hourly ──────┼──→ stg_operational_run_v2 ─┬──→ stg_city_daily_weather_v2 ─────┐
+raw.flood_daily ─────────────┤                            ├──→ stg_city_daily_air_quality_v2 ─┤
+raw.historical_weather_daily ─┘                           └──→ stg_flood_daily_v2 ────────────┤
+city_signal_monitoring ───────────────────────────────────────────────────────────────────────┤
+                                                                                              ▼
+                                                                            stg_city_signal_input_v2
+                                                                                      │
+                                                                                      ▼
+                                                                            mart_city_score_history_v2
+                                                                                 ├──→ mart_city_score_current_v2
+                                                                                 │          └──→ mart_city_zone_current_v2
+                                                                                 └──→ mart_city_score_detail_v2
+
+stg_latest_* ──→ unsuffixed staging/mart relations (temporary legacy rollback only)
+stg_city_signal_input ──→ mart_ml_feature_store (legacy)
 
 raw.weather_forecast_hourly ──→ stg_weather_forecast_hourly_vintage ──→ stg_city_daily_weather_vintage ──┐
 raw.air_quality_hourly ────────→ stg_air_quality_hourly_vintage ───────→ stg_city_daily_air_quality_vintage ┤
@@ -151,9 +166,24 @@ do not enter the forecast-vintage/ML forecast path.
 
 The raw field named `valid_ts_utc` is currently populated from offset-free
 city-local provider strings and must not be treated as a trustworthy UTC
-instant for precise lead-hour or DST calculations. The vintage daily models
-preserve missing measurements, while the legacy operational daily models
-coalesce some missing precipitation, wind and pollutant readings to zero.
+instant for precise lead-hour or DST calculations. The active operational v2
+path chooses one exact `ingestion_run_id`, aggregates weather/AQ/flood from only
+that run, and never borrows a missing payload from an older run. Its
+`city_signal_monitoring.csv` cross join produces a 20-city spine over
+selected-run dates plus UTC today through D+2. Daily values, reading counts and
+monitoring flags let v2 distinguish a complete measured zero from an
+unavailable or unmonitored factor; the overall score is the maximum of available
+factors only.
+
+The exact-run selector is not yet backed by a completed-run manifest. A totally
+failed run can leave the previous snapshot selected, while an overlapping or
+in-progress run can briefly appear most recent. The v2 marts expose the selected
+run ID/timestamp and the frontend warns after 36 hours, but a durable run audit
+remains future hardening.
+
+The unsuffixed operational staging and mart relations retain their legacy
+schemas and semantics solely for temporary rollback compatibility. Do not
+expect v2 monitoring/availability/coverage fields on them.
 
 Vintage coverage is also literal: `has_24_hour_coverage` requires exactly 24
 distinct stored timestamps. If an upstream DST-transition day contains 23 or
@@ -174,14 +204,21 @@ final dbt seed/run/test; standalone scheduled executions still need separate
 test and freshness monitoring.
 
 The pull-request workflow validates the checked-in city registry, monthly
-normals and frozen forecast scope, unit-tests ingestion failure propagation,
-and builds the backend and ingestion images. The GitHub workflows do not
-currently compile or test this dbt project against BigQuery.
+normals, 20-row monitoring seed and frozen forecast scope; unit-tests ingestion
+failure propagation; performs a credential-free `dbt parse`; and builds the
+backend and ingestion images. GitHub workflows do not run an authenticated
+`dbt build` or `dbt test` against BigQuery.
 `_stg_sources.yml` also has no configured source-freshness policy. A green
 application CI run, a passing warehouse `dbt test`, and recent raw data are
 therefore three separate checks.
 
 ## Static-Seed Provenance
+
+`city_signal_monitoring.csv` is the checked-in 20-city operational monitoring
+contract. Heat, Wind, Rain and Air Quality are enabled for every active city;
+River must match `config/cities.csv:river_enabled` exactly. Both the standard
+validator and warehouse singular tests reject missing/extra cities, disabled
+required factors or River disagreement.
 
 `city_monthly_normals.csv` is a checked-in 240-row city/month lookup used by the
 Heat rules and labels. Structural validation requires unique keys, exactly 12
@@ -213,12 +250,22 @@ checksums, then merge the approved rows explicitly. Running without
 `--city-id` selects all active cities; it must not be used to silently refresh
 the preserved legacy values.
 
+## Operational v2 rollout
+
+Run `make deploy` first so dbt seeds, runs and tests v2 alongside the still-live
+legacy relations. Staging then deploys and confirms the compatibility frontend,
+checks the v2 schemas, exact 20-city current/detail membership, one coherent
+selected run and a snapshot age no greater than 36 hours, and only then deploys
+the backend that reads v2. The staging readiness query does not create
+relations, replace `dbt test` or monitor later scheduled executions.
+
 ---
 
 ## Materialization Strategy
 
 | Layer | Materialization | Rationale |
 |---|---|---|
-| `stg` (Silver) | **Views** | Queries current raw rows; definition changes still require `dbt run` |
+| `stg_operational_run_v2` | **Table** | Freezes one selected raw ingestion run for coherent downstream v2 queries until the next `dbt run` |
+| Other `stg` (Silver) models | **Views** | Project the selected run, legacy latest path or forecast vintages; definition/selector changes still require `dbt run` |
 | Gold history/features/labels/training | **Tables** | Full-refresh, precomputed relations |
 | Gold current/detail/zone/serving selectors | **Views** | Current projections over the precomputed tables |

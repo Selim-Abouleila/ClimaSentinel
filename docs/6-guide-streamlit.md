@@ -11,12 +11,17 @@ credentials, variables secrètes ou captures contenant ces valeurs.
 > Streamlit. Les étapes ci-dessous décrivent un composant à créer ; elles ne
 > documentent pas un service ClimaSentinel déjà exploité.
 
-> **Périmètre bêta — mart opérationnel historique.** Les tables
-> `mart_city_score_*` sont dérivées de prévisions. Elles ne représentent ni des
-> impacts observés, ni des probabilités, ni un modèle prédictif validé. Certains
-> défauts de source peuvent être masqués par zéro ou par une valeur antérieure
-> dans ces marts hérités. Les zones Stable / Monitoring / Tipping / Critical
+> **Périmètre bêta — mart opérationnel v2.** Les relations
+> `mart_city_score_history_v2`, `mart_city_score_current_v2` et
+> `mart_city_zone_current_v2` sont dérivées de prévisions. Elles ne représentent ni des
+> impacts observés, ni des probabilités, ni un modèle prédictif validé. Les
+> défauts de source restent NULL avec un statut `unavailable` ou
+> `not_monitored` et une couverture explicite. Les zones Stable / Monitoring / Tipping / Critical
 > restent des bandes opérationnelles, pas des déclarations « sûr/dangereux ».
+
+Les relations sans suffixe `_v2` sont conservées temporairement pour le retour
+arrière de l'ancienne application. Elles gardent leur schéma hérité et ne
+doivent pas servir de source à un nouveau dashboard de disponibilité.
 
 L'application doit afficher de façon visible :
 
@@ -24,8 +29,8 @@ L'application doit afficher de façon visible :
 > confiance. Heat dispose d'un backtest limité sur les données
 > d'archive/réanalyse Open-Meteo ; Rain a montré une compétence insuffisante ;
 > Wind, Air Quality et River ne sont pas validés sur des
-> observations. Une donnée manquante peut être masquée dans ces marts
-> opérationnels hérités.
+> observations. Une donnée manquante est exclue du maximum et doit être
+> affichée comme indisponible ou non suivie, jamais comme `0 · Stable`.
 
 ---
 
@@ -54,15 +59,24 @@ L'application doit afficher de façon visible :
 
 | Table | Colonnes clés | Description |
 |---|---|---|
-| `mart_city_score_current` | `city_id`, `current_tipping_score`, `current_primary_driver`, `rank` | Vue de classement sur les deux dates calendaires UTC « aujourd'hui + demain » ; ni snapshot persistant, ni fenêtre glissante de 48 heures |
-| `mart_city_score_history` | `city_id`, `date`, `global_tipping_score`, `heat_score`, `wind_score`, `rain_score`, `air_score`, `river_score`, `primary_driver` | Dates cibles de la prévision actuellement transformée ; la table reconstruite n'archive ni les exécutions précédentes, ni des impacts observés |
-| `mart_city_zone_current` | `zone_name`, `city_count`, `cities_in_zone`, `drivers_in_zone` | Résumé des zones opérationnelles occupées ; une zone sans ville n'apparaît pas |
+| `mart_city_score_current_v2` | `city_id`, `current_tipping_score`, `current_primary_driver`, `current_score_available`, `available_factor_count`, `monitored_factor_count`, `overall_coverage`, `rank` | Vue de classement sur les deux dates calendaires UTC « aujourd'hui + demain » ; ni snapshot persistant, ni fenêtre glissante de 48 heures |
+| `mart_city_score_history_v2` | `city_id`, `date`, scores nullable, colonnes `*_status`, `*_monitored`, `*_available`, `*_coverage`, `global_tipping_score`, `primary_driver` | Dates cibles de l'exécution d'ingestion exacte actuellement sélectionnée ; la table reconstruite n'archive ni les exécutions précédentes, ni des impacts observés |
+| `mart_city_zone_current_v2` | `zone_name`, `city_count`, `cities_in_zone`, `drivers_in_zone` | Résumé des zones opérationnelles occupées, y compris Unavailable ; une zone sans ville n'apparaît pas |
 
 Après un rafraîchissement complet, ces marts opérationnels sont destinés à
 contenir les 20 villes actives. L'application doit dériver son compteur, son
 classement et ses sélecteurs des lignes réellement retournées, sans limite
 codée en dur à 10. Une couverture inférieure à 20 doit rester visible comme
-un état de données incomplet ou obsolète.
+une rupture du contrat de squelette opérationnel. Une source absente conserve
+la ville et produit des facteurs NULL avec un état indisponible/non suivi.
+
+Le dashboard doit afficher `operational_ingested_at_utc` et signaler le
+snapshot comme obsolète après 36 heures. Toute ville encore scorée avec
+`available_factor_count < monitored_factor_count` doit indiquer sa couverture
+partielle ; la moyenne réseau doit annoncer combien de ces villes elle inclut.
+Cet horodatage n'est pas un manifeste d'exécution terminée : un échec peut
+laisser l'ancien snapshot et un run concurrent/en cours peut être sélectionné
+brièvement.
 
 ---
 
@@ -139,9 +153,9 @@ Créer un fichier `app.py` dans le dossier `dashboard/` qui réalise les opérat
    - Un titre et sous-titre descriptifs
    - Le cartouche bêta obligatoire indiqué au début de ce guide
    - Un bouton pour forcer le rechargement des données
-4. **Section 1 — Vue Globale :** Afficher les zones présentes dans `mart_city_zone_current` ; si l'interface doit toujours montrer les 4 zones, compléter explicitement les zones absentes avec un compteur à zéro
-5. **Section 2 — Classement :** Un tableau et un graphique en barres montrant toutes les lignes opérationnelles réellement disponibles dans `mart_city_score_current` (20 après un rafraîchissement complet), sans Top 10 codé en dur
-6. **Section 3 — Horizon courant :** Un graphique en courbes par date cible avec un sélecteur dynamique couvrant toutes les villes présentes dans `mart_city_score_history`, sans le présenter comme un historique des runs ou des observations
+4. **Section 1 — Vue Globale :** Afficher les zones présentes dans `mart_city_zone_current_v2` ; si l'interface doit toujours montrer les cinq états (Stable, Monitoring, Tipping, Critical et Unavailable), compléter explicitement les états absents avec un compteur à zéro
+5. **Section 2 — Classement :** Un tableau et un graphique en barres montrant toutes les lignes opérationnelles de `mart_city_score_current_v2` (20 selon le contrat de squelette), sans Top 10 codé en dur
+6. **Section 3 — Horizon courant :** Un graphique en courbes par date cible avec un sélecteur dynamique couvrant toutes les villes présentes dans `mart_city_score_history_v2`, sans le présenter comme un historique des runs ou des observations
 7. **Section 4 — Décomposition :** Un graphique montrant la contribution de chaque règle de facteur (Heat, Wind, Rain, Air, River) au score, sans la présenter comme une causalité
 
 ---
