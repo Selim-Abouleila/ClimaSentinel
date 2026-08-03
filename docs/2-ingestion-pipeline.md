@@ -14,7 +14,9 @@ The ingestion process relies on three core Google Cloud services:
 1. **Cloud Scheduler**: Fires an HTTP request to the Cloud Run job once a day at
    `06:00 UTC` (`0 6 * * *`).
 2. **Cloud Run Job**: Executes the Python runner that pulls the APIs and invokes
-   dbt, with a 1,200-second timeout sized for the sequential 20-city workload.
+   dbt, with a 1,200-second task timeout for the sequential 20-city workload.
+   This is an operational budget, not a guarantee that every worst-case source
+   timeout can complete before the task deadline.
 3. **BigQuery**: Stores appended raw rows in time-partitioned tables and hosts
    the dbt relations.
 
@@ -63,11 +65,37 @@ not enter forecast-vintage staging, point-in-time ML training/features, or
 forecast serving. Expanding `config/cities.csv` therefore does not expand the
 beta forecast page.
 
-Of the additions, only Vienna and Budapest have river ingestion enabled. Their
-configured city-centre GloFAS cells currently represent large rivers above the
-mart's `>50 m³/s` velocity gate. The other eight new cells were below that gate
-or not representative of the intended urban river, so they remain disabled
-instead of manufacturing a zero or irrelevant river signal.
+Of the additions, only Vienna and Budapest have river ingestion enabled. During
+the expansion review, their resolved city-centre GloFAS cells exceeded the
+mart's `>50 m³/s` velocity gate. The other eight additions were disabled
+because the reviewed cell was below that gate or not representative of the
+intended urban river. This records a configuration decision, not continuing
+hydrological validation; the selected cells must be rechecked before treating
+them as authoritative river coverage.
+
+### Operational city onboarding contract
+
+Adding another operational city is a coordinated configuration/data change:
+
+1. add one active, uniquely ordered row to `config/cities.csv`, including its
+   IANA time zone and an explicit `river_enabled` decision;
+2. generate the candidate's 12 monthly operational baselines into temporary
+   review files with `transform/scripts/generate_city_monthly_normals.py`;
+3. review the returned source grid, completeness, values and checksums, then
+   merge the approved rows and update the provenance manifest;
+4. run `make validate-cities`; the PR-to-`dev` CI then runs the validator and
+   normals-generator unit-test suites;
+5. rebuild and deploy the ingestion image, wait for the Cloud Run execution,
+   and run dbt seed/run/test; and
+6. verify that the refreshed operational marts and API expose the new city.
+
+Do not add the city to `forecast_city_allowlist.csv` as a side effect. Forecast
+eligibility changes the point-in-time feature vocabulary, training snapshot,
+artifact contract, backend serving scope and frontend selector, so it requires
+a separate validation and release decision. That change must keep the dbt seed,
+`backend/app/ml_pipeline.py::ALL_CITIES`, the frontend forecast-city constant
+and their contract tests synchronized; none of them derives automatically from
+the operational registry.
 
 ---
 
@@ -116,13 +144,16 @@ different count; the loader inserts the response it receives.
     resolution; the selected grid cell is not proof that it represents the
     intended urban river)
 
-### 4. Historical Weather — ERA5 Reanalysis (`raw.historical_weather_daily`)
+### 4. Historical Weather — Open-Meteo Archive/Reanalysis (`raw.historical_weather_daily`)
 - **Endpoint**: `archive-api.open-meteo.com/v1/archive`
 - **Cadence**: Daily (all cities)
 - **Time Window**: Rolling 7-day window (`today-12` to `today-6`) = **7 rows per city per day**
-- **Note**: ERA5 has a publication lag. The fetch window is deliberately offset
-  to reduce the chance of ingesting partial recent data; source completeness
-  should still be checked rather than assumed.
+- **Note**: Archive/reanalysis products have a publication lag. The fetch window
+  is deliberately offset to reduce the chance of ingesting partial recent data;
+  source completeness should still be checked rather than assumed. The request
+  does not currently pin `models=era5`, and the loader does not retain the
+  returned source model/version, so exact ERA5 provenance is not established
+  per ingested row.
 - **Variables Retrieved**:
   - `temperature_2m_mean` (Daily mean temperature in °C)
   - `temperature_2m_max` (Daily maximum temperature in °C)
@@ -153,7 +184,7 @@ different count; the loader inserts the response it receives.
 | Weather Forecast | 168 | 20 | Daily | 3,360 |
 | Air Quality | 120 | 20 | Daily | 2,400 |
 | River Discharge | 7 | 5 | Daily | 35 |
-| Historical (ERA5) | 7 | 20 | Daily | 140 |
+| Historical archive/reanalysis | 7 | 20 | Daily | 140 |
 | Climate (CMIP6) | ~3,650 | 20 | Disabled | 0 scheduled |
 | **Daily total** | | | | **~5,935** |
 
@@ -172,6 +203,17 @@ These fields support staging deduplication and retrieval-run lineage. They are
 not complete source provenance: `ingested_at_utc` is captured once at the start
 of the whole job, and the raw schema does not retain the provider's model issue
 time, a per-city request time, response headers or source-version metadata.
+
+### Hourly valid-time caveat
+
+For hourly weather and AQ, the fetcher requests each city's local time zone and
+stores the offset-free provider clock text in the legacy `valid_ts_utc` field
+before loading it into a BigQuery `TIMESTAMP`. BigQuery therefore interprets
+the local clock text as UTC.
+Daily staging mostly preserves the intended local date label, but the stored
+instant is shifted by that city's UTC offset and cannot support exact lead-time
+or DST analysis. Correcting this requires retaining an offset-aware timestamp
+and updating downstream calendar-date derivation explicitly.
 
 ## Delivery and Retry Semantics
 

@@ -8,9 +8,17 @@
 
 **🌍 Live Dashboard:** [climasentinel.up.railway.app](https://climasentinel.up.railway.app/)
 
-ClimaSentinel combines a serverless GCP climate-data pipeline with a FastAPI and Next.js serving layer on Railway. It ingests daily weather and air-quality forecasts plus lagged ERA5 reanalysis for 20 major European cities, with river-discharge forecasts enabled for five of them, transforms the data with BigQuery and dbt, and supports an optional monthly CMIP6 projection source that is currently disabled in scheduled ingestion. The live operational dashboard covers all 20 cities; the beta forecast path remains intentionally frozen to its original 10-city allowlist.
+ClimaSentinel combines a serverless GCP climate-data pipeline with a FastAPI
+and Next.js serving layer on Railway. It ingests daily weather and air-quality
+forecasts plus lagged Open-Meteo archive/reanalysis weather for 20 major
+European cities, with river-discharge forecasts enabled for five of them,
+transforms the data with BigQuery and dbt, and supports an optional monthly
+CMIP6 projection source that is currently disabled in scheduled ingestion. The
+operational dashboard path covers all 20 cities once the expanded data plane
+and serving release are current; the beta forecast path remains intentionally
+frozen to its original 10-city allowlist.
 
-> **Forecasting is beta.** The three-day page presents experimental Day +1/+2/+3 point estimates from deterministic same-vintage rules, not a deployed ML model. Heat has limited ERA5 backtest evidence; Rain was ERA5-backtested but showed insufficient skill; Wind, Air Quality and River are not observation-validated. Missing inputs remain unavailable, and no confidence intervals are claimed.
+> **Forecasting is beta.** The three-day page presents experimental Day +1/+2/+3 point estimates from deterministic same-vintage rules, not a deployed ML model. Heat has limited backtest evidence against Open-Meteo archive/reanalysis data; Rain was backtested against the same source but showed insufficient skill; Wind, Air Quality and River are not observation-validated. Missing inputs remain unavailable, and no confidence intervals are claimed.
 
 ---
 
@@ -140,7 +148,7 @@ flowchart LR
         flood-api.open-meteo.com
         7 days · daily"]
 
-        HW["📅 ERA5 Historical
+        HW["📅 Historical Weather / Reanalysis
         archive-api.open-meteo.com
         rolling 7-day window · daily"]
 
@@ -200,7 +208,7 @@ flowchart LR
     FORECAST_SCOPE["🌱 transform/seeds/forecast_city_allowlist.csv
     Original 10-city forecast contract"]
 
-    CITIES -->|"20 cities: weather + AQ + ERA5; river for 5"| CRJ
+    CITIES -->|"20 cities: weather + AQ + archive; river for 5"| CRJ
     NORMALS -->|"dbt seed"| BQ_STG
     FORECAST_SCOPE -->|"dbt seed"| BQ_STG
     W  --> CRJ
@@ -208,7 +216,7 @@ flowchart LR
     FL -->|"river_enabled cities only"| CRJ
     HW --> CRJ
     CP -.->|"optional integration"| CRJ
-    BQ_MART -->|"Current exact-vintage features"| BACKEND
+    BQ_MART -->|"20-city operational scores + 10-city exact-vintage forecast features"| BACKEND
     BACKEND -->|"REST API (JSON)"| FRONTEND
     BQ_MART -->|"Point-in-time training examples"| ML
     PROM -->|"Scrapes /metrics"| BACKEND
@@ -223,13 +231,22 @@ flowchart LR
 | Weather Forecast | `api.open-meteo.com/v1/forecast` | Hourly | 168 | `raw.weather_forecast_hourly` |
 | Air Quality | `air-quality-api.open-meteo.com/v1/air-quality` | Hourly | 120 | `raw.air_quality_hourly` |
 | River Discharge | `flood-api.open-meteo.com/v1/flood` | Daily | 7 | `raw.flood_daily` |
-| ERA5 Historical | `archive-api.open-meteo.com/v1/archive` | Daily | 7 | `raw.historical_weather_daily` |
+| Historical Weather / Reanalysis | `archive-api.open-meteo.com/v1/archive` | Daily | 7 | `raw.historical_weather_daily` |
 | CMIP6 Climate (integration present; scheduled fetch disabled; no mart consumer) | `climate-api.open-meteo.com/v1/climate` | Daily | ~3,650 when invoked | `raw.climate_projections_daily` |
 
 The hourly weather and air-quality timestamps are provider-local clock values
 stored in a field named `valid_ts_utc`; no source offset is retained. Do not use
-that field for exact absolute lead-time or DST auditing. Current horizon logic
-uses city-local calendar dates as a mitigation, not as a timestamp correction.
+that field for exact absolute lead-time or DST auditing. Daily staging currently
+preserves the encoded local calendar label, while the operational current marts
+filter two UTC date labels. That behavior neither corrects the underlying
+timestamp nor creates a rolling 48-hour window.
+
+The scheduled historical fetch currently calls the Open-Meteo Archive API
+without pinning a `models=era5` selector and does not persist returned
+source-model metadata. The `era5_*` validation-status names, the
+`label_source='open_meteo_era5'` value and existing beta copy are retained
+legacy API/product contract labels; they must not be treated as per-row proof
+of an exact reanalysis model/version.
 
 ---
 
@@ -239,7 +256,7 @@ uses city-local calendar dates as a mitigation, not as a timestamp correction.
 |---|---|---|---|---|
 | 🥉 Bronze | `raw` | Raw API loads — append-only, partitioned by day | Active: `weather_forecast_hourly`, `air_quality_hourly`, `flood_daily`, `historical_weather_daily`; optional: `climate_projections_daily` | Configured; dataset existence and freshness require runtime verification |
 | 🥈 Silver | `stg` | Static seeds, operational daily views, and exact forecast vintages (dbt) | `city_monthly_normals`, `forecast_city_allowlist`, `stg_latest_*`, `stg_city_signal_input`, `stg_city_signal_vintage` | dbt-managed; deployment and freshness require runtime verification |
-| 🥇 Gold | `mart` | Operational scores, exact-vintage forecast features, and ERA5-backed Heat/Rain labels | `mart_city_score_*`, `mart_ml_forecast_features_vintage`, `mart_city_realized_weather_daily`, `mart_ml_training_examples`, `mart_ml_serving_features_current` | dbt-managed; deployment and freshness require runtime verification |
+| 🥇 Gold | `mart` | Operational scores, exact-vintage forecast features, and archive/reanalysis-backed Heat/Rain labels | `mart_city_score_*`, `mart_ml_forecast_features_vintage`, `mart_city_realized_weather_daily`, `mart_ml_training_examples`, `mart_ml_serving_features_current` | dbt-managed; deployment and freshness require runtime verification |
 
 > The ingest job creates active-source **Bronze tables only after the `raw`
 > dataset exists**. **Silver** and **Gold** models are managed by dbt. Source
@@ -274,11 +291,32 @@ uses city-local calendar dates as a mitigation, not as a timestamp correction.
 | Zurich | CH | 47.377 | 8.542 | — |
 | Bucharest | RO | 44.427 | 26.103 | — |
 
-All 20 cities feed the operational current-score and city-detail marts. Vienna,
-Brussels, Copenhagen, Dublin, Oslo, Helsinki, Prague, Budapest, Zurich and
-Bucharest are deliberately absent from `forecast_city_allowlist.csv`; they do
-not enter forecast-vintage features, ML training, forecast serving, or the
+All 20 active configured cities are intended to feed the operational
+current-score and city-detail marts after successful ingestion and dbt refresh.
+Vienna, Brussels, Copenhagen, Dublin, Oslo, Helsinki, Prague, Budapest, Zurich
+and Bucharest are deliberately absent from `forecast_city_allowlist.csv`; they
+do not enter forecast-vintage features, ML training, forecast serving, or the
 forecast page's original 10-city selector.
+
+### Operational city onboarding
+
+Operational coverage is registry-driven rather than implemented with one
+pipeline per city. An active city requires one reviewed `config/cities.csv`
+record, exactly 12 approved rows in `city_monthly_normals.csv`, and a deliberate
+`river_enabled` decision. The expansion cohort added 10 registry records and
+120 monthly-baseline rows, bringing the checked-in contracts to 20 operational
+cities and 240 city-month rows. The normals generator and provenance manifest
+record the expansion's 2014–2023 Open-Meteo procedure without silently
+refreshing the original 10 cities' retained values.
+
+Run `make validate-cities` before building or deploying. It checks schemas,
+identifiers, coordinates, IANA time-zone names, display order, strict booleans,
+physical ranges, city/month completeness, the provenance checksum/count
+contract and the separate frozen forecast allowlist. Expanding operational
+coverage does **not** expand the beta forecast path; that requires an explicit,
+separately reviewed change to the allowlist, the independent backend model-city
+vocabulary, training and serving contracts, the frontend selector and their
+tests.
 
 ---
 

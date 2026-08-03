@@ -316,12 +316,12 @@ def get_city_forecast(
     Return the rule-baseline Day +1, +2 or +3 forecast for one city.
 
     Every component is calculated from the same exact forecast vintage. Heat
-    uses the target month's city climatology and has limited ERA5 backtest
-    evidence. Rain was also backtested against realized ERA5 but showed
-    insufficient predictive skill. Wind, Air Quality and River/Flood still lack
-    observed-label validation. Missing optional sources remain unavailable
-    rather than being reported as zero, and deterministic rules never expose
-    model confidence intervals.
+    uses the target month's city climatology and has limited backtest evidence
+    against Open-Meteo archive/reanalysis data. Rain was backtested against the
+    same source but showed insufficient predictive skill. Wind, Air Quality and
+    River/Flood still lack observed-label validation. Missing optional sources
+    remain unavailable rather than being reported as zero, and deterministic
+    rules never expose model confidence intervals.
     """
     try:
         client = get_bq_client()

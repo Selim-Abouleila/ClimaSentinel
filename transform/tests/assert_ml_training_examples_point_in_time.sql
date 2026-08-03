@@ -1,7 +1,7 @@
 {{ config(tags=['ml_point_in_time']) }}
 
 -- Training rows must use one canonical eligible feature vintage, align each
--- target to its exact future calendar day, and learn labels only after ERA5
+-- target to its exact future calendar day, and learn labels only after archive/reanalysis
 -- made those outcomes available.
 
 WITH joined AS (

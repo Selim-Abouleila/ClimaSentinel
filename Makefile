@@ -5,7 +5,7 @@
 #   make bootstrap   → Create GCS Terraform state bucket & init backend
 #   make build       → Build & push the ingest Docker image to Artifact Registry
 #   make validate-cities → Validate city registry, normals and forecast scope
-#   make deploy      → Validate + build + terraform + ingestion + dbt checks
+#   make deploy      → Validate + build + Terraform + GCP ingestion + dbt checks
 #   make plan        → Terraform plan only (dry run, no build)
 #   make destroy     → Terraform destroy (tear down all resources)
 #   make dbt-run     → Run all dbt models (stg + mart)
@@ -59,7 +59,7 @@ ensure-terraform:
 		rm -f /tmp/terraform.zip; \
 	fi
 
-## Full deploy: build image → terraform apply → ingest → dbt seed/run/test
+## Full GCP data deploy: build image → Terraform apply → ingest → dbt seed/run/test
 deploy: validate-cities build ensure-terraform
 	@terraform -chdir=$(TF_DIR) plan -out=tfplan \
 		-var="project_id=$(GCP_PROJECT_ID)" \
@@ -117,7 +117,7 @@ help:
 	@echo "  make bootstrap   Init GCS state bucket & Terraform backend"
 	@echo "  make build       Build & push ingest Docker image"
 	@echo "  make validate-cities  Validate city config, normals, and forecast scope"
-	@echo "  make deploy      Build + terraform + ingest + dbt validation"
+	@echo "  make deploy      GCP data deploy: build + Terraform + ingest + dbt validation"
 	@echo "  make plan        Dry run (plan only, no build or apply)"
 	@echo "  make destroy     Tear down all GCP resources"
 	@echo "  make dbt-run     Run all dbt models (stg + mart)"

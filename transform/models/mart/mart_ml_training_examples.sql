@@ -17,7 +17,7 @@
 -- serving, which uses the latest successful run, while preventing retries from
 -- multiplying one realized outcome during training.
 --
--- Only ERA5-backed heat and rain targets are exposed. Wind needs observed gust
+-- Only archive/reanalysis-backed Heat and Rain targets are exposed. Wind needs observed gust
 -- data, air needs observed AQ, and river needs observed discharge; the current
 -- forecast feeds are not silently reused as ground truth for those components.
 

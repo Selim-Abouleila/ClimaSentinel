@@ -1,6 +1,6 @@
 # MLOps Final Project — Current Status
 
-Status reviewed against the `dev`-line repository on **2026-07-28**. Statuses
+Status reviewed against the repository state proposed on **2026-08-02**. Statuses
 describe code and configuration visible in Git; they do not certify the current
 contents of external systems such as Railway, BigQuery, DagsHub or GitHub
 branch-protection settings.
@@ -14,14 +14,14 @@ implemented
 | | Next.js frontend | ✅ | Next.js 16 includes overview, city detail and beta forecast routes; the staging workflow is configured to deploy it to Railway. |
 | | Database | ✅ | Ingestion, dbt and API code target BigQuery raw, staging and mart layers; live dataset state is external to this review. |
 | **Git model** | `feature/*` → `dev` → `staging` → `main` | ⚠️ | Workflows target these branches, but branch-protection rules are external to the repository. The MLOps workflow can also push a DVC pointer directly to its invoking branch. |
-| **PR CI** | Tests for PRs to `dev` | ⚠️ | Unit/contract and marker-labelled integration tests run in separate commands. Most “integration” tests use mocks or an in-process client; CI does not exercise source fetchers, BigQuery loader writes or dbt compile/run/test. |
+| **PR CI** | Tests for PRs to `dev` | ⚠️ | City/normals/provenance contracts, generator behavior, ingestion failure propagation, and backend unit/marker-labelled integration tests run in separate commands. Most “integration” tests use mocks or an in-process client; CI does not exercise live source fetchers, BigQuery loader writes or dbt compile/run/test. |
 | | Frontend lint/build | ✅ | `npm ci`, lint and production build run for PRs to `dev`. |
-| | Backend Docker build without push | ✅ | The backend image is built after backend tests. |
+| | Backend and ingestion Docker builds without push | ✅ | Both release images are built after the test job; neither is pushed by PR CI. |
 | **Staging CI/CD** | Full backend tests and Docker build | ✅ | Both run on pushes to `staging`. |
 | | Train and register challenger | ✅ | Reusable workflow is implemented to extract a BigQuery snapshot, train six Heat/Rain outputs and register an exact MLflow version. A successful current run/version is not pinned in this repository. |
 | | Evaluate promotion gates | ⚠️ | Quality/provenance gates are implemented, but staging and production share the same `champion` alias; a passing staging run can move MLflow's Production state. |
 | | Deploy application | ✅ | The workflow is configured to deploy backend and frontend to Railway staging with the operational all-rule policy. |
-| | Live E2E | ⚠️ | Playwright covers Paris and Day +1/+2/+3 in desktop Chromium. It does not pin the backend commit or cover all cities/pages/failure states. |
+| | Live E2E | ⚠️ | Playwright covers Paris and Day +1/+2/+3 in desktop Chromium and freezes the original 10-city forecast selector. It does not pin the backend commit or cover the 20-city operational overview/detail surface, all forecast cities or failure states. |
 | **Production CI/CD** | Evaluate challenger on `main` | ✅ | The workflow trains and evaluates an exact version; completed quality rejection is nonfatal while contract/operational failures remain fatal. |
 | | Deploy application to Railway production | ⬜ | The production deployment step is explicitly disabled and only prints a notice. |
 | **Configuration and secrets** | Environment-based runtime config | ⚠️ | BigQuery/Railway settings use environment variables, but CORS and several workflow values remain hard-coded. |
@@ -38,13 +38,13 @@ implemented
 | | Exact manual candidate selection | ⚠️ | CI passes `MLFLOW_MODEL_VERSION`; the local promotion command falls back to the numerically latest registry version when it is omitted, which is ambiguous under concurrent registration. |
 | **Serving policy** | Serve promoted ML model | ⬜ | The deployed API intentionally serves deterministic same-vintage rules for all five components; registered models remain offline challengers. |
 | | Honest beta/validation disclosure | ⚠️ | The forecast has a prominent beta badge and global validation note. Detailed per-factor provenance exists in the API but is not visibly rendered on each card. |
-| **API operations** | Hardened public API | ⬜ | There is no application auth, rate limiting or bounded list pagination; CORS is permissive and docs/metrics are public. |
+| **API operations** | Hardened public API | ⬜ | There is no application auth, rate limiting or response cache; only current-score list reads are bounded (`1..100`), while other list routes remain unbounded. CORS is permissive and docs/metrics are public. |
 | | Dependency readiness | ⬜ | `/health` is process liveness only and does not test BigQuery. |
 | | History endpoint | ⚠️ | `/data/history-scores` exists, but it orders by `prediction_date` while the mart column is `date`; the route currently returns `500`. |
 | **Monitoring** | Expose Prometheus metrics | ✅ | FastAPI exposes generic HTTP/process metrics at public `/metrics`. |
 | | Prometheus/Grafana dashboard | ⚠️ | A local Docker Compose demo scrapes the configured Railway backend and provisions four panels. It is not deployed monitoring. |
 | | Persistence, alerting and secure access | ⬜ | No data volumes, alert rules/contact points or production credentials/access controls are configured. |
-| **Deliverables** | Root and component documentation | ✅ | Architecture, pipeline, API, frontend, testing and limitation documents are present. |
+| **Deliverables** | Root and component documentation | ✅ | Architecture, 20-city operational/10-city forecast scope, pipeline, API, frontend, testing and limitation documents are present. |
 | | Public application | ⚠️ | The README links a public Railway dashboard, but availability and the deployed revision are external state; the repository's production deployment workflow is disabled. |
 
 ## Priority next steps

@@ -4,8 +4,8 @@ The mart layer is ClimaSentinel's Gold layer. It has two deliberately separate
 responsibilities:
 
 1. calculate the operational Tipping Score used by the dashboards; and
-2. provide point-in-time-safe forecast features and realized ERA5 reanalysis
-   labels for machine learning.
+2. provide point-in-time-safe forecast features and realized Open-Meteo
+   archive/reanalysis labels for machine learning.
 
 Keeping those paths separate is important. A forecast value is information that
 was available when a prediction was made. A realized value is an outcome learned
@@ -17,6 +17,10 @@ All models in this layer are deployed to the `mart` BigQuery dataset. The
 serving selector override it with `view` where appropriate.
 
 ## Operational score marts
+
+The operational score path is registry-wide: after ingestion and dbt refresh,
+all 20 active cities can appear in the history, current, zone and detail marts.
+This scope is independent from the frozen 10-city point-in-time forecast path.
 
 ### `mart_city_score_history` (table)
 
@@ -46,7 +50,7 @@ coverage that row is Day `D+1`; a gap can instead make it a later date. Do not
 interpret operational velocity as a strict one-day change unless source-date
 continuity has also been checked.
 
-This model is appropriate for operational forecast displays. It is **not an
+This model is appropriate for operational forecast displays. It is **not a
 realized-outcome label table**: its inputs can be forecast values. The ML
 training path therefore does not treat its component scores as ground truth.
 
@@ -94,6 +98,11 @@ The new ML path starts from `stg_city_signal_vintage`. That staging model
 preserves every retrieval and prevents weather, air-quality and flood values
 from different ingestion runs from being combined.
 
+Every vintage entry model joins `forecast_city_allowlist.csv`, so these marts
+remain restricted to Paris, London, Madrid, Berlin, Rome, Amsterdam, Athens,
+Warsaw, Lisbon and Stockholm. The 10 dashboard-only additions do not enter
+forecast features, realized training examples or current forecast serving.
+
 ### `mart_ml_forecast_features_vintage` (table)
 
 **Grain:** one row per
@@ -111,11 +120,11 @@ It contains:
 - expected-date, source-presence and daily-coverage flags; and
 - deterministic eligibility and canonical-vintage indicators.
 
-No realized ERA5 outcome is joined into this model, so the SQL does not itself
-introduce outcome leakage. It is the shared feature-definition source for
-historical training and live serving. Its point-in-time claim still relies on
-`ingested_at_utc`, a job-start availability proxy rather than the provider's
-model issue time or a per-city request timestamp.
+No realized archive/reanalysis outcome is joined into this model, so the SQL
+does not itself introduce outcome leakage. It is the shared feature-definition
+source for historical training and live serving. Its point-in-time claim still
+relies on `ingested_at_utc`, a job-start availability proxy rather than the
+provider's model issue time or a per-city request timestamp.
 
 Eligibility currently requires exactly 24 distinct weather timestamps on every
 Horizon 0-4 date. If a provider response represents a DST-transition civil day
@@ -133,8 +142,8 @@ path.
 **Grain:** one row per `(city_id, valid_date)`.
 
 This is the realized-label boundary. It is built from
-`stg_latest_historical_daily`, whose source is Open-Meteo ERA5 historical
-weather, and exposes:
+`stg_latest_historical_daily`, whose source is lagged Open-Meteo
+archive/reanalysis weather, and exposes:
 
 - realized daily temperature and precipitation;
 - the city/month temperature normal;
@@ -143,9 +152,19 @@ weather, and exposes:
 - source ingestion identifiers and timestamps; and
 - per-label and combined availability timestamps.
 
-The availability timestamps are essential. ERA5 is published after the valid
-date, so an example can only enter the training set after its required outcome
-has actually been ingested.
+This realized-weather mart can contain all 20 operational cities. Only rows
+that later join an allowlisted forecast vintage can enter
+`mart_ml_training_examples`, so the training contract remains restricted to the
+original 10 forecast cities.
+
+The availability timestamps are essential. The archive/reanalysis outcome is
+published after the valid date, so an example can only enter the training set
+after its required outcome has actually been ingested.
+
+The current fetch does not request a fixed `models=era5` source or persist a
+returned model/version. Existing `era5_*` validation-status values and the
+literal `label_source='open_meteo_era5'` are legacy contract labels, not proof
+of exact per-row ERA5 provenance.
 
 Because `stg_latest_historical_daily` retains the latest ingestion of a
 city/date, these timestamps are conservative latest-retrieval proxies, not the
@@ -176,7 +195,7 @@ all three Heat and Rain label dates are mature, and every label was ingested
 after the forecast vintage. This enforces the direction of time:
 
 ```text
-forecast retrieved ──────────────► outcome occurs ──────────────► ERA5 label ingested
+forecast retrieved ──────────────► outcome occurs ──────────────► archive label ingested
         features available             target date                    training eligible
 ```
 
@@ -217,25 +236,32 @@ feature-definition and label-lookahead skew without pretending unsupported
 labels exist; it does not by itself establish external validity.
 
 Both operational and realized Heat scores depend on
-`transform/seeds/city_monthly_normals.csv`. Repository history describes that
-lookup as 2014-2023 Open-Meteo/ERA5-derived, but no regeneration script, exact
-source-model/version or retrieval metadata is checked in. Comparisons across
-seed changes therefore need the Git commit or seed hash plus newly documented
-generation inputs; the current repository cannot reproduce the seed from raw
-instructions alone.
+`transform/seeds/city_monthly_normals.csv`. The 240-row seed deliberately has
+two provenance cohorts. The original 10 cities' 120 rows predate the checked-in
+generator and retain no exact original retrieval metadata, so those values are
+preserved rather than claimed as exactly reproducible. The expansion's 120 rows
+were generated from the Open-Meteo Historical Weather API for 2014–2023 by
+`transform/scripts/generate_city_monthly_normals.py`; the checked-in provenance
+manifest records the request contract, returned grid, aggregation policy,
+retrieval time and SHA-256 checksums. Open-Meteo Best Match archives can still
+be revised, so comparisons across seed changes must identify the Git revision,
+cohort and reviewed seed hash.
 
 ## Observed-label limitation and required product disclaimer
 
-The current warehouse supports honest realized ERA5 reanalysis labels for
+The current warehouse supports realized archive/reanalysis labels for
 **Heat and Rain only**.
 
-| Component | Observed label currently available? | Reason |
+| Component | Realized-label field available? | Reason |
 |---|---:|---|
-| Heat | Yes | ERA5 daily temperature and next-day temperature are ingested |
-| Rain | Yes | ERA5 daily precipitation is ingested |
-| Wind | No | ERA5 staging has sustained wind, not the gust observation used by the score |
+| Heat | Yes | Lagged archive daily temperature and next-day temperature are ingested |
+| Rain | Yes | Lagged archive daily precipitation is ingested |
+| Wind | No | Archive staging has sustained wind, not the gust observation used by the score |
 | Air quality | No | No observed historical AQ ingestion is present |
 | River | No | The current river source is a forecast, not observed discharge truth |
+
+These archive-backed Heat/Rain fields are realized labels within the project
+contract; they are not independently observed or station-validated truth.
 
 Later forecasts, Horizon 0 values, or forecast revisions must not be relabelled
 as observations merely to obtain five target columns. Doing so would train the
@@ -246,8 +272,9 @@ Until more evidence and the missing observed sources are available, the
 three-day forecast page must expose the operational policy honestly.
 Recommended user-facing copy:
 
-> Heat uses a same-vintage forecast rule with a limited ERA5 backtest. Rain was
-> backtested against realized ERA5 but showed insufficient predictive skill.
+> Heat uses a same-vintage forecast rule with a limited Open-Meteo
+> archive/reanalysis backtest. Rain was backtested against the same realized
+> archive/reanalysis source but showed insufficient predictive skill.
 > Wind, air-quality and river-risk still lack observed-label validation.
 
 That disclaimer ships on the three-day forecast page. It must remain visible

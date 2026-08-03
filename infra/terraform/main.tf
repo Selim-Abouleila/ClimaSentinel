@@ -87,7 +87,8 @@ resource "google_cloud_run_v2_job" "ingest" {
       # and require an intentional rerun after the underlying issue is fixed.
       max_retries = 0
 
-      # Allow enough headroom for sequential ingestion across 20 active cities.
+      # Operational task budget for sequential ingestion across 20 active
+      # cities; it is not a guarantee against every worst-case request timeout.
       timeout = "1200s"
     }
   }

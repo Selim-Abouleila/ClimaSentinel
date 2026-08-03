@@ -1,6 +1,6 @@
 {{ config(tags=['ml_point_in_time']) }}
 
--- Only ERA5-backed Heat and Rain may become mature labels. Unsupported Wind,
+-- Only archive/reanalysis-backed Heat and Rain may become mature labels. Unsupported Wind,
 -- Air and River targets must remain explicitly absent rather than being filled
 -- from forecasts or later forecast revisions.
 

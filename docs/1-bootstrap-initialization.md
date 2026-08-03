@@ -245,6 +245,44 @@ cat infra/terraform/backend.tf
 terraform -chdir=infra/terraform show
 ```
 
+Verify the checked-in city contracts before interpreting a deployment result:
+
+```bash
+make validate-cities
+```
+
+For the current expansion, the expected summary is:
+
+```text
+City configuration is valid: 20 registered cities, 240 monthly normal rows, 10 frozen forecast cities.
+```
+
+Those three counts describe different contracts: all 20 cities enter the
+operational ingestion/dashboard path, while only the original 10 enter the
+point-in-time forecast, training and serving path. A successful validator does
+not prove that the latest Cloud Run execution or BigQuery marts contain fresh
+rows; verify the waited job and warehouse separately.
+
+After a successful `make deploy`, reconcile the seeded and operational scopes:
+
+```bash
+bq query --location="$GCP_REGION" --use_legacy_sql=false \
+  "SELECT COUNT(*) AS rows, COUNT(DISTINCT city_id) AS cities
+   FROM \`${GCP_PROJECT_ID}.stg.city_monthly_normals\`"
+
+bq query --location="$GCP_REGION" --use_legacy_sql=false \
+  "SELECT COUNT(*) AS forecast_cities
+   FROM \`${GCP_PROJECT_ID}.stg.forecast_city_allowlist\`"
+
+bq query --location="$GCP_REGION" --use_legacy_sql=false \
+  "SELECT COUNT(DISTINCT city_id) AS current_operational_cities
+   FROM \`${GCP_PROJECT_ID}.mart.mart_city_score_current\`"
+```
+
+The expected seed results are `240 / 20` and `10`. The current mart should
+contain 20 cities after a complete, fresh source run; a smaller runtime count is
+an acceptance failure to investigate, not a reason to manufacture rows.
+
 ---
 
 ## Project Structure Reference

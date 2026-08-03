@@ -25,6 +25,14 @@ The backend uses `prometheus-fastapi-instrumentator`, which exposes generic HTTP
 and Python-process metrics. These series cover all instrumented routes; they are
 not model-specific prediction-quality, drift or business-outcome metrics.
 
+The 20-city expansion does not add data-plane observability to this stack.
+Neither Prometheus nor the provisioned Grafana dashboard verifies that a Cloud
+Run execution processed all 20 cities, that the nominal ~5,935 raw rows arrived,
+that all 240 monthly-normal rows were seeded, or that
+`mart_city_score_current` contains 20 fresh city rows. Those checks require
+Cloud Run execution monitoring plus explicit BigQuery/dbt freshness and
+completeness signals; backend HTTP traffic alone cannot establish them.
+
 ## What the provisioned panels actually show
 
 | Panel | Current query | Semantics |
@@ -59,6 +67,8 @@ not test BigQuery.
 - Prometheus is exposed on local port `9090` and Grafana on `3000`; the latter
   conflicts with the frontend's default development port.
 - The backend `/metrics` endpoint is public and unauthenticated.
+- There are no per-city ingestion-success, source-freshness, mart-row-count or
+  operational-versus-forecast-scope metrics for the 20/10 city contracts.
 
 These defaults are acceptable only for a local demonstration on a trusted
 machine. Do not expose this Compose stack to a shared or public network without

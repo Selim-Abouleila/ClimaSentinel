@@ -13,6 +13,8 @@ exercises each genuine Day +1, Day +2 and Day +3 selector in desktop Chromium.
 The test verifies that:
 
 - the page and city/horizon controls render without a server error;
+- the forecast selector remains exactly the original 10 eligible cities, in its
+  declared order, rather than inheriting the 20-city operational registry;
 - the page labels the forecast as beta and describes the projections as
   experimental and rule-based;
 - the API reports `forecast_rules_baseline` and
@@ -71,12 +73,19 @@ nor Playwright runs `dbt parse/build/test`, verifies warehouse lineage, or
 asserts when the live mart was last rebuilt. The smoke path consuming a valid
 live row is therefore not evidence of mart freshness.
 
+It also does not execute the GCP ingestion job or prove that the operational
+overview contains all 20 active cities. The city registry, 240-row normals seed
+and frozen forecast allowlist are checked by the PR-to-`dev` workflow, not by
+this live staging browser path.
+
 ## Deliberate scope limits
 
 The current smoke test does not cover:
 
-- the other nine configured cities;
-- the `/` overview or `/city/[city_id]` detail pages;
+- the other nine forecast-eligible cities;
+- the 10 dashboard-only additions or the complete 20-city operational
+  coverage;
+- the `/` overview or any `/city/[city_id]` detail page;
 - Firefox, WebKit, mobile layouts or accessibility conformance;
 - a deliberately missing AQ/River feed or other injected backend failure;
 - authentication, rate limiting, readiness or monitoring; or

@@ -2,7 +2,7 @@
 # CI Pipeline: dev → staging
 #
 # Triggered when code is pushed to 'staging' (i.e., PR merged from dev).
-# Runs the full test suite, then deploys to staging environment.
+# Runs the full backend pytest suite, then deploys to staging environment.
 # ─────────────────────────────────────────────────────────────────────────
 
 name: CI — Deploy to Staging
@@ -37,7 +37,7 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Run full test suite
+      - name: Run full backend test suite
         run: pytest tests/ -v
 
   docker-build:
