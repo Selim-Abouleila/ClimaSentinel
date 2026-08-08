@@ -143,8 +143,8 @@ Power BI vous demandera entre **Import** et **DirectQuery** :
 
 | Mode | Explication | Recommandation ClimaSentinel |
 |---|---|---|
-| **Import** | Power BI télécharge une copie des données. Rapide, mais pas en temps réel. | ✅ **Recommandé** — cadence amont visée : une fois par jour, sous réserve d'une ingestion et d'une transformation réussies |
-| **DirectQuery** | Power BI interroge BigQuery à chaque clic ; cela ne rend pas la source amont temps réel. | ❌ Non nécessaire pour notre cadence quotidienne |
+| **Import** | Power BI télécharge une copie des données. Rapide, mais pas en temps réel. | ✅ **Recommandé** — cadence amont planifiée : toutes les 12 heures, à 06:00 et 18:00 UTC, sous réserve d'une ingestion et d'une transformation réussies |
+| **DirectQuery** | Power BI interroge BigQuery à chaque clic ; cela ne rend pas la source amont temps réel. | ❌ Non nécessaire pour notre cadence amont de 12 heures |
 
 → Sélectionnez **Import** et cliquez sur **OK**.
 
@@ -197,7 +197,8 @@ règles de score au total opérationnel.
 
 ## Étape 7 — Publier sur Power BI Service (Rafraîchissement Automatique)
 
-Pour que le dashboard se mette à jour automatiquement chaque matin :
+Pour que le dashboard se mette à jour automatiquement après chaque ingestion
+planifiée :
 
 1. Dans Power BI Desktop, cliquez sur **Publier** (onglet Accueil)
 2. Choisissez votre espace de travail Power BI (votre organisation scolaire)
@@ -208,11 +209,12 @@ Pour que le dashboard se mette à jour automatiquement chaque matin :
      l'identité Streamlit ni une clé personnelle partagée
    - Conservez tout secret requis uniquement dans le gestionnaire de secrets de la
      plateforme et documentez sa rotation
-   - Activez le **Rafraîchissement planifié** → Fréquence : `Quotidien` → Heure : `06:30 UTC`
+   - Activez le **Rafraîchissement planifié** → Fréquence : `Quotidien` → Heures : `06:30 UTC` et `18:30 UTC`
 
-> Le rafraîchissement proposé est planifié 30 minutes après le déclenchement du
-> job d'ingestion à 06:00 UTC. Ce délai ne garantit pas que le traitement
-> séquentiel des 20 villes et dbt soit terminé. Le job sort désormais en échec
+> Les rafraîchissements proposés sont planifiés 30 minutes après les
+> déclenchements du job d'ingestion à 06:00 et 18:00 UTC. Ce délai ne garantit
+> pas que le traitement séquentiel des 20 villes et dbt soit terminé. Le job
+> sort désormais en échec
 > lorsqu'une source ou dbt échoue, mais le rafraîchissement Power BI ne dépend
 > pas automatiquement de ce statut. Vérifiez une exécution Cloud Run réussie,
 > puis la fraîcheur et la présence des 20 villes avant de publier le dashboard.
@@ -222,7 +224,7 @@ Pour que le dashboard se mette à jour automatiquement chaque matin :
 ## Résumé de l'Architecture de Connexion
 
 ```
-Cloud Scheduler (06:00 UTC)
+Cloud Scheduler (06:00 et 18:00 UTC)
         ↓
 Cloud Run (Ingestion Python, puis dbt ; échec propagé)
         ↓
@@ -232,7 +234,7 @@ BigQuery raw.*  →  dbt (Silver)  →  stg.*
                                          ↓
                                BigQuery mart.*
                                          ↓
-                          Power BI (Import, 06:30 UTC)
+                    Power BI (Import, 06:30 et 18:30 UTC)
                                          ↓
                               Dashboard Interactif
 ```

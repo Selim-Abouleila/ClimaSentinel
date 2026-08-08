@@ -8,8 +8,9 @@ auto-generated documentation.
 ## Purpose
 
 The `raw.*` tables accumulate overlapping data on every ingestion run (e.g.,
-168 hourly weather rows per city per day, with six days of overlap between
-consecutive runs). The layer exposes three intentionally different paths:
+nominally 168 hourly weather rows per city per run and 336 across the two
+scheduled runs per UTC day, with heavily overlapping forecast windows). The
+layer exposes three intentionally different paths:
 
 - the active `*_v2` operational path selects one exact ingestion run, preserves
   missingness, and creates a configured 20-city/date spine;

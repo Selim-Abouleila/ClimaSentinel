@@ -255,6 +255,12 @@ flowchart LR
 | Historical Weather / Reanalysis | `archive-api.open-meteo.com/v1/archive` | Daily | 7 | `raw.historical_weather_daily` |
 | CMIP6 Climate (integration present; scheduled fetch disabled; no mart consumer) | `climate-api.open-meteo.com/v1/climate` | Daily | ~3,650 when invoked | `raw.climate_projections_daily` |
 
+Cloud Scheduler starts the active ingestion at 06:00 and 18:00 UTC. Each run
+nominally appends about 5,935 raw rows across the configured cities, or about
+11,870 rows across the two scheduled runs per UTC day. Overlapping forecast
+windows are expected and remain separate retrieval vintages through their
+`ingestion_run_id` values.
+
 The hourly weather and air-quality timestamps are provider-local clock values
 stored in a field named `valid_ts_utc`; no source offset is retained. Do not use
 that field for exact absolute lead-time or DST auditing. Daily staging currently
