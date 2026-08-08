@@ -9,9 +9,10 @@
 **🌍 Live Dashboard:** [climasentinel.up.railway.app](https://climasentinel.up.railway.app/)
 
 ClimaSentinel combines a serverless GCP climate-data pipeline with a FastAPI
-and Next.js serving layer on Railway. It ingests daily weather and air-quality
-forecasts plus lagged Open-Meteo archive/reanalysis weather for 20 major
-European cities, with river-discharge forecasts enabled for five of them,
+and Next.js serving layer on Railway. At 06:00 and 18:00 UTC, it ingests
+weather and air-quality forecasts plus lagged Open-Meteo archive/reanalysis
+weather for 20 major European cities, with river-discharge forecasts enabled
+for five of them,
 transforms the data with BigQuery and dbt, and supports an optional monthly
 CMIP6 projection source that is currently disabled in scheduled ingestion. The
 operational dashboard path covers all 20 cities once the expanded data plane
@@ -103,8 +104,8 @@ flowchart LR
         direction LR
         SCH["☁️ Cloud Scheduler
         ─────────────
-        cron: 0 6 * * *
-        daily @ 06:00 UTC
+        cron: 0 6,18 * * *
+        every 12h @ 06:00/18:00 UTC
         region: europe-west1"]
 
         CRJ["📦 Cloud Run Job
