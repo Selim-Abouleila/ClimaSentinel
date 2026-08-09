@@ -11,8 +11,8 @@ disabled in scheduled ingestion.
 
 The ingestion process relies on three core Google Cloud services:
 
-1. **Cloud Scheduler**: Fires an HTTP request to the Cloud Run job once a day at
-   `06:00 UTC` (`0 6 * * *`).
+1. **Cloud Scheduler**: Fires an HTTP request to the Cloud Run job every 12
+   hours, at `06:00` and `18:00 UTC` (`0 6,18 * * *`).
 2. **Cloud Run Job**: Executes the Python runner that pulls the APIs and invokes
    dbt, with a 1,200-second task timeout for the sequential 20-city workload.
    This is an operational budget, not a guarantee that every worst-case source
@@ -119,8 +119,8 @@ different count; the loader inserts the response it receives.
 
 ### 1. Weather Forecast (`raw.weather_forecast_hourly`)
 - **Endpoint**: `api.open-meteo.com/v1/forecast`
-- **Cadence**: Daily (all cities)
-- **Time Window**: Next 7 Days (Hourly) = **168 rows per city per day**
+- **Cadence**: Every 12 hours (all cities)
+- **Time Window**: Next 7 Days (Hourly) = **168 rows per city per run**
 - **Variables Retrieved**:
   - `temperature_2m` (°C at 2 meters)
   - `precipitation_mm` (mm/hour)
@@ -130,8 +130,8 @@ different count; the loader inserts the response it receives.
 
 ### 2. Air Quality (`raw.air_quality_hourly`)
 - **Endpoint**: `air-quality-api.open-meteo.com/v1/air-quality`
-- **Cadence**: Daily (all cities)
-- **Time Window**: Next 5 Days (Hourly) = **120 rows per city per day**
+- **Cadence**: Every 12 hours (all cities)
+- **Time Window**: Next 5 Days (Hourly) = **120 rows per city per run**
 - **Variables Retrieved**:
   - `european_aqi` (European Air Quality Index, 0–500 scale)
   - `pm2_5` (Particulate Matter < 2.5 µm in µg/m³)
@@ -141,9 +141,9 @@ different count; the loader inserts the response it receives.
 
 ### 3. River Discharge (`raw.flood_daily`)
 - **Endpoint**: `flood-api.open-meteo.com/v1/flood`
-- **Cadence**: Daily (river-enabled cities only — Paris, Amsterdam, Warsaw,
-  Vienna and Budapest)
-- **Time Window**: Next 7 Days (Daily) = **7 rows per city per day**
+- **Cadence**: Every 12 hours (river-enabled cities only — Paris, Amsterdam,
+  Warsaw, Vienna and Budapest)
+- **Time Window**: Next 7 Days (Daily) = **7 rows per city per run**
 - **Variables Retrieved**:
   - `river_discharge_m3s` (GloFAS river discharge in m³/s at roughly 5 km grid
     resolution; the selected grid cell is not proof that it represents the
@@ -151,8 +151,9 @@ different count; the loader inserts the response it receives.
 
 ### 4. Historical Weather — Open-Meteo Archive/Reanalysis (`raw.historical_weather_daily`)
 - **Endpoint**: `archive-api.open-meteo.com/v1/archive`
-- **Cadence**: Daily (all cities)
-- **Time Window**: Rolling 7-day window (`today-12` to `today-6`) = **7 rows per city per day**
+- **Cadence**: Every 12 hours (all cities)
+- **Time Window**: Rolling 7-day window (`today-12` to `today-6`) = **7 rows
+  per city per run**
 - **Note**: Archive/reanalysis products have a publication lag. The fetch window
   is deliberately offset to reduce the chance of ingesting partial recent data;
   source completeness should still be checked rather than assumed. The request
@@ -171,7 +172,9 @@ different count; the loader inserts the response it receives.
 - **Scheduled status**: Disabled; `ingest/main.py` does not currently invoke the
   fetch or loader, so no monthly rows or table creation should be expected
 - **Endpoint**: `climate-api.open-meteo.com/v1/climate`
-- **Guard if invoked directly**: 1st of month only
+- **Guard if invoked directly**: 1st calendar day only. Because this guard is
+  not run-idempotent, strengthen it or use a separate schedule before enabling
+  this source under the twice-daily cadence.
 - **Time Window**: Next 10 years (Daily) = **~3,650 rows per city per month**
 - **Model**: `MRI_AGCM3_2_S` (high-resolution atmospheric model)
 - **Variables Retrieved**:
@@ -182,16 +185,22 @@ different count; the loader inserts the response it receives.
 
 ---
 
-## Nominal Daily Volume Summary
+## Nominal Scheduled Volume Summary
 
-| Source | Rows/city/run | Cities | Frequency | Daily Total |
-|---|---|---|---|---|
-| Weather Forecast | 168 | 20 | Daily | 3,360 |
-| Air Quality | 120 | 20 | Daily | 2,400 |
-| River Discharge | 7 | 5 | Daily | 35 |
-| Historical archive/reanalysis | 7 | 20 | Daily | 140 |
-| Climate (CMIP6) | ~3,650 | 20 | Disabled | 0 scheduled |
-| **Daily total** | | | | **~5,935** |
+| Source | Rows/city/run | Cities | Runs/day | Rows/run | Rows/day |
+|---|---:|---:|---:|---:|---:|
+| Weather Forecast | 168 | 20 | 2 | 3,360 | 6,720 |
+| Air Quality | 120 | 20 | 2 | 2,400 | 4,800 |
+| River Discharge | 7 | 5 | 2 | 35 | 70 |
+| Historical archive/reanalysis | 7 | 20 | 2 | 140 | 280 |
+| Climate (CMIP6) | ~3,650 | 20 | 0 scheduled | ~73,000 if invoked | 0 scheduled |
+| **Active scheduled total** | | | | **~5,935** | **~11,870** |
+
+The two active runs append approximately 11,870 raw rows per UTC day. Forecast
+windows overlap intentionally, and the daily river/archive sources normally
+repeat most or all of the same valid dates in the second run. Run IDs preserve
+those retrievals as separate vintages; this is append volume, not a count of
+unique forecast or observation times.
 
 ---
 
@@ -271,7 +280,7 @@ does too.
 ### How it works
 
 ```
-Cloud Scheduler (06:00 UTC)
+Cloud Scheduler (06:00 and 18:00 UTC)
     → Cloud Run Job starts
         → [1] Ingest: fetch 4 active source families → raw.* tables
         → [2] Transform: dbt seed + dbt run
@@ -316,7 +325,7 @@ environment isolation comes from the active credentials and
 
 `make deploy` executes this job with `--wait`; any non-zero outcome stops the
 deploy. After a successful job it runs a final local `dbt seed`, `dbt run` and
-`dbt test`. A daily Scheduler-triggered execution still omits tests, so test and
+`dbt test`. Each Scheduler-triggered execution still omits tests, so test and
 freshness monitoring remain separate operational checks.
 
 For the v2 availability rollout, `make deploy` is the data-plane prerequisite:

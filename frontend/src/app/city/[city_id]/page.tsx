@@ -138,22 +138,6 @@ export default async function CityDetailPage({
           Back to overview
         </Link>
 
-        {snapshot && (
-          <div
-            className={`dashboard-freshness ${snapshot.stale ? "is-stale" : ""}`}
-            role="status"
-            aria-label={snapshot.stale ? "Data snapshot is stale" : "Selected data snapshot"}
-          >
-            <span>{snapshot.stale ? "Stale data snapshot" : "Selected data snapshot"}</span>
-            <time dateTime={snapshot.ingestedAt.toISOString()}>{snapshotLabel} UTC</time>
-            <small>
-              {snapshot.stale
-                ? "The scheduled daily ingestion is overdue; interpret scores cautiously."
-                : "One exact ingestion run is used across all available signals."}
-            </small>
-          </div>
-        )}
-
         <header className={`city-detail-hero ${globalBand ? `risk-${globalBand.tone}` : "signal-unavailable"}`}>
           <div className="city-detail-hero__identity">
             <div className="dashboard-eyebrow">
@@ -275,6 +259,22 @@ export default async function CityDetailPage({
             })}
           </div>
         </section>
+
+        {snapshot && (
+          <div
+            className={`dashboard-freshness dashboard-freshness--content-footer ${snapshot.stale ? "is-stale" : ""}`}
+            role="status"
+            aria-label={snapshot.stale ? "Data snapshot is stale" : "Selected data snapshot"}
+          >
+            <span>{snapshot.stale ? "Stale data snapshot" : "Selected data snapshot"}</span>
+            <time dateTime={snapshot.ingestedAt.toISOString()}>{snapshotLabel} UTC</time>
+            <small>
+              {snapshot.stale
+                ? "The scheduled daily ingestion is overdue; interpret scores cautiously."
+                : "One exact ingestion run is used across all available signals."}
+            </small>
+          </div>
+        )}
 
         <footer className="dashboard-data-note">
           <span>Signal catalogue</span>

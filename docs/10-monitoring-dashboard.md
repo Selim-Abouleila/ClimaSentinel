@@ -26,9 +26,10 @@ and Python-process metrics. These series cover all instrumented routes; they are
 not model-specific prediction-quality, drift or business-outcome metrics.
 
 The 20-city expansion does not add data-plane observability to this stack.
-Neither Prometheus nor the provisioned Grafana dashboard verifies that a Cloud
-Run execution processed all 20 cities, that the nominal ~5,935 raw rows arrived,
-that all 240 monthly-normal rows were seeded, or that
+Neither Prometheus nor the provisioned Grafana dashboard verifies that either
+scheduled Cloud Run execution at 06:00 or 18:00 UTC processed all 20 cities,
+that the nominal ~5,935 raw rows per run (~11,870 across the two scheduled runs
+per UTC day) arrived, that all 240 monthly-normal rows were seeded, or that
 `mart_city_score_current_v2` contains 20 fresh city rows. Those checks require
 Cloud Run execution monitoring plus explicit BigQuery/dbt freshness and
 completeness signals; backend HTTP traffic alone cannot establish them.

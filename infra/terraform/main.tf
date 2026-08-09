@@ -138,10 +138,11 @@ resource "google_project_iam_member" "powerbi_bq_read_session_user" {
   member  = "serviceAccount:${google_service_account.powerbi_sa.email}"
 }
 
-# ─── Cloud Scheduler — daily trigger at 06:00 UTC ────────────────────────────
+# ─── Cloud Scheduler — twice-daily trigger at 06:00/18:00 UTC ───────────────
+# Keep the legacy Terraform address and deployed name to avoid replacement.
 resource "google_cloud_scheduler_job" "ingest_daily" {
   name             = "clima-sentinel-ingest-daily"
-  description      = "Triggers the ClimaSentinel ingest Cloud Run job daily at 06:00 UTC"
+  description      = "Triggers the ClimaSentinel ingest Cloud Run job at 06:00 and 18:00 UTC"
   schedule         = var.ingest_schedule
   time_zone        = "UTC"
   attempt_deadline = "600s"

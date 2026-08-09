@@ -9,9 +9,10 @@
 **🌍 Live Dashboard:** [climasentinel.up.railway.app](https://climasentinel.up.railway.app/)
 
 ClimaSentinel combines a serverless GCP climate-data pipeline with a FastAPI
-and Next.js serving layer on Railway. It ingests daily weather and air-quality
-forecasts plus lagged Open-Meteo archive/reanalysis weather for 20 major
-European cities, with river-discharge forecasts enabled for five of them,
+and Next.js serving layer on Railway. At 06:00 and 18:00 UTC, it ingests
+weather and air-quality forecasts plus lagged Open-Meteo archive/reanalysis
+weather for 20 major European cities, with river-discharge forecasts enabled
+for five of them,
 transforms the data with BigQuery and dbt, and supports an optional monthly
 CMIP6 projection source that is currently disabled in scheduled ingestion. The
 operational dashboard path covers all 20 cities once the expanded data plane
@@ -103,8 +104,8 @@ flowchart LR
         direction LR
         SCH["☁️ Cloud Scheduler
         ─────────────
-        cron: 0 6 * * *
-        daily @ 06:00 UTC
+        cron: 0 6,18 * * *
+        every 12h @ 06:00/18:00 UTC
         region: europe-west1"]
 
         CRJ["📦 Cloud Run Job
@@ -253,6 +254,12 @@ flowchart LR
 | River Discharge | `flood-api.open-meteo.com/v1/flood` | Daily | 7 | `raw.flood_daily` |
 | Historical Weather / Reanalysis | `archive-api.open-meteo.com/v1/archive` | Daily | 7 | `raw.historical_weather_daily` |
 | CMIP6 Climate (integration present; scheduled fetch disabled; no mart consumer) | `climate-api.open-meteo.com/v1/climate` | Daily | ~3,650 when invoked | `raw.climate_projections_daily` |
+
+Cloud Scheduler starts the active ingestion at 06:00 and 18:00 UTC. Each run
+nominally appends about 5,935 raw rows across the configured cities, or about
+11,870 rows across the two scheduled runs per UTC day. Overlapping forecast
+windows are expected and remain separate retrieval vintages through their
+`ingestion_run_id` values.
 
 The hourly weather and air-quality timestamps are provider-local clock values
 stored in a field named `valid_ts_utc`; no source offset is retained. Do not use

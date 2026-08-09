@@ -94,22 +94,6 @@ export default async function Dashboard() {
           </p>
         </header>
 
-        {snapshot && (
-          <div
-            className={`dashboard-freshness ${snapshot.stale ? 'is-stale' : ''}`}
-            role="status"
-            aria-label={snapshot.stale ? 'Data snapshot is stale' : 'Selected data snapshot'}
-          >
-            <span>{snapshot.stale ? 'Stale data snapshot' : 'Selected data snapshot'}</span>
-            <time dateTime={snapshot.ingestedAt.toISOString()}>{snapshotLabel} UTC</time>
-            <small>
-              {snapshot.stale
-                ? 'The scheduled daily ingestion is overdue; interpret scores cautiously.'
-                : 'One exact ingestion run is used across all available signals.'}
-            </small>
-          </div>
-        )}
-
         {cityData.length === 0 ? (
           <div className="dashboard-empty-state" role="status">
             <span className="dashboard-empty-state__indicator" aria-hidden="true" />
@@ -304,6 +288,22 @@ export default async function Dashboard() {
                   );
                 })}
               </div>
+
+              {snapshot && (
+                <div
+                  className={`dashboard-freshness dashboard-freshness--content-footer ${snapshot.stale ? 'is-stale' : ''}`}
+                  role="status"
+                  aria-label={snapshot.stale ? 'Data snapshot is stale' : 'Selected data snapshot'}
+                >
+                  <span>{snapshot.stale ? 'Stale data snapshot' : 'Selected data snapshot'}</span>
+                  <time dateTime={snapshot.ingestedAt.toISOString()}>{snapshotLabel} UTC</time>
+                  <small>
+                    {snapshot.stale
+                      ? 'The scheduled daily ingestion is overdue; interpret scores cautiously.'
+                      : 'One exact ingestion run is used across all available signals.'}
+                  </small>
+                </div>
+              )}
 
               <footer className="dashboard-data-note">
                 <span>Signal catalogue</span>

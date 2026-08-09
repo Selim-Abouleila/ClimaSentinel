@@ -405,8 +405,9 @@ For the separate point-in-time ML path:
    tests even when the challenger is rejected.
 
 This is an approval sequence, not one atomic scheduled workflow. In particular,
-the daily ingestion job does not perform the `dbt test` portions of steps 1 and
-3; those tests need an explicit deployment or validation run.
+neither execution of the twice-daily scheduled ingestion job performs the
+`dbt test` portions of steps 1 and 3; those tests need an explicit deployment or
+validation run.
 
 The MLOps workflow publishes the DVC object and commits its pointer only after
 extraction, contract validation, training and registry logging succeed. Model
