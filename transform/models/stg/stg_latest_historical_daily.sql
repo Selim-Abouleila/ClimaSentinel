@@ -1,7 +1,7 @@
 -- stg_latest_historical_daily.sql
--- Deduplicates raw.historical_weather_daily: keeps only the freshest ERA5 reading
+-- Deduplicates raw.historical_weather_daily: keeps only the freshest archive reading
 -- for each (city_id, date) pair based on ingestion timestamp.
--- ERA5 data has a ~5-day publication lag; the ingest fetcher offsets by 6-12 days.
+-- The ingest fetcher offsets by 6-12 days to buffer archive publication lag.
 
 WITH ranked AS (
     SELECT

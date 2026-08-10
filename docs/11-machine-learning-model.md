@@ -19,7 +19,7 @@ another forecast, not validate it against reality.
 ## End-to-end architecture
 
 ```text
-forecast vintages                         realized ERA5 weather
+forecast vintages                  realized archive/reanalysis weather
         │                                          │
         ▼                                          ▼
 mart_ml_forecast_features_vintage     mart_city_realized_weather_daily
@@ -63,9 +63,13 @@ canonical `(city_id, forecast_origin_date)` example with:
   horizon; and
 - feature and label run/timestamp provenance.
 
-Labels are built only from `mart_city_realized_weather_daily`, backed by ERA5
-historical weather. A label is eligible only after its outcome has occurred and
-the corresponding reanalysis has been ingested. Air-quality and flood forecast
+Labels are built only from `mart_city_realized_weather_daily`, backed by lagged
+Open-Meteo archive/reanalysis weather. A label is eligible only after its
+outcome has occurred and the corresponding archive row has been ingested.
+The source request does not currently pin `models=era5` or retain a returned
+model/version; existing `era5_*` validation-status names and the
+`label_source='open_meteo_era5'` value are legacy contract labels rather than
+per-row source proof. Air-quality and flood forecast
 features remain nullable; their upstream mart also retains explicit source
 presence/completeness flags for rule-serving decisions. Extraction does not
 forward-fill, backward-fill or replace a missing optional source with zero.
@@ -128,9 +132,21 @@ fitted outputs rather than copies of Day +3.
 The pipeline contains:
 
 1. a `ColumnTransformer` that median-imputes numeric model inputs, adds missing
-   indicators, and one-hot encodes the fixed monitored-city vocabulary; and
+   indicators, and one-hot encodes the fixed original 10-city
+   forecast-eligible vocabulary; and
 2. a `MultiOutputRegressor(RandomForestRegressor)` with one fitted forest for
    each ordered target.
+
+That vocabulary is independently hard-coded as `ALL_CITIES` in
+`backend/app/ml_pipeline.py`; it is expected to match
+`forecast_city_allowlist.csv` but is not derived from that seed at runtime.
+Vienna, Brussels, Copenhagen, Dublin, Oslo, Helsinki, Prague, Budapest, Zurich
+and Bucharest do not enter forecast feature rows, training examples or artifact
+categories. Expanding the model scope requires synchronizing both contracts,
+updating the separate frontend selector and tests, collecting sufficient
+point-in-time history, regenerating the DVC snapshot, retraining and validating
+a new artifact contract. Operational dashboard growth alone must not mutate the
+learned feature space.
 
 Imputation statistics are fitted on the training partition only. The raw row is
 retained separately for Wind/AQ/River rules, so an imputed model value can never
@@ -256,10 +272,11 @@ pointer or a pinned evaluation report that would make an exact row count,
 metric value or performance comparison independently reproducible. Do not
 quote a fixed sample count, R², MAE or improvement claim from this document.
 
-Reviewed prior evidence supports only the product's conservative status:
-Heat has limited ERA5 backtest evidence, while Rain was ERA5-backtested but did
-not demonstrate sufficient predictive skill. Those labels are not a current
-benchmark result. The authoritative result for a future run is the evaluation
+Reviewed prior evidence supports only the product's conservative status: Heat
+has limited backtest evidence against Open-Meteo archive/reanalysis data, while
+Rain was backtested against the same source but did not demonstrate sufficient
+predictive skill. Those labels are not a current benchmark result. The
+authoritative result for a future run is the evaluation
 record tied to its Git commit, updated DVC hash, MLflow run/model version, date
 range and per-target held-out counts. Until that record is published, neither
 component should be described as mature or production-validated.

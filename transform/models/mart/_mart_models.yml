@@ -3,9 +3,8 @@ version: 2
 models:
   - name: mart_city_score_history
     description: >
-      The core tipping score computation engine. Calculates the daily anomaly and velocity 
-      scores for 5 factors (Heat, Wind, Rain, Air, River) and takes the maximum to determine
-      the global tipping score and primary driver for each city.
+      Legacy rollback compatibility table retained during the v2 cutover. The
+      active nullable score engine is mart_city_score_history_v2.
     columns:
       - name: city_id
         tests:
@@ -22,8 +21,8 @@ models:
 
   - name: mart_city_score_current
     description: >
-      Operational dashboard view filtering the history table to only today and tomorrow. 
-      Identifies the current tipping score and ranks the cities from most tense (1) to least.
+      Legacy rollback compatibility view retained during the v2 cutover. The
+      active dashboard/API relation is mart_city_score_current_v2.
     columns:
       - name: city_id
         tests:
@@ -35,8 +34,8 @@ models:
 
   - name: mart_city_zone_current
     description: >
-      Aggregates the current city scores into 4 operational zones: Stable, Monitoring, Tipping, Critical.
-      Provides a high-level executive summary of tension across the network.
+      Legacy rollback compatibility view with four score zones. The active
+      relation is mart_city_zone_current_v2, which also exposes Unavailable.
     columns:
       - name: zone_name
         tests:
@@ -45,12 +44,9 @@ models:
 
   - name: mart_city_score_detail
     description: >
-      Exposes the five individual tipping sub-scores (Heat, Wind, Rain, Air Quality, River)
-      plus raw signal values for every city across today and tomorrow in UTC.
-      One row per city is selected using the maximum global tipping score. When both dates
-      tie, separate ANY_VALUE aggregates can select values nondeterministically across the
-      tied dates. Does NOT modify mart_city_score_current.
-      Consumed by GET /data/city/{city_id}/scores to power the city detail page.
+      Legacy rollback compatibility view. It preserves the former non-null
+      five-score contract and nondeterministic ANY_VALUE tie behavior. The
+      active API reads mart_city_score_detail_v2.
     columns:
       - name: city_id
         description: "Unique city identifier (e.g. paris_fr)."
@@ -73,6 +69,170 @@ models:
         description: "Air Quality sub-score (0-100): direct mapping of European AQI max."
       - name: river_score
         description: "River/Flood sub-score (0-100): based on positive river discharge velocity."
+      - name: temperature_2m_max
+        description: "Raw max temperature (°C) on the worst day — displayed as context in the UI."
+      - name: wind_gusts_10m_max
+        description: "Raw max wind gust speed (km/h) on the worst day."
+      - name: precipitation_sum_mm
+        description: "Raw daily precipitation sum (mm) on the worst day."
+      - name: european_aqi_max
+        description: "Raw European AQI max on the worst day."
+      - name: river_discharge_m3s
+        description: "Raw river discharge (m³/s) on the worst day — nullable for non-river cities."
+
+  - name: mart_city_score_history_v2
+    description: >
+      The core tipping score computation engine. Calculates nullable daily
+      scores for five factors and takes the maximum only across factors whose
+      required inputs are available. Monitoring, availability, status, and
+      coverage metadata distinguish a genuine zero-risk measurement from an
+      unavailable or unmonitored signal.
+    columns:
+      - name: operational_ingestion_run_id
+        description: Exact raw ingestion snapshot used across every v2 source.
+        tests: [not_null]
+      - name: operational_ingested_at_utc
+        description: Latest raw availability timestamp within the selected run.
+        tests: [not_null]
+      - name: city_id
+        tests:
+          - not_null
+      - name: date
+        tests:
+          - not_null
+      - name: global_tipping_score
+        description: "Maximum available factor score (0-100); NULL when no factor is available."
+      - name: global_score_available
+        description: True when at least one factor contributed to the global score.
+        tests: [not_null]
+      - name: monitored_factor_count
+        description: Number of factors configured for monitoring for the city.
+        tests: [not_null]
+      - name: available_factor_count
+        description: Number of monitored factors with a defensible score on the date.
+        tests: [not_null]
+      - name: overall_coverage
+        description: Mean input coverage across monitored factors, from 0 through 1.
+      - name: primary_driver
+        description: "Highest available factor, Stable, or Unavailable when none can be scored."
+
+  - name: mart_city_score_current_v2
+    description: >
+      Operational dashboard view filtering the history table to only today and tomorrow.
+      Identifies the current tipping score and ranks the cities from most tense (1) to least.
+    columns:
+      - name: operational_ingestion_run_id
+        tests: [not_null]
+      - name: operational_ingested_at_utc
+        tests: [not_null]
+      - name: city_id
+        tests:
+          - not_null
+          - unique
+      - name: current_tipping_score
+        description: Maximum available score on the deterministically selected worst date; nullable when none are available.
+      - name: current_score_available
+        tests: [not_null]
+      - name: monitored_factor_count
+        tests: [not_null]
+      - name: available_factor_count
+        tests: [not_null]
+      - name: overall_coverage
+        description: Mean input coverage across monitored factors on the selected date.
+
+  - name: mart_city_zone_current_v2
+    description: >
+      Aggregates current city scores into Stable, Monitoring, Tipping, and
+      Critical zones, plus an explicit Unavailable group for unscored cities.
+      Provides a high-level executive summary of tension across the network.
+    columns:
+      - name: zone_name
+        tests:
+          - not_null
+          - unique
+
+  - name: mart_city_score_detail_v2
+    description: >
+      Exposes nullable factor scores, explicit signal status and coverage, and
+      raw values for every city across today and tomorrow in UTC. One complete
+      row is selected deterministically by available score descending and date
+      ascending, so fields can never be mixed across tied dates.
+      Consumed by GET /data/city/{city_id}/scores to power the city detail page.
+    columns:
+      - name: operational_ingestion_run_id
+        tests: [not_null]
+      - name: operational_ingested_at_utc
+        tests: [not_null]
+      - name: city_id
+        description: "Unique city identifier (e.g. paris_fr)."
+        tests:
+          - not_null
+          - unique
+      - name: current_tipping_score
+        description: "Maximum of available factor scores on the selected date; NULL if all are unavailable."
+      - name: score_date
+        description: Deterministically selected UTC calendar date supplying every score and metadata field.
+      - name: current_primary_driver
+        description: "Highest available factor, Stable, or Unavailable."
+      - name: current_score_available
+        tests: [not_null]
+      - name: monitored_factor_count
+        tests: [not_null]
+      - name: available_factor_count
+        tests: [not_null]
+      - name: overall_coverage
+        description: Mean input coverage across monitored factors on the selected date.
+      - name: heat_score
+        description: "Nullable Heat score (0-100); based on temperature anomaly and positive velocity."
+      - name: heat_status
+        tests: &signal_status_tests
+          - not_null
+      - name: heat_monitored
+        tests: [not_null]
+      - name: heat_available
+        tests: [not_null]
+      - name: heat_coverage
+        description: Coverage ratio for complete current/consecutive-next temperature and monthly-normal inputs; a score requires 1.
+      - name: wind_score
+        description: "Nullable Wind score (0-100); based on gust speed above 40 km/h."
+      - name: wind_status
+        tests: *signal_status_tests
+      - name: wind_monitored
+        tests: [not_null]
+      - name: wind_available
+        tests: [not_null]
+      - name: wind_coverage
+        description: Non-NULL wind-gust hours divided by 24, capped at 1; a score requires 1.
+      - name: rain_score
+        description: "Nullable Rain score (0-100); based on daily precipitation sum."
+      - name: rain_status
+        tests: *signal_status_tests
+      - name: rain_monitored
+        tests: [not_null]
+      - name: rain_available
+        tests: [not_null]
+      - name: rain_coverage
+        description: Non-NULL precipitation hours divided by 24, capped at 1; a score requires 1.
+      - name: air_score
+        description: "Nullable Air Quality score (0-100); never zero-filled or carried forward."
+      - name: air_status
+        tests: *signal_status_tests
+      - name: air_monitored
+        tests: [not_null]
+      - name: air_available
+        tests: [not_null]
+      - name: air_coverage
+        description: Non-NULL European AQI hours divided by 24, capped at 1; a score requires 1.
+      - name: river_score
+        description: "Nullable River/Flood score (0-100); based on positive discharge velocity."
+      - name: river_status
+        tests: *signal_status_tests
+      - name: river_monitored
+        tests: [not_null]
+      - name: river_available
+        tests: [not_null]
+      - name: river_coverage
+        description: NULL when unmonitored; otherwise coverage of consecutive daily discharge values, with a score requiring 1.
       - name: temperature_2m_max
         description: "Raw max temperature (°C) on the worst day — displayed as context in the UI."
       - name: wind_gusts_10m_max
@@ -137,7 +297,7 @@ models:
 
   - name: mart_city_realized_weather_daily
     description: >
-      Realized ERA5 reanalysis label boundary at one row per city and valid
+      Realized Open-Meteo archive/reanalysis label boundary at one row per city and valid
       date. Heat and Rain are the only supported realized scores. Wind is
       retained as raw context only because observed gust is unavailable;
       observed AQ and river
@@ -173,7 +333,7 @@ models:
   - name: mart_ml_training_examples
     description: >
       Point-in-time-safe supervised examples. Selects the latest complete exact
-      forecast vintage per city/local-origin date and joins mature ERA5 Heat and
+      forecast vintage per city/local-origin date and joins mature archive-backed Heat and
       Rain labels for Day +1, Day +2, and Day +3. Label availability must be
       strictly later than forecast ingestion. No unsupported component is
       exposed as a trainable target.

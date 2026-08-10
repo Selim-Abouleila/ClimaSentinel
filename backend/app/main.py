@@ -24,7 +24,13 @@ from .ml_pipeline import (
     FEATURE_SCHEMA_VERSION,
     ModelCompatibilityError,
 )
-from .schemas import CityForecastResponse
+from .release import RELEASE_ID
+from .schemas import (
+    CityForecastResponse,
+    CityScoreDetailResponse,
+    CityScoreHistoryResponse,
+    CurrentCityScoreResponse,
+)
 
 log = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s  %(levelname)-8s  %(message)s")
@@ -167,6 +173,7 @@ def health():
     return {
         "status": "healthy",
         "environment": settings.ENVIRONMENT,
+        "release_id": RELEASE_ID,
         "uptime_seconds": round(time.time() - _start_time, 2),
     }
 
@@ -174,7 +181,11 @@ def health():
 # ── BigQuery Data Endpoints ──────────────────────────────────────────────
 from .db import get_bq_client
 
-@app.get("/data/current-scores", tags=["Data"])
+@app.get(
+    "/data/current-scores",
+    tags=["Data"],
+    response_model=list[CurrentCityScoreResponse],
+)
 def get_current_scores(
     limit: int = Query(
         default=CURRENT_SCORES_DEFAULT_LIMIT,
@@ -184,7 +195,7 @@ def get_current_scores(
     ),
 ):
     """
-    Return the current city ranking from `mart_city_score_current`.
+    Return the current city ranking from `mart_city_score_current_v2`.
 
     The bounded default is intentionally larger than the operational city
     registry so dashboard growth is not silently truncated.
@@ -193,9 +204,19 @@ def get_current_scores(
         client = get_bq_client()
         # Querying the current scores mart as an example
         query = f"""
-            SELECT city_id, current_tipping_score, current_primary_driver, rank
-            FROM `{settings.GCP_PROJECT_ID}.{settings.BQ_DATASET}.mart_city_score_current`
-            ORDER BY current_tipping_score DESC
+            SELECT
+                operational_ingestion_run_id,
+                operational_ingested_at_utc,
+                city_id,
+                current_tipping_score,
+                current_primary_driver,
+                current_score_available,
+                monitored_factor_count,
+                available_factor_count,
+                overall_coverage,
+                rank
+            FROM `{settings.GCP_PROJECT_ID}.{settings.BQ_DATASET}.mart_city_score_current_v2`
+            ORDER BY current_score_available DESC, rank ASC, city_id ASC
             LIMIT @limit
         """
         
@@ -214,19 +235,23 @@ def get_current_scores(
         raise HTTPException(status_code=500, detail="Failed to retrieve data from BigQuery")
 
 
-@app.get("/data/history-scores", tags=["Data"])
+@app.get(
+    "/data/history-scores",
+    tags=["Data"],
+    response_model=list[CityScoreHistoryResponse],
+)
 def get_history_scores(city_id: str = None, limit: int = 50):
     """
-    Returns historical tipping scores from `mart_city_score_history`.
+    Returns historical tipping scores from `mart_city_score_history_v2`.
     """
     try:
         client = get_bq_client()
-        query = f"SELECT * FROM `{settings.GCP_PROJECT_ID}.{settings.BQ_DATASET}.mart_city_score_history`"
+        query = f"SELECT * FROM `{settings.GCP_PROJECT_ID}.{settings.BQ_DATASET}.mart_city_score_history_v2`"
         query_parameters = [bigquery.ScalarQueryParameter("limit", "INT64", limit)]
         if city_id:
             query += " WHERE city_id = @city_id"
             query_parameters.append(bigquery.ScalarQueryParameter("city_id", "STRING", city_id))
-        query += " ORDER BY prediction_date DESC LIMIT @limit"
+        query += " ORDER BY date DESC LIMIT @limit"
         job_config = bigquery.QueryJobConfig(query_parameters=query_parameters)
         query_job = client.query(query, job_config=job_config)
         results = query_job.result()
@@ -239,11 +264,11 @@ def get_history_scores(city_id: str = None, limit: int = 50):
 @app.get("/data/current-zones", tags=["Data"])
 def get_current_zones(limit: int = 20):
     """
-    Returns current tipping zones from `mart_city_zone_current`.
+    Returns current tipping zones from `mart_city_zone_current_v2`.
     """
     try:
         client = get_bq_client()
-        query = f"SELECT * FROM `{settings.GCP_PROJECT_ID}.{settings.BQ_DATASET}.mart_city_zone_current` LIMIT @limit"
+        query = f"SELECT * FROM `{settings.GCP_PROJECT_ID}.{settings.BQ_DATASET}.mart_city_zone_current_v2` LIMIT @limit"
         job_config = bigquery.QueryJobConfig(query_parameters=[bigquery.ScalarQueryParameter("limit", "INT64", limit)])
         query_job = client.query(query, job_config=job_config)
         results = query_job.result()
@@ -253,14 +278,20 @@ def get_current_zones(limit: int = 20):
         raise HTTPException(status_code=500, detail="Failed to retrieve zones data")
 
 
-@app.get("/data/city/{city_id}/scores", tags=["Data"])
+@app.get(
+    "/data/city/{city_id}/scores",
+    tags=["Data"],
+    response_model=CityScoreDetailResponse,
+)
 def get_city_scores(city_id: str):
     """
     Returns the individual tipping sub-scores (heat, wind, rain, air, river)
-    for a single city across today and tomorrow in UTC.
+    for a single city across today and tomorrow in UTC. Each score carries
+    explicit monitoring, availability, status and input-coverage metadata.
+    Unavailable and unmonitored scores remain null instead of becoming 0.
 
-    Source table : mart_city_score_detail (an independent view over
-                   mart_city_score_history).
+    Source table : mart_city_score_detail_v2 (a view over
+                   mart_city_score_history_v2).
 
     Returns 404 if the city_id is not found in the mart.
     """
@@ -268,15 +299,42 @@ def get_city_scores(city_id: str):
         client = get_bq_client()
         query = f"""
             SELECT
+                operational_ingestion_run_id,
+                operational_ingested_at_utc,
                 city_id,
+                score_date,
                 current_tipping_score,
                 current_primary_driver,
+                current_score_available,
+                monitored_factor_count,
+                available_factor_count,
+                overall_coverage,
                 heat_score,
+                heat_status,
+                heat_monitored,
+                heat_available,
+                heat_coverage,
                 wind_score,
+                wind_status,
+                wind_monitored,
+                wind_available,
+                wind_coverage,
                 rain_score,
+                rain_status,
+                rain_monitored,
+                rain_available,
+                rain_coverage,
                 air_score,
-                river_score
-            FROM `{settings.GCP_PROJECT_ID}.{settings.BQ_DATASET}.mart_city_score_detail`
+                air_status,
+                air_monitored,
+                air_available,
+                air_coverage,
+                river_score,
+                river_status,
+                river_monitored,
+                river_available,
+                river_coverage
+            FROM `{settings.GCP_PROJECT_ID}.{settings.BQ_DATASET}.mart_city_score_detail_v2`
             WHERE city_id = @city_id
             LIMIT 1
         """
@@ -291,7 +349,7 @@ def get_city_scores(city_id: str):
         if not rows:
             raise HTTPException(
                 status_code=404,
-                detail=f"City '{city_id}' not found in mart_city_score_detail"
+                detail=f"City '{city_id}' not found in mart_city_score_detail_v2"
             )
 
         return dict(rows[0])
@@ -316,12 +374,12 @@ def get_city_forecast(
     Return the rule-baseline Day +1, +2 or +3 forecast for one city.
 
     Every component is calculated from the same exact forecast vintage. Heat
-    uses the target month's city climatology and has limited ERA5 backtest
-    evidence. Rain was also backtested against realized ERA5 but showed
-    insufficient predictive skill. Wind, Air Quality and River/Flood still lack
-    observed-label validation. Missing optional sources remain unavailable
-    rather than being reported as zero, and deterministic rules never expose
-    model confidence intervals.
+    uses the target month's city climatology and has limited backtest evidence
+    against Open-Meteo archive/reanalysis data. Rain was backtested against the
+    same source but showed insufficient predictive skill. Wind, Air Quality and
+    River/Flood still lack observed-label validation. Missing optional sources
+    remain unavailable rather than being reported as zero, and deterministic
+    rules never expose model confidence intervals.
     """
     try:
         client = get_bq_client()

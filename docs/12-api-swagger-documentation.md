@@ -1,9 +1,9 @@
 # 12. API and Swagger Reference
 
 FastAPI generates the authoritative OpenAPI document at `/openapi.json` and the
-interactive Swagger UI at `/docs`. Only the forecast route declares a response
-model, so OpenAPI does not fully specify the response schemas of the operational
-BigQuery routes.
+interactive Swagger UI at `/docs`. Forecast, current-score, score-history and
+city-detail routes declare response models. The current-zone route still
+returns its BigQuery rows without a typed response schema.
 
 ## Base information
 
@@ -42,15 +42,18 @@ Returns service metadata and the documentation route.
 
 ### `GET /health`
 
-Returns process liveness, environment and uptime. It does not check BigQuery,
-the serving mart, DagsHub or MLflow and must not be interpreted as dependency
-readiness.
+Returns process liveness, environment, uptime and the immutable release identity
+loaded by the running backend. A normal local checkout reports
+`local-development`; staging stamps `${GITHUB_SHA}-${GITHUB_RUN_ID}` before the
+Railway upload. The endpoint does not check BigQuery, the serving mart, DagsHub
+or MLflow and must not be interpreted as dependency readiness.
 
 ```json
 {
   "status": "healthy",
   "environment": "production",
-  "uptime_seconds": 120.5
+  "uptime_seconds": 120.5,
+  "release_id": "local-development"
 }
 ```
 
@@ -62,64 +65,105 @@ metrics at `/metrics`. All three are currently unauthenticated.
 
 ## Operational data endpoints
 
-These endpoints return BigQuery rows directly and do not declare Pydantic
-response models. Unlike the forecast response, their values are not passed
-through a typed finite-number sanitization contract.
+Current-score, history and detail rows pass through Pydantic response models.
+The contracts bound scores/coverage and reject contradictory missingness
+metadata. For example, `not_monitored` requires `monitored=false`, a NULL score
+and NULL coverage; `unavailable` requires `monitored=true`, a NULL score and a
+numeric coverage ratio. `0.0` remains valid only with `status=available`.
+Aggregate validators also require available counts not to exceed monitored
+counts, availability flags to match nullable scores, `overall_coverage` to equal
+the mean coverage of monitored factors, and the overall score/driver to be the
+maximum of available factors only.
+
+The active routes below read `_v2` relations. Unsuffixed operational marts are
+temporary legacy rollback compatibility with their legacy schemas; they do not
+provide this v2 response contract.
 
 ### `GET /data/current-scores`
 
-Reads `mart_city_score_current`. `limit` defaults to `100` and accepts values
+Reads `mart_city_score_current_v2`. `limit` defaults to `100` and accepts values
 from 1 through 100, leaving headroom above the 20-city operational registry
-without silently truncating the dashboard. Each row contains `city_id`,
-`current_tipping_score`, `current_primary_driver` and `rank`. The mart takes the
-maximum across the two UTC calendar dates “today + tomorrow”; despite legacy UI
-wording, this is not a rolling 48-hour interval or a persisted snapshot.
+without silently truncating the dashboard. Each row contains `city_id`, nullable
+`current_tipping_score`, nullable `current_primary_driver`,
+`current_score_available`, monitored/available factor counts,
+`overall_coverage`, `rank`, `operational_ingestion_run_id` and
+`operational_ingested_at_utc`. The mart takes the maximum only across available
+factors on one deterministic worst date in “today + tomorrow” UTC. Despite
+legacy UI wording, this is not a rolling 48-hour interval or persisted snapshot.
 
 ### `GET /data/history-scores`
 
-Reads `mart_city_score_history`. Accepts optional `city_id` and a `limit` that
-defaults to `50`; that limit is currently unbounded.
-
-> **Known issue:** this route currently orders by `prediction_date`, but the dbt
-> mart exposes the column as `date`. On this branch the query is expected to
-> return `500` until the backend route is corrected.
-
-Once that mismatch is corrected, the source table still represents target dates
-from the currently transformed forecast. It is rebuilt by dbt and is not an
-archive of successive forecast runs or observed impacts.
+Reads `mart_city_score_history_v2`, ordered by its `date` column. It accepts
+optional `city_id` and a `limit` that defaults to `50`; that limit is currently
+unbounded. The typed rows include all five nullable factor scores and their
+status/monitoring/availability/coverage metadata plus aggregate availability.
+The source represents target dates from one selected exact ingestion run and
+also exposes its run ID/timestamp. It is rebuilt by dbt and is not an archive of
+successive forecast runs or observed impacts.
 
 ### `GET /data/current-zones`
 
-Reads `mart_city_zone_current`. `limit` defaults to `20` and is currently
+Reads `mart_city_zone_current_v2`. `limit` defaults to `20` and is currently
 unbounded. The mart emits only occupied zones, so an absent zone means zero
 current rows rather than a guaranteed row with `city_count: 0`.
 
 ### `GET /data/city/{city_id}/scores`
 
-Returns the five current operational factors from `mart_city_score_detail`.
+Returns the five-factor operational catalogue from `mart_city_score_detail_v2`.
 These are operational score-mart outputs, not claims that all five factors have
 realized-label model validation. The aggregate covers today and tomorrow UTC,
-not a rolling 48-hour window. If both dates tie on the maximum, separate
-`ANY_VALUE(... HAVING MAX ...)` aggregates can choose fields from different tied
-rows, so the response is not guaranteed to represent one deterministic date.
+not a rolling 48-hour window. One ordered row selection makes the response
+deterministic when both dates tie.
 
 ```json
 {
-  "city_id": "paris_fr",
+  "operational_ingestion_run_id": "fa1f0060-8491-4478-8e4a-ce2ba44e2e79",
+  "operational_ingested_at_utc": "2026-08-03T06:04:12Z",
+  "city_id": "london_gb",
+  "score_date": "2026-08-03",
   "current_tipping_score": 60.0,
   "current_primary_driver": "Heat",
+  "current_score_available": true,
+  "monitored_factor_count": 4,
+  "available_factor_count": 3,
+  "overall_coverage": 0.875,
   "heat_score": 60.0,
+  "heat_status": "available",
+  "heat_monitored": true,
+  "heat_available": true,
+  "heat_coverage": 1.0,
   "wind_score": 20.0,
+  "wind_status": "available",
+  "wind_monitored": true,
+  "wind_available": true,
+  "wind_coverage": 1.0,
   "rain_score": 10.0,
-  "air_score": 50.0,
-  "river_score": 5.0
+  "rain_status": "available",
+  "rain_monitored": true,
+  "rain_available": true,
+  "rain_coverage": 1.0,
+  "air_score": null,
+  "air_status": "unavailable",
+  "air_monitored": true,
+  "air_available": false,
+  "air_coverage": 0.5,
+  "river_score": null,
+  "river_status": "not_monitored",
+  "river_monitored": false,
+  "river_available": false,
+  "river_coverage": null
 }
 ```
 
-This example illustrates the intended non-tied relationship between the global
-score and Heat as its driver. Clients must not enforce that relationship as an
-API invariant until the documented tie behavior in
-[Mart Layer](4-mart-layer.md#mart_city_score_detail-view) is corrected.
+The global score is the maximum of the three available numeric factors. AQ is
+temporarily unavailable with 50% coverage, while River has no configured source
+for this city. Neither participates in the maximum or appears as Stable.
+
+The operational run fields allow clients to show the selected snapshot age.
+They do not prove that the run completed: no durable ingestion-run manifest is
+implemented yet. A failed run can leave the prior snapshot selected and an
+overlapping/in-progress run can briefly appear newest; the UI's 36-hour stale
+warning is a visibility mitigation rather than a transactional guarantee.
 
 ## Rule-baseline forecast endpoint
 
@@ -133,9 +177,9 @@ Returns one genuine horizon from the point-in-time same-vintage rule policy.
   new operational-dashboard cities are intentionally excluded
 - Rule outputs: Heat, Rain, Wind, Air Quality and River from same-vintage
   forecasts
-- Validation scope: limited ERA5 backtest for Heat; an ERA5 backtest with
-  insufficient predictive skill for Rain; no observed-label validation yet for
-  Wind, Air Quality and River
+- Validation scope: limited Open-Meteo archive/reanalysis backtest for Heat; a
+  backtest against the same source with insufficient predictive skill for Rain;
+  no observed-label validation yet for Wind, Air Quality and River
 
 Example response where Heat is the primary driver and AQ is unavailable:
 
@@ -252,6 +296,11 @@ Example response where Heat is the primary driver and AQ is unavailable:
 | `model_version` | `null`; offline challenger registration is not serving provenance |
 | `prediction_date` | City-local forecast origin date for the exact serving vintage |
 | `feature_ingestion_run_id` | Exact same-vintage feature run used by the response |
+
+The literal `era5_*` validation statuses and the legacy ERA5 wording in the
+current `method_reason` response are compatibility labels. The active archive
+request does not pin `models=era5` or persist a returned source model/version,
+so clients must not interpret those strings as per-row ERA5 provenance.
 
 `weather_trajectory` is a display subset, not the complete rule-input
 provenance: it returns temperatures through the selected horizon and target-day

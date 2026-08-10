@@ -168,15 +168,17 @@ make deploy
 
 `make deploy` is a mutating, non-interactive pipeline. In order, it:
 
-1. validates `config/cities.csv`, the monthly normals seed, and the frozen
-   forecast-city allowlist;
+1. validates `config/cities.csv`, the monthly normals seed, the
+   `city_signal_monitoring` seed, and the frozen forecast-city allowlist;
 2. builds and pushes the ingestion image through Cloud Build;
 3. creates a saved Terraform plan and immediately applies it without an
    additional confirmation prompt;
 4. executes the updated `clima-sentinel-ingest` Cloud Run Job with `--wait`;
    that job loads Bronze rows and runs its embedded `dbt seed` + `dbt run`;
 5. installs the dbt dependencies in the current Python environment; and
-6. runs a final `dbt seed`, `dbt run`, and `dbt test` from the deployer.
+6. runs a final `dbt seed`, `dbt run`, and `dbt test` from the deployer. This
+   creates the active exact-run `*_v2` operational relations while leaving the
+   unsuffixed legacy marts available for temporary rollback compatibility.
 
 Run `make plan` first when you want to review Terraform changes before allowing
 those mutations:
@@ -198,9 +200,15 @@ fails. Because `gcloud run jobs execute ... --wait` is part of `make deploy`,
 either condition stops the deployment before the final local dbt validation.
 
 `make deploy` does not publish the FastAPI backend or Next.js frontend hosted
-on Railway. After this GCP data deployment succeeds, promote the reviewed
-commit from `dev` to `staging` to trigger the Railway application deployment
-and its live end-to-end check.
+on Railway. For the availability-contract rollout, complete this data deploy
+first, while the legacy unsuffixed marts and old application remain live. Then
+promote the reviewed commit from `dev` to `staging`. The staging workflow
+queues the compatibility frontend asynchronously, checks the v2 relation
+schemas, configured 20-city coverage, selected-run coherence and 36-hour
+snapshot age while Railway builds it, and then confirms its exact release
+marker with a bounded poll. Only after both gates pass does it queue the backend
+that reads v2. A second bounded gate requires the backend health proxy to report
+the same exact release ID before the live end-to-end checks.
 
 ### All available commands
 
@@ -208,7 +216,7 @@ and its live end-to-end check.
 |---|---|
 | `make bootstrap` | Create GCS state bucket & init Terraform backend |
 | `make build` | Build and push the ingestion image through Cloud Build |
-| `make validate-cities` | Validate city registry, monthly-normal completeness, and frozen forecast scope |
+| `make validate-cities` | Validate city registry, monthly-normal completeness, signal-monitoring membership/alignment, and frozen forecast scope |
 | `make deploy` | Validate + build/push + Terraform apply + waited ingestion + dbt seed/run/test |
 | `make plan` | Dry run — show changes without applying |
 | `make destroy` | Destroy only Terraform-managed resources |
@@ -244,6 +252,52 @@ Confirm the Terraform backend is initialized:
 cat infra/terraform/backend.tf
 terraform -chdir=infra/terraform show
 ```
+
+Verify the checked-in city contracts before interpreting a deployment result:
+
+```bash
+make validate-cities
+```
+
+For the current expansion, the expected summary is:
+
+```text
+City configuration is valid: 20 registered cities, 240 monthly normal rows, 20 monitoring contracts, 10 frozen forecast cities.
+```
+
+Those counts describe different contracts: all 20 cities enter the operational
+ingestion/dashboard path and have an explicit factor-monitoring row, while only
+the original 10 enter the point-in-time forecast, training and serving path. A
+successful validator does not prove that the latest Cloud Run execution or
+BigQuery marts contain fresh rows; verify the waited job and warehouse separately.
+
+After a successful `make deploy`, reconcile the seeded and operational scopes:
+
+```bash
+bq query --location="$GCP_REGION" --use_legacy_sql=false \
+  "SELECT COUNT(*) AS rows, COUNT(DISTINCT city_id) AS cities
+   FROM \`${GCP_PROJECT_ID}.stg.city_monthly_normals\`"
+
+bq query --location="$GCP_REGION" --use_legacy_sql=false \
+  "SELECT COUNT(*) AS forecast_cities
+   FROM \`${GCP_PROJECT_ID}.stg.forecast_city_allowlist\`"
+
+bq query --location="$GCP_REGION" --use_legacy_sql=false \
+  "SELECT COUNT(*) AS monitoring_rows, COUNTIF(river_monitored) AS river_cities
+   FROM \`${GCP_PROJECT_ID}.stg.city_signal_monitoring\`"
+
+bq query --location="$GCP_REGION" --use_legacy_sql=false \
+  "SELECT COUNT(DISTINCT city_id) AS current_operational_cities
+   FROM \`${GCP_PROJECT_ID}.mart.mart_city_score_current_v2\`"
+```
+
+The expected seed results are `240 / 20`, `10`, and `20 / 5` monitoring/River
+rows. The v2 operational input builds a 20-city date spine from the monitoring
+seed, so the current mart should retain all 20 configured cities even when a
+selected ingestion run lacks one or more source payloads. Those gaps must be
+represented by NULL scores plus `unavailable`/`not_monitored` and coverage
+metadata—not manufactured zeros. A smaller runtime city count is a contract
+failure to investigate.
 
 ---
 

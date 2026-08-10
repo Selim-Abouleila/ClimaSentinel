@@ -9,16 +9,16 @@
     tags=['ml_point_in_time']
 ) }}
 
--- Honest realized labels backed only by ERA5 reanalysis.
+-- Realized-label fields backed by lagged Open-Meteo archive/reanalysis data.
 --
 -- Grain: one row per (city_id, valid_date).
 --
 -- Heat uses the same documented scoring rule as the operational score: the
 -- day's temperature anomaly plus only positive movement into the following
--- day. Consequently, a heat label is not mature until ERA5 has published both
--- valid_date and valid_date + 1. Rain needs only the current ERA5 day.
+-- day. Consequently, a Heat label is not mature until archive data for both
+-- valid_date and valid_date + 1 has been ingested. Rain needs only the current day.
 --
--- ERA5 currently does not provide the gust, observed AQ, or observed river
+-- The archive input currently does not provide the gust, observed AQ, or observed river
 -- fields needed for honest wind, air, and river labels. Those scores remain
 -- explicitly NULL; forecast values are never substituted as realized truth.
 

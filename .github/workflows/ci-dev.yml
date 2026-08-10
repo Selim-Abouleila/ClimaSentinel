@@ -12,6 +12,41 @@ on:
     branches: [dev]
 
 jobs:
+  data-contracts:
+    name: Validate Data Contracts
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: transform/requirements.txt
+
+      - name: Validate city configuration contracts
+        run: |
+          python scripts/validate_city_configuration.py
+          python -m unittest discover -s scripts/tests -v
+          python -m unittest discover -s transform/scripts/tests -v
+
+      - name: Install dbt dependencies
+        run: python -m pip install -r transform/requirements.txt
+
+      - name: Parse dbt project without warehouse credentials
+        env:
+          GCP_PROJECT_ID: test-project
+          GCP_REGION: europe-west9
+        run: >-
+          dbt parse
+          --project-dir transform
+          --profiles-dir transform
+          --target dev
+          --no-partial-parse
+
   test:
     name: Run Tests
     runs-on: ubuntu-latest
@@ -29,13 +64,6 @@ jobs:
           python-version: "3.11"
           cache: pip
           cache-dependency-path: backend/requirements.txt
-
-      - name: Validate city configuration contracts
-        working-directory: .
-        run: |
-          python scripts/validate_city_configuration.py
-          python -m unittest discover -s scripts/tests -v
-          python -m unittest discover -s transform/scripts/tests -v
 
       - name: Install dependencies
         run: pip install -r requirements.txt
@@ -79,6 +107,10 @@ jobs:
         working-directory: frontend
         run: npm run lint
 
+      - name: Run frontend unit tests
+        working-directory: frontend
+        run: npm run test:unit
+
       - name: Build frontend
         working-directory: frontend
         run: npm run build
@@ -86,7 +118,7 @@ jobs:
   docker-build:
     name: Build Docker Images
     runs-on: ubuntu-latest
-    needs: test
+    needs: [data-contracts, test]
 
     steps:
       - name: Checkout code

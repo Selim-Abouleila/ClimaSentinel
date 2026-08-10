@@ -354,6 +354,50 @@ body {
   font-size: 0.73rem;
 }
 
+.dashboard-freshness {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: -20px 0 28px;
+  padding: 10px 12px;
+  color: #7890a6;
+  background: #091522;
+  border: 1px solid #1c3043;
+  border-radius: 7px;
+  font-size: 0.68rem;
+}
+
+.dashboard-freshness.dashboard-freshness--content-footer {
+  margin: 24px 0 0;
+}
+
+.dashboard-freshness span {
+  color: #9fb4c6;
+  font-weight: 650;
+}
+
+.dashboard-freshness time {
+  color: #c5d2dc;
+  font-family: var(--font-geist-mono), monospace;
+}
+
+.dashboard-freshness small {
+  margin-left: auto;
+  color: #60778d;
+  font-size: 0.64rem;
+}
+
+.dashboard-freshness.is-stale {
+  color: #f2bd58;
+  background: #1a160d;
+  border-color: #59451c;
+}
+
+.dashboard-freshness.is-stale span,
+.dashboard-freshness.is-stale small {
+  color: #f2bd58;
+}
+
 .summary-card__status {
   display: flex;
   align-items: center;
@@ -494,6 +538,13 @@ body {
   color: #4f6175;
   font-family: var(--font-geist-mono), monospace;
   font-size: 0.58rem;
+}
+
+.risk-spectrum__availability-note {
+  margin-top: 12px;
+  color: #8293a5;
+  font-size: 0.68rem;
+  line-height: 1.5;
 }
 
 .city-profile__header {
@@ -653,6 +704,20 @@ body {
   display: block;
   background: var(--risk-color);
   border-radius: inherit;
+}
+
+.city-risk-card__coverage {
+  margin-top: 11px;
+  color: #e2ae4d;
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 0.55rem;
+  line-height: 1.4;
+}
+
+.city-risk-card.signal-unavailable .city-risk-card__meter {
+  height: 4px;
+  background: transparent;
+  border: 1px dashed #314154;
 }
 
 .city-risk-card__footer {
@@ -1515,6 +1580,12 @@ body {
   background: var(--risk-color);
 }
 
+.city-detail-hero.signal-unavailable .city-detail-hero__meter {
+  height: 5px;
+  background: transparent;
+  border: 1px dashed #314154;
+}
+
 .city-detail-hero__score > p {
   margin-top: 9px;
   color: var(--risk-color);
@@ -1534,13 +1605,20 @@ body {
   margin-bottom: 22px;
 }
 
+.city-factor-panel__header .city-factor-panel__availability {
+  max-width: 650px;
+  margin-top: 9px;
+  color: #94a4b5;
+  line-height: 1.55;
+}
+
 .city-factor-list {
   border-top: 1px solid #1a293a;
 }
 
 .city-factor-row {
   display: grid;
-  grid-template-columns: 36px minmax(150px, 0.8fr) minmax(100px, 0.45fr) 105px minmax(250px, 1.7fr);
+  grid-template-columns: 36px minmax(150px, 0.8fr) minmax(170px, 0.65fr) 105px minmax(250px, 1.7fr);
   align-items: center;
   gap: 20px;
   min-height: 84px;
@@ -1574,11 +1652,26 @@ body {
 
 .city-factor-row__status {
   display: flex;
-  align-items: center;
-  gap: 7px;
+  align-items: flex-start;
+  flex-direction: column;
+  gap: 4px;
   color: var(--risk-color);
   font-size: 0.64rem;
   font-weight: 600;
+}
+
+.city-factor-row__status-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.city-factor-row__status small {
+  color: #66798d;
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 0.54rem;
+  font-weight: 500;
+  line-height: 1.35;
 }
 
 .city-factor-row__score {
@@ -1614,6 +1707,28 @@ body {
   display: block;
   background: var(--risk-color);
   border-radius: inherit;
+}
+
+.signal-not-monitored {
+  --risk-color: #6f8195;
+}
+
+.signal-unavailable {
+  --risk-color: #9aa9b8;
+}
+
+.city-factor-row.signal-not-monitored .city-factor-row__meter,
+.city-factor-row.signal-unavailable .city-factor-row__meter {
+  height: 5px;
+  background: transparent;
+  border: 1px dashed #314154;
+}
+
+.city-factor-row.signal-not-monitored .city-factor-row__score strong,
+.city-factor-row.signal-unavailable .city-factor-row__score strong {
+  color: var(--risk-color);
+  font-size: 1.35rem;
+  letter-spacing: 0;
 }
 
 @media (max-width: 1320px) {
@@ -1692,7 +1807,7 @@ body {
   }
 
   .city-factor-row {
-    grid-template-columns: 28px minmax(130px, 1fr) 100px 90px;
+    grid-template-columns: 28px minmax(130px, 1fr) minmax(145px, 0.65fr) 90px;
     gap: 15px;
     padding: 15px 0;
   }
@@ -1746,6 +1861,17 @@ body {
   .dashboard-hero p {
     margin-top: 16px;
     font-size: 0.92rem;
+  }
+
+  .dashboard-freshness {
+    align-items: flex-start;
+    flex-wrap: wrap;
+    margin-top: -14px;
+  }
+
+  .dashboard-freshness small {
+    width: 100%;
+    margin-left: 0;
   }
 
   .summary-card,
@@ -1893,11 +2019,13 @@ body {
   }
 
   .city-factor-row__status {
-    display: none;
+    grid-column: 2 / -1;
+    gap: 3px;
   }
 
   .city-factor-row__score {
     grid-column: 3;
+    grid-row: 1;
   }
 
   .city-factor-row__meter {
