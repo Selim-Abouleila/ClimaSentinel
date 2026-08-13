@@ -1,5 +1,9 @@
 # 13. End-to-End Testing
 
+> **Read first:** [Critical Interpretation and Evidence Limits](0-critical-limitations.md)
+> explains the scientific and data-contract limits that a passing E2E smoke
+> test cannot resolve.
+
 Playwright provides live staging smoke paths through the forecast frontend and
 one operational city-detail missingness state. MLflow challengers are evaluated
 separately. Unit/dbt contract tests remain responsible for formula boundaries,
@@ -31,6 +35,11 @@ Chromium. That path verifies that:
 - the visible validation-scope disclaimer remains present; and
 - `model_version` is null and no learned component is claimed by the
   operational response.
+
+The two asserted `era5_*` strings are legacy wire-compatibility identifiers.
+This test confirms API stability only; it does not verify ERA5 provenance. The
+evidenced scientific description is a backtest against Open-Meteo Archive API
+labels whose returned source model/version is not currently pinned.
 
 The test does not force an AQ or River outage. If the live source is available,
 the unavailable UI branch is not exercised. It also does not assert visible
@@ -124,6 +133,7 @@ The current smoke test does not cover:
 - authentication, rate limiting, continuous dependency readiness or monitoring;
 - authenticated dbt builds/tests, complete lineage or live-mart freshness;
 - a completed-run manifest or overlapping/in-progress ingestion behavior;
+- timezone-aware source normalization or exact UTC lead-hour/DST correctness;
 - exact rendered score values against the corresponding API fields; or
 - screenshot-based visual regression.
 

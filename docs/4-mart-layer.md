@@ -4,13 +4,22 @@ The mart layer is ClimaSentinel's Gold layer. It has two deliberately separate
 responsibilities:
 
 1. calculate the operational Tipping Score used by the dashboards; and
-2. provide point-in-time-safe forecast features and realized Open-Meteo
-   archive/reanalysis labels for machine learning.
+2. provide same-vintage forecast features with explicit outcome-leakage
+   controls and realized Open-Meteo Archive API labels for machine
+   learning.
 
-Keeping those paths separate is important. A forecast value is information that
-was available when a prediction was made. A realized value is an outcome learned
-later. Joining the two without preserving that boundary creates target leakage
-and unrealistically optimistic validation results.
+Before interpreting any score, zone, label or forecast metric, read the
+governing [critical interpretation and evidence limits](0-critical-limitations.md).
+The Tipping Score is an uncalibrated Beta prioritization heuristic, not a
+probability, physical tipping-point model, validated severity class or safety
+recommendation.
+
+Keeping those paths separate is important. The current evaluation contract
+groups forecast features from one retrieval run and requires the realized label
+to have a later recorded ingestion time. Joining forecast and realized data
+without that boundary creates target leakage and unrealistically optimistic
+validation results. Recorded ingestion times remain proxies with the limits
+described in Doc 0.
 
 All models in this layer are deployed to the `mart` BigQuery dataset. The
 `dbt_project.yml` default is `table`; operational "current" models and the ML
@@ -22,12 +31,16 @@ The active operational score path is registry-wide: its configured spine keeps
 all 20 active cities in the v2 history, current, zone and detail relations even
 when a selected ingestion run is missing source data. Such factors remain NULL
 and unavailable rather than disappearing or becoming zero. This scope is
-independent from the frozen 10-city point-in-time forecast path.
+independent from the frozen 10-city same-vintage ML path.
 
 ### `mart_city_score_history_v2` (table)
 
 Calculates the forecast-derived Tipping Score for every city and valid date. It
 combines five component indicators and takes their maximum as the global score.
+
+These formulas, multipliers, activation thresholds and the maximum aggregation
+are product-defined and uncalibrated. Their permitted uses and evidence gaps are
+defined in [Doc 0](0-critical-limitations.md#status-of-the-tipping-score).
 
 Every component is clipped to the `0-100` range before the maximum is taken.
 
@@ -75,9 +88,10 @@ for as-of analysis.
 
 Selects the highest forecast-derived score for each city across the two UTC
 calendar dates `CURRENT_DATE('UTC')` and the following day, then ranks cities
-from highest to lowest risk. This is not a rolling 48-hour interval and is not
-anchored separately to each city's local date. A scored date always wins over
-an unavailable date; exact ties choose the earlier date deterministically.
+from highest to lowest operational heuristic score. This is not a rolling
+48-hour interval and is not anchored separately to each city's local date. A
+scored date always wins over an unavailable date; exact ties choose the earlier
+date deterministically.
 Rows also expose `current_score_available`, monitored/available factor counts
 and `overall_coverage`. Cities without a score rank after scored cities.
 
@@ -118,11 +132,14 @@ old treatment of missing input. The active backend does not read them, and v2
 fields such as `*_available`, `*_coverage` and monitored/available aggregate
 counts must not be expected on these unsuffixed relations.
 
-## Point-in-time ML marts
+## Same-vintage ML marts with leakage controls
 
 The new ML path starts from `stg_city_signal_vintage`. That staging model
 preserves every retrieval and prevents weather, air-quality and flood values
-from different ingestion runs from being combined.
+from different ingestion runs from being combined. This is a same-vintage and
+outcome-leakage-control claim, not a claim of exact provider issue time or exact
+UTC lead time; the known time limits are centralized in
+[Doc 0](0-critical-limitations.md#time-and-provenance-limits).
 
 Every vintage entry model joins `forecast_city_allowlist.csv`, so these marts
 remain restricted to Paris, London, Madrid, Berlin, Rome, Amsterdam, Athens,
@@ -146,11 +163,12 @@ It contains:
 - expected-date, source-presence and daily-coverage flags; and
 - deterministic eligibility and canonical-vintage indicators.
 
-No realized archive/reanalysis outcome is joined into this model, so the SQL
+No realized Archive API outcome is joined into this model, so the SQL
 does not itself introduce outcome leakage. It is the shared feature-definition
-source for historical training and live serving. Its point-in-time claim still
-relies on `ingested_at_utc`, a job-start availability proxy rather than the
-provider's model issue time or a per-city request timestamp.
+source for historical training and live serving. Its temporal ordering relies
+on `ingested_at_utc`, a job-start availability proxy rather than the provider's
+model issue time or a per-city request timestamp; it therefore supports the
+documented leakage control, not an exact-availability claim.
 
 Eligibility currently requires exactly 24 distinct weather timestamps on every
 Horizon 0-4 date. If a provider response represents a DST-transition civil day
@@ -160,7 +178,7 @@ the source day itself was incomplete.
 
 The old `mart_ml_feature_store` remains temporarily for compatibility. Its
 date-based `LEAD()` construction does not guarantee that all horizons came from
-the same retrieval, so it must not be used for the new point-in-time training
+the same retrieval, so it must not be used for the new same-vintage training
 path.
 
 ### `mart_city_realized_weather_daily` (table)
@@ -168,8 +186,8 @@ path.
 **Grain:** one row per `(city_id, valid_date)`.
 
 This is the realized-label boundary. It is built from
-`stg_latest_historical_daily`, whose source is lagged Open-Meteo
-archive/reanalysis weather, and exposes:
+`stg_latest_historical_daily`, whose source is lagged Open-Meteo Archive API
+weather, and exposes:
 
 - realized daily temperature and precipitation;
 - the city/month temperature normal;
@@ -183,7 +201,7 @@ that later join an allowlisted forecast vintage can enter
 `mart_ml_training_examples`, so the training contract remains restricted to the
 original 10 forecast cities.
 
-The availability timestamps are essential. The archive/reanalysis outcome is
+The availability timestamps are essential. The Archive API outcome is
 published after the valid date, so an example can only enter the training set
 after its required outcome has actually been ingested.
 
@@ -276,7 +294,7 @@ cohort and reviewed seed hash.
 
 ## Observed-label limitation and required product disclaimer
 
-The current warehouse supports realized archive/reanalysis labels for
+The current warehouse supports realized Open-Meteo Archive API labels for
 **Heat and Rain only**.
 
 | Component | Realized-label field available? | Reason |
@@ -299,9 +317,9 @@ Until more evidence and the missing observed sources are available, the
 three-day forecast page must expose the operational policy honestly.
 Recommended user-facing copy:
 
-> Heat uses a same-vintage forecast rule with a limited Open-Meteo
-> archive/reanalysis backtest. Rain was backtested against the same realized
-> archive/reanalysis source but showed insufficient predictive skill.
+> Heat and Rain use same-vintage forecast rules. The product currently labels
+> Heat's Archive API backtest as limited and Rain's as insufficient skill, but
+> no reproducible evaluation report is pinned in this repository.
 > Wind, air-quality and river-risk still lack observed-label validation.
 
 That disclaimer ships on the three-day forecast page. It must remain visible
@@ -320,7 +338,7 @@ stg_city_signal_input_v2
 Legacy rollback path (temporary)
 stg_city_signal_input ──► unsuffixed mart_city_score_* relations
 
-Point-in-time ML path
+Same-vintage ML path with leakage controls
 stg_city_signal_vintage
     └──► mart_ml_forecast_features_vintage
              ├──► mart_ml_serving_features_current ──► all-rule backend forecast
@@ -349,7 +367,8 @@ realized Heat/Rain targets. Singular tests additionally verify:
 - at most one current-local-date serving row per city and eligibility of that
   source vintage;
 - exact target-date alignment in training examples; and
-- temporal safety: label availability must be later than feature ingestion.
+- proxy temporal ordering: recorded label ingestion must be later than the
+  forecast run's recorded ingestion time.
 
 The vintage staging tests remain part of the dependency contract. A mart test
 passing cannot compensate for a failed same-vintage staging lineage test.
@@ -389,7 +408,7 @@ sequence:
 5. Keep the unsuffixed relations only for the agreed rollback window; remove
    them in a separately reviewed cleanup after v2 is stable.
 
-For the separate point-in-time ML path:
+For the separate same-vintage ML path with leakage controls:
 
 1. Run the vintage staging models and tests.
 2. Build the four ML marts.
@@ -418,4 +437,4 @@ not block deployment of the explicitly declared operational rule policy.
 At the current scale these marts intentionally use straightforward full-refresh
 tables plus one serving view. Incremental materialization can be introduced when
 warehouse volume makes it necessary; it is not required to establish correct
-point-in-time semantics.
+same-vintage lineage and the documented outcome-leakage controls.
