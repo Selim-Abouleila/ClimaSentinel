@@ -7,6 +7,13 @@ lagged historical reanalysis for a configurable set of cities. Support code for
 long-term CMIP6 projections remains in the repository, but that fetch is
 disabled in scheduled ingestion.
 
+> **Read before relying on pipeline output:** [Critical limitations](0-critical-limitations.md)
+> records unresolved correctness boundaries. In particular, a partial,
+> failed or still-running ingestion with any raw evidence can become the
+> active operational snapshot, and hourly `valid_ts_utc` values are currently
+> provider-local clock text interpreted as UTC. The current implementation has
+> not fixed either issue.
+
 ## Architecture
 
 The ingestion process relies on three core Google Cloud services:
@@ -62,9 +69,10 @@ and keeps the separate forecast-city contract frozen to its original 10 IDs.
 
 The new 10 cities are operational-dashboard scope only. They are intentionally
 absent from `transform/seeds/forecast_city_allowlist.csv`, so their raw rows do
-not enter forecast-vintage staging, point-in-time ML training/features, or
+not enter forecast-vintage staging, calendar-day ML training/features, or
 forecast serving. Expanding `config/cities.csv` therefore does not expand the
-beta forecast page.
+beta forecast page. This vintage isolation prevents cross-run mixing; it does
+not make the legacy hourly timestamps exact UTC instants.
 
 Of the additions, only Vienna and Budapest have river ingestion enabled. During
 the expansion review, their resolved city-centre GloFAS cells exceeded the
@@ -95,7 +103,7 @@ Adding another operational city is a coordinated configuration/data change:
    the expected monitored/unmonitored factor states.
 
 Do not add the city to `forecast_city_allowlist.csv` as a side effect. Forecast
-eligibility changes the point-in-time feature vocabulary, training snapshot,
+eligibility changes the retrieval-vintage feature vocabulary, training snapshot,
 artifact contract, backend serving scope and frontend selector, so it requires
 a separate validation and release decision. That change must keep the dbt seed,
 `backend/app/ml_pipeline.py::ALL_CITIES`, the frontend forecast-city constant
@@ -223,11 +231,16 @@ time, a per-city request time, response headers or source-version metadata.
 For hourly weather and AQ, the fetcher requests each city's local time zone and
 stores the offset-free provider clock text in the legacy `valid_ts_utc` field
 before loading it into a BigQuery `TIMESTAMP`. BigQuery therefore interprets
-the local clock text as UTC.
-Daily staging mostly preserves the intended local date label, but the stored
-instant is shifted by that city's UTC offset and cannot support exact lead-time
-or DST analysis. Correcting this requires retaining an offset-aware timestamp
-and updating downstream calendar-date derivation explicitly.
+the provider-local clock as UTC; despite its name and type, the field is not a
+trustworthy UTC instant. Exact UTC event-time, lead-hour, cross-city ordering
+and DST claims are therefore invalid under the current schema.
+
+`DATE(valid_ts_utc)` still preserves the provider's local calendar-date text in
+ordinary responses. Day-level aggregation and day-number horizons remain
+usable for normal scheduled runs, subject to the documented 23/25-hour DST
+coverage behavior and the per-city request-midnight edge case. Correcting the
+instant requires retaining an offset-aware provider timestamp and explicitly
+preserving this local-calendar contract downstream.
 
 ## Delivery and Retry Semantics
 
@@ -252,11 +265,23 @@ vintage path retains individual retrievals. The older `stg_latest_*` path
 remains only for temporary unsuffixed-mart rollback compatibility. Do not
 interpret raw row count as a count of unique forecast instants.
 
-The exact-run selector does not yet consume a durable completed-run manifest.
-A totally failed run can leave the previous snapshot selected, while an
-overlapping/in-progress run can briefly be newest. V2 exposes the selected run
-ID/timestamp and the frontend warns after 36 hours, but explicit run-state/audit
-storage remains future hardening.
+### Unresolved active-snapshot risk
+
+The exact-run selector does not consume a durable completed-run manifest. Any
+new `ingestion_run_id` with at least one row in any active raw source family is
+eligible, even while that run is in progress or if it later exits as failed.
+When dbt rebuilds the selector, that partial run can become the active
+operational snapshot. Exact-run joins then expose its missing city/source
+payloads as unavailable; they do not restore them from the previous healthy
+run. A zero-row failed run, by contrast, leaves the previous snapshot selected.
+
+A non-zero Cloud Run exit does not roll back raw inserts or a mart rebuild that
+already completed. Current deployment and staging-readiness gates check items
+such as snapshot age, run coherence, schemas and the 20-city spine, but do not
+require every expected city/source payload or a minimum availability level.
+They therefore do not prove that the active snapshot is source-complete. Run
+ID/timestamp fields and the frontend's 36-hour stale warning improve visibility
+only; durable run state and an atomic promotion gate remain future hardening.
 
 ## Table Auto-Creation
 
@@ -274,8 +299,9 @@ remains disabled.
 Unless the run records source errors and inserts zero rows, the Cloud Run Job
 invokes `dbt seed` and then `dbt run` to rebuild the Silver staging views and
 Gold mart relations in the same execution. Partial ingestion therefore still
-starts the transform step; an unusual zero-row run with no recorded exception
-does too.
+starts the transform step and can publish that partial run as the active
+snapshot before the job exits non-zero. An unusual zero-row run with no
+recorded exception starts the transform step too.
 
 ### How it works
 
@@ -319,7 +345,7 @@ environment isolation comes from the active credentials and
 | Scenario | Outcome |
 |---|---|
 | All active fetch/insert attempts fail (errors and 0 rows inserted) | Job exits with code 1 — dbt is **not** triggered |
-| Ingestion partial success (some rows inserted) | dbt seed/run is attempted against the available data, then the job exits with code 1 |
+| Ingestion partial success (some rows inserted) | dbt seed/run is attempted against the available data and can select the partial run as active; the job then exits with code 1, without rolling back published warehouse state |
 | `dbt seed` or `dbt run` fails | The subprocess failure propagates and the Cloud Run execution exits non-zero; already inserted raw rows remain durable |
 | dbt tests | **Not run** by the scheduled ingestion job; run `make dbt-test` or `dbt test` separately |
 
@@ -364,4 +390,6 @@ authenticated `dbt run`, `dbt test` or source-freshness check. A successful
 parse validates project structure and SQL/Jinja compilation, not raw schemas or
 warehouse data. Transform changes still require authenticated BigQuery/dbt
 validation. The scheduled job propagates ingest/dbt failures but omits tests
-and source freshness checks.
+and source freshness checks. Neither this validation nor the current
+staging-readiness gate proves that every expected city/source payload is
+present in the selected run.
