@@ -3,6 +3,12 @@
 **ClimaSentinel — Guide Technique DA1 / DA2**  
 Ce guide est destiné aux membres de l'équipe chargés du dashboard. Il détaille pas à pas comment connecter Power BI Desktop aux tables finales de BigQuery.
 
+> **Lecture obligatoire avant publication :** consultez le
+> [contrat des limitations critiques](0-critical-limitations.md). Le score est
+> un indice heuristique non calibré, le run sélectionné peut être partiel ou en
+> cours, `valid_ts_utc` ne représente pas un instant UTC fiable et les libellés
+> historiques `era5_*` ne prouvent pas une provenance ERA5.
+
 > **Périmètre bêta — mart opérationnel v2.** Les relations
 > `mart_city_score_history_v2`, `mart_city_score_current_v2` et
 > `mart_city_zone_current_v2` contiennent des scores dérivés de prévisions et des bandes
@@ -20,11 +26,14 @@ contrat de disponibilité v2 ; ne les utilisez pas pour un nouveau rapport.
 Tout dashboard publié doit afficher clairement :
 
 > **Prévision bêta.** Scores ponctuels déterministes sans intervalle de
-> confiance. Heat dispose d'un backtest limité sur les données
-> d'archive/réanalyse Open-Meteo ; Rain a montré une compétence insuffisante ;
+> confiance. Le produit décrit le backtest Heat sur l'API Archive Open-Meteo
+> comme limité et Rain comme insuffisant, mais aucun rapport reproductible
+> n'est épinglé dans ce dépôt ;
 > Wind, Air Quality et River ne sont pas validés sur des
 > observations. Une donnée manquante est exclue du maximum et doit rester
-> affichée comme indisponible ou non suivie, jamais comme `0 · Stable`.
+> affichée comme indisponible ou non suivie, jamais comme `0 · Stable`. Le
+> pipeline ne fixe ni ne conserve actuellement le modèle d'archive exact : les
+> identifiants `era5_*` sont hérités et ne constituent pas une preuve ERA5.
 
 ---
 

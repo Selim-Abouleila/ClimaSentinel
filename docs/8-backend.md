@@ -1,5 +1,9 @@
 # 8. Backend Architecture
 
+> **Read first:** [Critical Interpretation and Evidence Limits](0-critical-limitations.md)
+> defines what the score, snapshot, timestamps and validation labels do—and do
+> not—prove. Those limitations apply to every endpoint described here.
+
 The FastAPI backend is the boundary between BigQuery and the Next.js client.
 The operational Day +1/+2/+3 path intentionally serves transparent
 same-vintage rules; registered Heat/Rain models remain offline challengers until
@@ -112,9 +116,12 @@ dependency-readiness guarantee.
 ## Rule-baseline Day +1/+2/+3 forecast
 
 `GET /data/city/{city_id}/forecast?horizon_days=1|2|3` reads one row from
-`mart_ml_serving_features_current`. That view is produced from the same
-point-in-time feature mart as training and returns no row rather than silently
-relabeling an old forecast as today's vintage. The query also resolves the
+`mart_ml_serving_features_current`. That view is produced from the same-vintage,
+leakage-controlled feature mart as training and returns no row rather than
+silently relabeling an old forecast as today's vintage. This controls forecast
+vintage mixing at the ingestion-run and target-date level; it does **not** prove
+exact UTC lead-hour correctness because provider-local offset-free timestamps
+are currently stored in UTC-typed columns. The query also resolves the
 city's temperature normal for the requested **target date month**, avoiding an
 origin-month error when a horizon crosses a month boundary.
 
@@ -127,10 +134,10 @@ city scope across operational and forecast endpoints.
 
 Every response component has `method: forecast_rule`:
 
-| Component | Method | Outcome validation | Uncertainty |
+| Component | Method | Available backtest evidence | Uncertainty |
 |---|---|---|---|
-| Heat | `forecast_rule` | Limited same-vintage backtest against realized archive/reanalysis labels | None |
-| Rain | `forecast_rule` | Backtested against realized archive/reanalysis labels; insufficient predictive skill | None |
+| Heat | `forecast_rule` | Product status says “limited” for an Open-Meteo Archive API backtest; no reproducible report is pinned | None |
+| Rain | `forecast_rule` | Product status says “insufficient skill” for the same source; no reproducible report is pinned | None |
 | Wind | `forecast_rule` | No observed gust label yet | None |
 | Air quality | `forecast_rule` | No observed AQ label yet | None |
 | River | `forecast_rule` | No observed discharge label yet | None |
@@ -156,6 +163,14 @@ observed-impact baseline and is separate from the operational v2 current
 mart's two-date maximum. All component and top-level interval fields are null and
 `uncertainty_method` is `none`; deterministic formulas do not create model
 confidence intervals.
+
+The literal `era5_backtested_limited` and
+`era5_backtested_insufficient_skill` API statuses, plus the
+`open_meteo_era5` label-source value, are retained legacy identifiers. The
+archive request does not pin `models=era5` or persist the returned source
+model/version, so these values are **not verified ERA5 provenance**. Scientific
+prose in this documentation refers instead to the Open-Meteo Archive API
+labels/backtest actually evidenced by the pipeline.
 
 ## Offline challenger boundary
 

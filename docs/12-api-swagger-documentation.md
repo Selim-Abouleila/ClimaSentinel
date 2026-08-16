@@ -1,5 +1,9 @@
 # 12. API and Swagger Reference
 
+> **Read first:** [Critical Interpretation and Evidence Limits](0-critical-limitations.md)
+> applies to every response below, especially score interpretation, partial-run
+> selection, timestamp semantics and legacy validation identifiers.
+
 FastAPI generates the authoritative OpenAPI document at `/openapi.json` and the
 interactive Swagger UI at `/docs`. Forecast, current-score, score-history and
 city-detail routes declare response models. The current-zone route still
@@ -169,7 +173,7 @@ warning is a visibility mitigation rather than a transactional guarantee.
 
 ### `GET /data/city/{city_id}/forecast`
 
-Returns one genuine horizon from the point-in-time same-vintage rule policy.
+Returns one horizon from the same-vintage, leakage-controlled rule policy.
 
 - Path: `city_id`, for example `paris_fr`
 - Query: `horizon_days`, default `3`, accepted values `1`, `2`, `3`
@@ -177,9 +181,16 @@ Returns one genuine horizon from the point-in-time same-vintage rule policy.
   new operational-dashboard cities are intentionally excluded
 - Rule outputs: Heat, Rain, Wind, Air Quality and River from same-vintage
   forecasts
-- Validation scope: limited Open-Meteo archive/reanalysis backtest for Heat; a
-  backtest against the same source with insufficient predictive skill for Rain;
+- Validation scope: the product labels an Open-Meteo Archive API backtest as
+  limited for Heat and insufficient skill for Rain, without a pinned
+  reproducible report;
   no observed-label validation yet for Wind, Air Quality and River
+
+> **Legacy wire values in the example:** `era5_backtested_limited`,
+> `era5_backtested_insufficient_skill` and the ERA5 wording inside
+> `method_reason` are reproduced exactly because current API clients receive
+> them. They are compatibility identifiers, not proof that the underlying row
+> came from ERA5. The request does not pin or persist the archive model/version.
 
 Example response where Heat is the primary driver and AQ is unavailable:
 
@@ -287,20 +298,29 @@ Example response where Heat is the primary driver and AQ is unavailable:
 | Field | Meaning |
 |---|---|
 | `method` | `forecast_rule` for every component in the current operational policy |
-| `validation_status` | `era5_backtested_limited` for Heat; `era5_backtested_insufficient_skill` for Rain; `not_observation_validated` for Wind, Air Quality and River |
+| `validation_status` | Legacy wire identifiers: `era5_backtested_limited` for Heat; `era5_backtested_insufficient_skill` for Rain; `not_observation_validated` for Wind, Air Quality and River |
 | `available` | Whether all inputs required for that component and horizon are present |
 | `uncertainty_method` | `none`; the formulas do not claim model uncertainty |
-| `provenance` | The exact same-vintage source inputs used by the component rule |
+| `provenance` | The same ingestion-vintage source inputs used by the component rule; not verified archive-model provenance |
 | `method_reason` | Why the operational policy uses that rule instead of claiming a learned output |
 | `prediction_source` | `same_vintage_forecast_rules` for this operational policy |
 | `model_version` | `null`; offline challenger registration is not serving provenance |
 | `prediction_date` | City-local forecast origin date for the exact serving vintage |
 | `feature_ingestion_run_id` | Exact same-vintage feature run used by the response |
 
-The literal `era5_*` validation statuses and the legacy ERA5 wording in the
-current `method_reason` response are compatibility labels. The active archive
-request does not pin `models=era5` or persist a returned source model/version,
-so clients must not interpret those strings as per-row ERA5 provenance.
+The literal `era5_*` validation statuses, `open_meteo_era5` label source and the
+legacy ERA5 wording in the current `method_reason` response are compatibility
+identifiers. The active archive request does not pin `models=era5` or persist a
+returned source model/version, so clients must not interpret those strings as
+per-row ERA5 provenance. Scientific descriptions should use “Open-Meteo Archive
+API labels/backtest.”
+
+“Same-vintage” means that the component inputs came from one selected ingestion
+run. It prevents cross-run feature mixing, but it does **not** establish exact
+UTC lead-hour correctness: provider-local offset-free times are currently
+stored in UTC-typed columns. Clients should treat `prediction_date` as the
+documented city-local target-date contract, not as proof of an exact hourly
+lead interval or DST-safe timestamp.
 
 `weather_trajectory` is a display subset, not the complete rule-input
 provenance: it returns temperatures through the selected horizon and target-day
@@ -327,12 +347,12 @@ statistical confidence interval.
 
 | Status | Condition |
 |---:|---|
-| `404` | No current eligible point-in-time serving row exists for the city |
+| `404` | No current eligible same-vintage serving row exists for the city |
 | `422` | `horizon_days` is outside `1..3` or another request value is invalid |
 | `500` | BigQuery or unexpected application failure. The forecast route currently includes the underlying exception text in `detail`, so clients should not treat that text as a stable contract. |
 
 Vienna, Brussels, Copenhagen, Dublin, Oslo, Helsinki, Prague, Budapest, Zurich
 and Bucharest can return current operational scores but have no eligible
 forecast serving rows. Their forecast requests return `404` unless a future
-change explicitly expands the frozen allowlist and the complete point-in-time
-forecast contract.
+change explicitly expands the frozen allowlist and the complete same-vintage,
+leakage-controlled forecast contract.

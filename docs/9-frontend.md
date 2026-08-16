@@ -2,6 +2,11 @@
 
 **Live dashboard:** [climasentinel.up.railway.app](https://climasentinel.up.railway.app/)
 
+> **Prototype interpretation contract:** “Live” means the URL is reachable; it
+> does not certify a production release, a completed ingestion run or complete
+> factor coverage. Before interpreting any score, band, timestamp or validation
+> label, read [Critical System Limitations](0-critical-limitations.md).
+
 The ClimaSentinel frontend is a Next.js 16 App Router application written in
 TypeScript and deployed to Railway. It consumes only the FastAPI contract; it
 does not query BigQuery or load MLflow artifacts directly.
@@ -24,7 +29,7 @@ parsed JSON and does not perform independent runtime-schema validation.
 
 ## Main dashboard and city detail
 
-The `/` dashboard renders current operational risk from
+The `/` dashboard renders the current operational heuristic score from
 `GET /data/current-scores`. `/city/[city_id]` renders the five-factor signal
 catalogue from `GET /data/city/{city_id}/scores`, but only factors with complete
 required input coverage receive a numeric score. These pages describe the
@@ -44,7 +49,7 @@ copy, which is a known product-label mismatch. Unlike `/forecast`, they do not
 currently render the beta/validation disclosure.
 
 Operational factors have three explicit UI states. `available` renders the
-numeric score and risk band; `unavailable` renders a neutral em dash plus the
+numeric heuristic score and product band; `unavailable` renders a neutral em dash plus the
 reported coverage; `not_monitored` renders “Not monitored / No source
 configured.” Neither missing state receives a green Stable label or meter fill.
 Detail copy reports available versus monitored factor counts and states that
@@ -67,8 +72,9 @@ Overview and detail responses carry `operational_ingestion_run_id` and
 `operational_ingested_at_utc`. Both pages display the selected snapshot time and
 switch to a visible stale warning after 36 hours. This is a mitigation, not a
 run audit: there is no completed-run manifest yet, so a failed ingestion can
-leave the old snapshot selected and an overlapping/in-progress run can briefly
-appear newest.
+leave the old snapshot selected and an overlapping, in-progress or partially
+successful run can appear newest. The timestamp and freshness threshold do not
+prove that all expected sources or factors completed.
 
 The overview converts any API failure into an empty array and shows the same
 empty state as a legitimate zero-row response. The city client converts a
@@ -88,7 +94,7 @@ contract: Paris, London, Madrid, Berlin, Rome, Amsterdam, Athens, Warsaw,
 Lisbon and Stockholm. Vienna, Brussels, Copenhagen, Dublin, Oslo, Helsinki,
 Prague, Budapest, Zurich and Bucharest appear on the operational dashboard but
 are absent from the forecast selector and `forecast_city_allowlist.csv`; they do
-not enter point-in-time forecast features, ML training or serving. Any future
+not enter same-vintage forecast features, ML training or serving. Any future
 forecast expansion requires an explicit coordinated allowlist, backend and
 frontend contract change rather than following operational registry growth.
 
@@ -104,7 +110,7 @@ The page gives a prominent global beta disclosure and validation-scope note:
 
 The API carries `method`, `validation_status`, `provenance` and `method_reason`
 for every factor, but the current factor cards do **not** render those values as
-visible per-factor labels. They show the factor score/risk band or a source-data
+visible per-factor labels. They show the factor score/product band or a source-data
 unavailable state. `method` is present only as a non-visible
 `data-forecast-method` attribute. Product copy must therefore not claim that the
 current UI presents detailed provenance on every card.
