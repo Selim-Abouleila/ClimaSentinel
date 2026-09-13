@@ -48,6 +48,9 @@ means no below-reference anomaly, not safe absolute conditions. The
 history mart exposes the anomaly, score and availability metadata, and the
 detail view projects them from its selected date. Cold is excluded from the
 live aggregate and current API/UI contracts.
+Six-factor aggregation code is available behind `cold_in_global_score`, default
+false, pending coordinated API/UI support. Enabling it changes score composition;
+it does not add outcome calibration or validate the existing zone thresholds.
 
 ## Evidence by component
 

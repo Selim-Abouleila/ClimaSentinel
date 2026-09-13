@@ -7,6 +7,8 @@
     }
 ) }}
 
+{% set include_cold = cold_in_global_score() %}
+
 WITH daily_signals AS (
     SELECT
         signals.*,
@@ -284,11 +286,12 @@ scores_with_metadata AS (
 scores_with_global AS (
     SELECT
         *,
-        -- Cold remains outside the live aggregate until the API/UI cutover.
+        -- The default remains five factors until the coordinated API/UI cutover.
         (
             SELECT MAX(score)
             FROM UNNEST([
                 heat_score,
+                {% if include_cold %}cold_score,{% endif %}
                 wind_score,
                 rain_score,
                 air_score,
@@ -297,6 +300,7 @@ scores_with_global AS (
         ) AS global_tipping_score,
         (
             IF(heat_monitored, 1, 0)
+            {% if include_cold %}+ IF(cold_monitored, 1, 0){% endif %}
             + IF(wind_monitored, 1, 0)
             + IF(rain_monitored, 1, 0)
             + IF(air_monitored, 1, 0)
@@ -304,6 +308,7 @@ scores_with_global AS (
         ) AS monitored_factor_count,
         (
             IF(heat_available, 1, 0)
+            {% if include_cold %}+ IF(cold_available, 1, 0){% endif %}
             + IF(wind_available, 1, 0)
             + IF(rain_available, 1, 0)
             + IF(air_available, 1, 0)
@@ -379,6 +384,7 @@ final_scores AS (
         ROUND(
             SAFE_DIVIDE(
                 COALESCE(heat_coverage, 0.0)
+                {% if include_cold %}+ COALESCE(cold_coverage, 0.0){% endif %}
                 + COALESCE(wind_coverage, 0.0)
                 + COALESCE(rain_coverage, 0.0)
                 + COALESCE(air_coverage, 0.0)
@@ -398,6 +404,8 @@ final_scores AS (
             WHEN global_tipping_score = wind_score THEN 'Wind'
             WHEN global_tipping_score = rain_score THEN 'Rain'
             WHEN global_tipping_score = air_score THEN 'Air Quality'
+            -- Preserve every existing positive tie priority; Cold follows them.
+            {% if include_cold %}WHEN global_tipping_score = cold_score THEN 'Cold'{% endif %}
             ELSE 'Unknown'
         END AS primary_driver
 

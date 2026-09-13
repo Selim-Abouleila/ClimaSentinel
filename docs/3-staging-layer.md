@@ -127,6 +127,8 @@ from the city/date spine, including rows with missing weather data. It is a
 monitoring policy, not a claim that Cold inputs are available. The history mart
 uses it to calculate the nullable Cold score and availability metadata; its
 global aggregates and API/UI contracts continue to use five factors.
+The [six-factor aggregation setting](4-mart-layer.md#six-factor-aggregation-activation)
+defaults false; it controls aggregate participation separately from monitoring.
 
 The standard-library city validator checks unique city/month keys, exactly 12
 months for every active city, finite physical ranges, registry consistency,

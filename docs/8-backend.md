@@ -45,11 +45,19 @@ The dashboard endpoints read the availability-aware operational v2 marts:
 The API exposes five factors from operational inputs. The history and detail
 marts also contain independent Cold scores and context, which the typed API
 responses do not yet expose. Global scoring and aggregate metadata still use
-the existing five factors. These marts are not
-the realized-label source used to validate the forecast model. A factor score
+the existing five factors. These marts are not the realized-label source used
+to validate the forecast model. A factor score
 is nullable and accompanied by `status`, `monitored`, `available`, and
 `coverage` fields. Missing AQ or River input therefore crosses the API as NULL,
 never as a synthetic green zero.
+
+The dbt setting `cold_in_global_score` defaults false. Its enabled mode includes
+Cold in global scores, drivers, factor counts and coverage; the current backend
+rejects six-factor counts and recomputes history/detail aggregates using five
+factors. Keep the setting false until these response schemas, validators and
+the detail SELECT support Cold and the frontend displays it. The
+[mart activation contract](4-mart-layer.md#six-factor-aggregation-activation)
+describes the coordinated release and tests for both modes.
 
 After a complete ingestion/dbt refresh, the current-score and city-detail
 routes can expose all 20 active operational cities. `GET /data/current-scores`

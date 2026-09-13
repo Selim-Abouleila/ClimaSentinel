@@ -1,0 +1,25 @@
+version: 2
+
+unit_tests:
+  - name: test_cold_aggregate_v2
+    description: >
+      Exercise the opt-in six-factor aggregate with literal expected scores,
+      counts and coverage. Cover Cold as the unique maximum, each existing
+      driver's priority over tied Cold, Stable zero, Cold as the only available
+      factor, all unavailable, unmonitored and partial Cold, no monitored factors,
+      and averaging raw coverage before rounding. Complete SQL fixtures include
+      every history output column and the Heat/River next-day support rows.
+    model: mart_city_score_history_v2
+    overrides:
+      vars:
+        cold_in_global_score: true
+    given:
+      - input: ref('stg_city_signal_input_v2')
+        format: sql
+        fixture: cold_aggregate_signals
+      - input: ref('city_monthly_normals')
+        format: sql
+        fixture: cold_aggregate_normals
+    expect:
+      format: sql
+      fixture: cold_aggregate_expected

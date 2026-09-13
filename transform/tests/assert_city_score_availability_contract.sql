@@ -1,6 +1,8 @@
 -- A score of zero is a valid measurement. NULL is the only representation of
 -- an unavailable/not-monitored factor, and all metadata must agree with it.
 
+{% set include_cold = cold_in_global_score() %}
+
 WITH factor_rows AS (
     SELECT
         city_id,
@@ -102,8 +104,8 @@ factor_violations AS (
         )
 ),
 
--- Cold metadata is checked above, but aggregation remains on the original
--- five factors until the serving contracts support six-factor aggregation.
+-- Cold metadata is always checked. Aggregate expectations follow the explicit
+-- rollout setting, which defaults to the live five-factor serving contract.
 global_expectations AS (
     SELECT
         *,
@@ -115,6 +117,7 @@ global_expectations AS (
                 rain_score,
                 air_score,
                 river_score
+                {% if include_cold %}, cold_score{% endif %}
             ]) AS score
         ) AS expected_global_score,
         (
@@ -123,6 +126,7 @@ global_expectations AS (
             + IF(rain_monitored, 1, 0)
             + IF(air_monitored, 1, 0)
             + IF(river_monitored, 1, 0)
+            {% if include_cold %}+ IF(cold_monitored, 1, 0){% endif %}
         ) AS expected_monitored_count,
         (
             IF(heat_available, 1, 0)
@@ -130,6 +134,7 @@ global_expectations AS (
             + IF(rain_available, 1, 0)
             + IF(air_available, 1, 0)
             + IF(river_available, 1, 0)
+            {% if include_cold %}+ IF(cold_available, 1, 0){% endif %}
         ) AS expected_available_count,
         ROUND(
             SAFE_DIVIDE(
@@ -137,15 +142,29 @@ global_expectations AS (
                 + COALESCE(wind_coverage, 0.0)
                 + COALESCE(rain_coverage, 0.0)
                 + COALESCE(air_coverage, 0.0)
-                + COALESCE(river_coverage, 0.0),
+                + COALESCE(river_coverage, 0.0)
+                {% if include_cold %}+ COALESCE(cold_coverage, 0.0){% endif %},
                 IF(heat_monitored, 1, 0)
                 + IF(wind_monitored, 1, 0)
                 + IF(rain_monitored, 1, 0)
                 + IF(air_monitored, 1, 0)
                 + IF(river_monitored, 1, 0)
+                {% if include_cold %}+ IF(cold_monitored, 1, 0){% endif %}
             ),
             3
-        ) AS expected_overall_coverage
+        ) AS expected_overall_coverage,
+        -- The model chooses the driver before rounding the original five
+        -- scores. Published values can therefore appear tied even when the
+        -- raw scores were not. Check the winning score here; native unit tests
+        -- enforce the exact tie precedence from known unrounded inputs.
+        CASE primary_driver
+            WHEN 'Heat' THEN heat_score
+            WHEN 'River/Flood' THEN river_score
+            WHEN 'Wind' THEN wind_score
+            WHEN 'Rain' THEN rain_score
+            WHEN 'Air Quality' THEN air_score
+            {% if include_cold %}WHEN 'Cold' THEN cold_score{% endif %}
+        END AS driver_score
     FROM {{ ref('mart_city_score_history_v2') }}
 ),
 
@@ -160,10 +179,28 @@ global_violations AS (
         OR global_score_available IS DISTINCT FROM (expected_global_score IS NOT NULL)
         OR monitored_factor_count IS DISTINCT FROM expected_monitored_count
         OR available_factor_count IS DISTINCT FROM expected_available_count
-        OR overall_coverage IS DISTINCT FROM expected_overall_coverage
+        OR (overall_coverage IS NULL) != (expected_overall_coverage IS NULL)
+        -- Aggregate coverage uses unrounded inputs; the public factor values
+        -- used above are rounded to three decimals. Their recomputed rounded
+        -- mean can differ by one unit in the last decimal place.
+        OR ABS(overall_coverage - expected_overall_coverage) > 0.001 + 1e-9
         OR (
             expected_global_score IS NULL
             AND primary_driver IS DISTINCT FROM 'Unavailable'
+        )
+        OR (
+            expected_global_score IS NOT NULL
+            AND (
+                primary_driver IS NULL
+                OR (
+                    primary_driver = 'Stable'
+                    AND expected_global_score != 0
+                )
+                OR (
+                    primary_driver != 'Stable'
+                    AND driver_score IS DISTINCT FROM expected_global_score
+                )
+            )
         )
         OR (
             river_monitored

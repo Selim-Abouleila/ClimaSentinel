@@ -36,9 +36,11 @@ independent from the frozen 10-city same-vintage ML path.
 ### `mart_city_score_history_v2` (table)
 
 Calculates the forecast-derived Tipping Score for every city and valid date. It
-combines five component indicators and takes their maximum as the global score.
+combines five component indicators by default and takes their maximum as the
+global score.
 It also calculates Cold independently in the history table, with its own
-monitoring and availability fields, ready for later API/UI integration.
+monitoring and availability fields. Six-factor aggregation is implemented behind
+`cold_in_global_score: false`, pending compatible API/UI contracts.
 
 These formulas, multipliers, activation thresholds and the maximum aggregation
 are product-defined and uncalibrated. Their permitted uses and evidence gaps are
@@ -249,9 +251,62 @@ Cold is now available in history and the detail view. API/UI exposure is a
 later integration step. Existing global score, driver, counts and
 coverage stay on five factors until the six-factor aggregation change is
 released with compatible backend/frontend contracts.
-Current/detail worst-day selection and zone/ranking behavior must be checked at
-that activation. ML features, labels and the three-day forecast experience
+The opt-in aggregation and consumer selection are tested as described below.
+ML features, labels and the three-day forecast experience
 require their own later Cold specification.
+
+#### Six-factor aggregation activation
+
+`transform/dbt_project.yml` defines the boolean `cold_in_global_score`, default
+`false`. With that default, all existing aggregate values and date selection
+remain on Heat, Wind, Rain, Air Quality and River. Cold's individual score and
+detail fields are available in either mode. Non-boolean values, including the
+string `"false"`, cause a compilation error instead of silently enabling Cold.
+
+When the setting is `true`, the same history model includes Cold in:
+
+| Output | Six-factor behavior |
+|---|---|
+| `global_tipping_score` | Maximum non-null score across all six factors; NULL only when all six are unavailable. |
+| `primary_driver` | `Unavailable` for NULL, `Stable` for zero; positive ties retain Heat → River/Flood → Wind → Rain → Air Quality → Cold priority. |
+| `monitored_factor_count` | Count of all six monitoring flags; unmonitored Cold contributes zero. |
+| `available_factor_count` | Count of all six available scores; a valid Cold zero counts as available. |
+| `overall_coverage` | Mean unrounded input coverage over monitored factors, rounded to three decimals; partial Cold contributes fractional coverage even though its score is NULL. |
+
+Driver selection uses scores before the existing final display rounding. Two
+displayed scores can therefore tie while the slightly larger underlying score
+determines the driver. The data test checks driver membership and the displayed
+maximum; literal unit cases verify exact positive tie priority. The coverage
+data test allows a 0.001 rounding difference when reconstructing the mean from
+already rounded per-factor fields.
+
+Current/detail views consume the resulting global score and select the same
+complete row by availability, score descending, then earlier date. For example,
+today's five-factor maximum 20 with Cold 100 beats tomorrow's maximum 40 with
+Cold 10 when enabled; the default still selects tomorrow. A sole available Cold
+score, including zero, wins over an unavailable date. Current ranking and zone
+membership follow the selected aggregate; zone thresholds are unchanged.
+
+`make dbt-test` exercises both modes through native unit-test variable overrides:
+`test_cold_anomaly_v2` verifies the default five-factor contract;
+`test_cold_aggregate_v2` verifies six-factor arithmetic and missingness;
+`test_cold_aggregate_current_v2` and `test_cold_aggregate_detail_v2` verify
+six-factor date selection and ranking using complete SQL fixtures. These tests
+use mocked inputs and do not activate six-factor scoring in the built marts.
+`assert_city_score_availability_contract` follows the configured aggregate mode;
+`assert_city_score_v2_current_detail_consistent` checks matching aggregates,
+run provenance and ranking across the built consumer views.
+
+**Release boundary:** keep this setting false while the deployed backend
+validates only five factors. Activation requires backend support for Cold
+fields and six-factor aggregate validation, plus frontend support for Cold
+drivers, scores and coverage. Then enable the setting in the release's dbt
+configuration and rebuild/deploy the ingestion image so scheduled runs retain
+the same mode. Run the models and tests with matching configuration and verify
+API responses and dashboard behavior together. Changing `--target` alone does
+not create an isolated preview: the project uses the same explicit `stg`/`mart`
+schemas. The normal `make dbt-run` / `make dbt-test` workflow keeps the default
+five-factor live behavior while validating the enabled unit cases.
 
 ### `mart_city_score_current_v2` (view)
 
@@ -297,12 +352,14 @@ The Cold projection adds `cold_score`, `cold_status`, `cold_monitored`,
 from the row identified by `score_date` and `operational_ingestion_run_id`.
 NULL scores, fractional coverage and unmonitored states are preserved.
 
-The chosen date still uses the five-factor global score. A larger Cold score
-on the other date does not change the selection. For example, if today has
+With the default setting, the chosen date uses the five-factor global score.
+A larger Cold score on the other date does not change the selection. For example, if today has
 global score 20 and Cold 100, while tomorrow has global score 40 and Cold 10,
 detail selects tomorrow and exposes Cold 10. When both dates lack a five-factor
 score, the earlier date wins even if Cold is available. Cold does not change
-ranking, driver selection, factor counts or overall coverage in this step.
+ranking, driver selection, factor counts or overall coverage in that mode.
+With `cold_in_global_score: true`, the same selector uses the six-factor
+aggregate described above; every projected field still comes from one row.
 
 The backend's explicit SELECT and typed response still expose only Heat, Wind,
 Rain, Air Quality and River. Cold can be inspected in BigQuery now; API/UI

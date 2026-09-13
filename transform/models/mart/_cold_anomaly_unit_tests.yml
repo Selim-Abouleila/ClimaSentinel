@@ -10,6 +10,9 @@ unit_tests:
       or a following forecast day. Existing five-factor scores, counts, coverage
       and drivers stay intact, even when Cold has the highest individual score.
     model: mart_city_score_history_v2
+    overrides:
+      vars:
+        cold_in_global_score: false
     given:
       - input: ref('stg_city_signal_input_v2')
         format: sql

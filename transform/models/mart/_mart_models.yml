@@ -83,13 +83,15 @@ models:
   - name: mart_city_score_history_v2
     description: >
       The core tipping score computation engine. Calculates nullable daily
-      scores for five factors and takes the maximum only across factors whose
-      required inputs are available. Monitoring, availability, status, and
+      scores for six factors and takes the maximum only across participating
+      factors whose required inputs are available. Monitoring, availability, status, and
       coverage metadata distinguish a genuine zero-risk measurement from an
       unavailable or unmonitored signal.
       Also exposes the daily minimum temperature, monthly minimum-temperature
       normal, cold_anomaly_c and a nullable Cold score with availability metadata.
-      Cold remains outside the five-factor aggregate pending API/UI integration.
+      cold_in_global_score defaults false, keeping the aggregate on five factors.
+      True includes Cold in the maximum, driver, counts and coverage; activation
+      requires compatible API/UI contracts.
     columns:
       - name: operational_ingestion_run_id
         description: Exact raw ingestion snapshot used across every v2 source.
@@ -104,20 +106,20 @@ models:
         tests:
           - not_null
       - name: global_tipping_score
-        description: "Maximum available Heat/Wind/Rain/Air/River score (0-100); excludes Cold. NULL when none is available."
+        description: "Maximum available participating score (0-100); includes Cold only when cold_in_global_score is true. NULL when none is available."
       - name: global_score_available
         description: True when at least one factor contributed to the global score.
         tests: [not_null]
       - name: monitored_factor_count
-        description: Number of monitored Heat/Wind/Rain/Air/River factors; excludes Cold.
+        description: Number of monitored participating factors; five-factor scope by default, including Cold when cold_in_global_score is true.
         tests: [not_null]
       - name: available_factor_count
-        description: Number of available Heat/Wind/Rain/Air/River factors; excludes Cold.
+        description: Number of available participating factors; five-factor scope by default, including Cold when cold_in_global_score is true.
         tests: [not_null]
       - name: overall_coverage
-        description: Mean coverage across monitored Heat/Wind/Rain/Air/River factors; excludes Cold.
+        description: Mean raw coverage across monitored participating factors, rounded to three decimals; includes Cold only when cold_in_global_score is true.
       - name: primary_driver
-        description: "Highest available factor, Stable, or Unavailable when none can be scored."
+        description: "Highest participating factor; positive ties prefer Heat, River/Flood, Wind, Rain, Air Quality, then Cold (when enabled). Stable at zero, Unavailable with no score."
       - name: temperature_2m_min
         description: >
           Minimum forecast temperature in degrees Celsius for this operational
@@ -139,7 +141,8 @@ models:
           cold_anomaly_v1: five points per degree below the monthly minimum
           reference, capped at 100 and rounded to one decimal using NUMERIC
           arithmetic, exposed as FLOAT64. NULL unless Cold is monitored and
-          its current-day anomaly is usable. Excluded from the global aggregate.
+          its current-day anomaly is usable. Included in the global aggregate
+          only when cold_in_global_score is true.
       - name: cold_monitored
         description: Cold-monitoring policy from the exact-run staging city/date spine.
         tests: [not_null]
@@ -153,13 +156,14 @@ models:
         description: >
           NULL when not monitored, 1 when available, or the fraction of 24
           readings for a partial day with finite Tmin/reference. Missing or
-          invalid inputs give 0. Rounded to three decimals; excluded from
-          overall_coverage until the six-factor cutover.
+          invalid inputs give 0. Rounded to three decimals; contributes its
+          unrounded value to overall_coverage when cold_in_global_score is true.
 
   - name: mart_city_score_current_v2
     description: >
       Operational dashboard view filtering the history table to only today and tomorrow.
       Identifies the current tipping score and ranks the cities from most tense (1) to least.
+      Follows the history aggregate mode, including Cold when cold_in_global_score is true.
     columns:
       - name: operational_ingestion_run_id
         tests: [not_null]
@@ -198,7 +202,8 @@ models:
       row is selected deterministically by available score descending and date
       ascending, so fields can never be mixed across tied dates.
       Includes Cold score, availability and temperature context from that date;
-      Cold is excluded from the aggregate and date selection. The API currently
+      Cold affects the aggregate and date selection only when cold_in_global_score
+      is true (default false). The API currently
       selects only the existing five factors from this wider warehouse view.
       Consumed by GET /data/city/{city_id}/scores to power the city detail page.
     columns:
@@ -212,21 +217,21 @@ models:
           - not_null
           - unique
       - name: current_tipping_score
-        description: "Maximum available Heat/Wind/Rain/Air/River score on the selected date; excludes Cold. NULL if none is available."
+        description: "Maximum available participating score on the selected date; includes Cold only when cold_in_global_score is true. NULL if none is available."
       - name: score_date
         description: Deterministically selected UTC calendar date supplying every score and metadata field.
       - name: current_primary_driver
-        description: "Highest available Heat/Wind/Rain/Air/River factor, Stable, or Unavailable."
+        description: "Highest available participating factor, Stable, or Unavailable; Cold can win when cold_in_global_score is true."
       - name: current_score_available
         tests: [not_null]
       - name: monitored_factor_count
-        description: Number of monitored Heat/Wind/Rain/Air/River factors; excludes Cold.
+        description: Number of monitored participating factors on score_date; includes Cold only when cold_in_global_score is true.
         tests: [not_null]
       - name: available_factor_count
-        description: Number of available Heat/Wind/Rain/Air/River factors; excludes Cold.
+        description: Number of available participating factors on score_date; includes Cold only when cold_in_global_score is true.
         tests: [not_null]
       - name: overall_coverage
-        description: Mean coverage of monitored Heat/Wind/Rain/Air/River factors on the selected date; excludes Cold.
+        description: Mean coverage of monitored participating factors on score_date; includes Cold only when cold_in_global_score is true.
       - name: heat_score
         description: "Nullable Heat score (0-100); based on temperature anomaly and positive velocity."
       - name: heat_status
@@ -241,8 +246,8 @@ models:
       - name: cold_score
         description: >
           Nullable cold_anomaly_v1 score (0-100) from score_date. Passed through
-          from history, without independent aggregation across dates. Excluded
-          from current_tipping_score until the six-factor cutover.
+          from history, without independent aggregation across dates. Included
+          in current_tipping_score only when cold_in_global_score is true.
       - name: cold_status
         tests: *signal_status_tests
       - name: cold_monitored

@@ -360,6 +360,9 @@ API/UI integration of Cold will follow in later steps.
 The [detail view](docs/4-mart-layer.md#mart_city_score_detail_v2-view) now exposes
 Cold and its temperature context from the same date selected by the existing
 five-factor global score.
+Six-factor aggregation is prepared behind `cold_in_global_score: false`.
+The standard tests exercise the enabled mode with fixture data; live activation
+requires the [coordinated API/UI update](docs/4-mart-layer.md#six-factor-aggregation-activation).
 
 Run `make validate-cities` before building or deploying. It checks schemas,
 identifiers, coordinates, IANA time-zone names, display order, strict booleans,

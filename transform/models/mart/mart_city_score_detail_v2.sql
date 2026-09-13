@@ -5,7 +5,8 @@
 -- ── mart_city_score_detail_v2 ───────────────────────────────────────────────
 -- Exposes nullable factor scores and explicit availability metadata for the
 -- worst scored date in the current two-date UTC calendar window.
--- Cold is projected from that same date; it does not select the worst day yet.
+-- Cold is projected from that same date. The history aggregation setting
+-- determines whether Cold participates in the global score used for selection.
 --
 -- Grain      : one deterministic row per city.
 -- Depends on : mart_city_score_history_v2.
