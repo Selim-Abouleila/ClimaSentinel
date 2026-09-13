@@ -197,6 +197,9 @@ models:
       raw values for every city across today and tomorrow in UTC. One complete
       row is selected deterministically by available score descending and date
       ascending, so fields can never be mixed across tied dates.
+      Includes Cold score, availability and temperature context from that date;
+      Cold is excluded from the aggregate and date selection. The API currently
+      selects only the existing five factors from this wider warehouse view.
       Consumed by GET /data/city/{city_id}/scores to power the city detail page.
     columns:
       - name: operational_ingestion_run_id
@@ -209,19 +212,21 @@ models:
           - not_null
           - unique
       - name: current_tipping_score
-        description: "Maximum of available factor scores on the selected date; NULL if all are unavailable."
+        description: "Maximum available Heat/Wind/Rain/Air/River score on the selected date; excludes Cold. NULL if none is available."
       - name: score_date
         description: Deterministically selected UTC calendar date supplying every score and metadata field.
       - name: current_primary_driver
-        description: "Highest available factor, Stable, or Unavailable."
+        description: "Highest available Heat/Wind/Rain/Air/River factor, Stable, or Unavailable."
       - name: current_score_available
         tests: [not_null]
       - name: monitored_factor_count
+        description: Number of monitored Heat/Wind/Rain/Air/River factors; excludes Cold.
         tests: [not_null]
       - name: available_factor_count
+        description: Number of available Heat/Wind/Rain/Air/River factors; excludes Cold.
         tests: [not_null]
       - name: overall_coverage
-        description: Mean input coverage across monitored factors on the selected date.
+        description: Mean coverage of monitored Heat/Wind/Rain/Air/River factors on the selected date; excludes Cold.
       - name: heat_score
         description: "Nullable Heat score (0-100); based on temperature anomaly and positive velocity."
       - name: heat_status
@@ -233,6 +238,21 @@ models:
         tests: [not_null]
       - name: heat_coverage
         description: Coverage ratio for complete current/consecutive-next temperature and monthly-normal inputs; a score requires 1.
+      - name: cold_score
+        description: >
+          Nullable cold_anomaly_v1 score (0-100) from score_date. Passed through
+          from history, without independent aggregation across dates. Excluded
+          from current_tipping_score until the six-factor cutover.
+      - name: cold_status
+        tests: *signal_status_tests
+      - name: cold_monitored
+        description: Cold-monitoring policy on score_date.
+        tests: [not_null]
+      - name: cold_available
+        description: True when the selected date has a usable Cold score, including zero.
+        tests: [not_null]
+      - name: cold_coverage
+        description: Cold input coverage on score_date; NULL if unmonitored, fractional if partial, 1 if available.
       - name: wind_score
         description: "Nullable Wind score (0-100); based on gust speed above 40 km/h."
       - name: wind_status
@@ -275,6 +295,12 @@ models:
         description: NULL when unmonitored; otherwise coverage of consecutive daily discharge values, with a score requiring 1.
       - name: temperature_2m_max
         description: "Raw max temperature (°C) on the worst day — displayed as context in the UI."
+      - name: temperature_2m_min
+        description: Forecast minimum temperature in degrees Celsius from the selected score_date.
+      - name: normal_temperature_2m_min
+        description: City/month minimum-temperature reference in degrees Celsius for score_date.
+      - name: cold_anomaly_c
+        description: Nullable degrees below the monthly Tmin reference on score_date; independent of Cold monitoring.
       - name: wind_gusts_10m_max
         description: "Raw max wind gust speed (km/h) on the worst day."
       - name: precipitation_sum_mm

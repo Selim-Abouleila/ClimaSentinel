@@ -118,15 +118,15 @@ unchanged. The operational history mart now joins this baseline and exposes
 `cold_anomaly_c` alongside the forecast and normal minimum temperatures; see
 [the cold diagnostic](4-mart-layer.md#cold-temperature-diagnostic).
 The [initial Cold score](4-mart-layer.md#cold-scoring-rule-cold_anomaly_v1)
-is implemented in history; serving-view/API/dashboard integration and ML
-support remain later steps.
+is implemented in history and projected into the detail view on its selected
+score date; API/dashboard integration and ML support remain later steps.
 
 `cold_monitored` is a separate boolean in `city_signal_monitoring`, required
 `true` for all 20 active cities. `stg_city_signal_input_v2` carries it directly
 from the city/date spine, including rows with missing weather data. It is a
 monitoring policy, not a claim that Cold inputs are available. The history mart
 uses it to calculate the nullable Cold score and availability metadata; its
-global aggregates and serving contracts continue to use five factors.
+global aggregates and API/UI contracts continue to use five factors.
 
 The standard-library city validator checks unique city/month keys, exactly 12
 months for every active city, finite physical ranges, registry consistency,

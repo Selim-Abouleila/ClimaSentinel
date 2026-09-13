@@ -266,8 +266,13 @@ and tests. The [initial Cold scoring rule](../docs/4-mart-layer.md#cold-scoring-
 is implemented in history: five points per degree below the monthly Tmin
 reference, capped at 100 and rounded to one decimal. It exposes `cold_score`,
 `cold_monitored`, `cold_available`, `cold_status` and `cold_coverage`. The global
-score and aggregate metadata still use five factors. Serving-view/API/dashboard
-integration and ML support remain subsequent work.
+score and aggregate metadata still use five factors. `mart_city_score_detail_v2`
+now passes through those Cold fields and Tmin/reference/anomaly context from
+the same selected `score_date`. The date is still chosen by the five-factor
+aggregate; Cold does not independently choose a different day. See the
+[detail-view contract](../docs/4-mart-layer.md#mart_city_score_detail_v2-view)
+for verification queries and tests. API/dashboard integration and ML support
+remain subsequent work.
 `seeds/_seeds.yml` sets `full_refresh: true` on `city_monthly_normals` and
 `city_signal_monitoring` so every seed run applies their new baseline and
 monitoring columns from the CSVs. The setting is scoped to these two seeds;

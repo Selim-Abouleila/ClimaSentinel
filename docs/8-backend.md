@@ -42,7 +42,10 @@ The dashboard endpoints read the availability-aware operational v2 marts:
 - `GET /data/current-zones` reads `mart_city_zone_current_v2`; and
 - `GET /data/city/{city_id}/scores` reads `mart_city_score_detail_v2`.
 
-These marts calculate up to five factors from operational inputs. They are not
+The API exposes five factors from operational inputs. The history and detail
+marts also contain independent Cold scores and context, which the typed API
+responses do not yet expose. Global scoring and aggregate metadata still use
+the existing five factors. These marts are not
 the realized-label source used to validate the forecast model. A factor score
 is nullable and accompanied by `status`, `monitored`, `available`, and
 `coverage` fields. Missing AQ or River input therefore crosses the API as NULL,

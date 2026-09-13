@@ -347,7 +347,7 @@ average daily minimum for each local calendar month over 2014–2023. This new
 column has separate retrieval provenance and leaves existing baseline values
 unchanged. The operational history mart exposes a coverage-gated
 `cold_anomaly_c` in degrees below normal, plus a nullable Cold score and its
-availability metadata. Global scoring and serving contracts still use the
+availability metadata. Global scoring and API/UI contracts still use the
 existing five factors.
 See [the cold diagnostic](docs/4-mart-layer.md#cold-temperature-diagnostic) and
 [the baseline methodology](docs/3-staging-layer.md#static-seeds-3).
@@ -357,6 +357,9 @@ reference, capped at 100 and rounded to one decimal.
 Cold monitoring is now configured for all 20 cities through `cold_monitored`
 in the monitoring seed and `stg_city_signal_input_v2`. The live aggregate and
 API/UI integration of Cold will follow in later steps.
+The [detail view](docs/4-mart-layer.md#mart_city_score_detail_v2-view) now exposes
+Cold and its temperature context from the same date selected by the existing
+five-factor global score.
 
 Run `make validate-cities` before building or deploying. It checks schemas,
 identifiers, coordinates, IANA time-zone names, display order, strict booleans,

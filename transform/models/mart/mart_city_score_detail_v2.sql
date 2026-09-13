@@ -5,6 +5,7 @@
 -- ── mart_city_score_detail_v2 ───────────────────────────────────────────────
 -- Exposes nullable factor scores and explicit availability metadata for the
 -- worst scored date in the current two-date UTC calendar window.
+-- Cold is projected from that same date; it does not select the worst day yet.
 --
 -- Grain      : one deterministic row per city.
 -- Depends on : mart_city_score_history_v2.
@@ -57,6 +58,11 @@ SELECT
     heat_monitored,
     heat_available,
     heat_coverage,
+    cold_score,
+    cold_status,
+    cold_monitored,
+    cold_available,
+    cold_coverage,
     wind_score,
     wind_status,
     wind_monitored,
@@ -79,6 +85,9 @@ SELECT
     river_coverage,
 
     temperature_2m_max,
+    temperature_2m_min,
+    normal_temperature_2m_min,
+    cold_anomaly_c,
     wind_gusts_10m_max,
     precipitation_sum_mm,
     european_aqi_max,

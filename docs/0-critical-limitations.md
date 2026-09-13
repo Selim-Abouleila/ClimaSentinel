@@ -45,8 +45,9 @@ Tmin reference, capped at 100. Its coefficient is a product choice with no
 Cold outcome calibration or backtest. It measures relative cold anomaly;
 absolute cold severity, wind chill and persistence are not evaluated. A zero
 means no below-reference anomaly, not safe absolute conditions. The
-history mart exposes the anomaly, score and availability metadata; Cold is
-excluded from the live aggregate and current API/UI contracts.
+history mart exposes the anomaly, score and availability metadata, and the
+detail view projects them from its selected date. Cold is excluded from the
+live aggregate and current API/UI contracts.
 
 ## Evidence by component
 

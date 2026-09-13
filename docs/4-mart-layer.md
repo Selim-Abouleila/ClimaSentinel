@@ -38,7 +38,7 @@ independent from the frozen 10-city same-vintage ML path.
 Calculates the forecast-derived Tipping Score for every city and valid date. It
 combines five component indicators and takes their maximum as the global score.
 It also calculates Cold independently in the history table, with its own
-monitoring and availability fields, ready for later serving integration.
+monitoring and availability fields, ready for later API/UI integration.
 
 These formulas, multipliers, activation thresholds and the maximum aggregation
 are product-defined and uncalibrated. Their permitted uses and evidence gaps are
@@ -108,9 +108,9 @@ staging date is derived from `DATE(valid_ts_utc)`, while the seed averages
 city-local calendar days. This addition preserves that existing date convention.
 
 The anomaly is not a 0–100 risk score. It does not enter the global score,
-primary driver, factor counts or coverage aggregates. Current/detail views,
-typed API responses and ML models continue to expose their existing contracts.
-Inspect the diagnostic directly in `mart.mart_city_score_history_v2`.
+primary driver, factor counts or coverage aggregates. Inspect it in
+`mart.mart_city_score_history_v2` or on the selected date in
+`mart.mart_city_score_detail_v2`. The API and ML contracts still omit Cold.
 
 After updating the GCP checkout, run `make dbt-run` and `make dbt-test`.
 The cold-anomaly fixture unit test covers anomaly and Cold-score boundaries,
@@ -135,8 +135,9 @@ dbt changes, the history table exposes `cold_score`, `cold_status`,
 `cold_monitored`, `cold_available` and `cold_coverage`, alongside the raw Tmin,
 monthly reference and anomaly. Cold is excluded from the live global score,
 driver, factor counts and overall coverage pending coordinated API/UI support.
-Current/detail views and typed API responses still use their five-factor
-contracts. The rule identifier names this specification, not a warehouse column.
+The detail view passes through these fields from its selected history row;
+current/detail aggregates and typed API responses still use five factors.
+The rule identifier names this specification, not a warehouse column.
 
 `cold_monitored` comes from `city_signal_monitoring` through
 `stg_city_signal_input_v2`, and the city policy requires it true for all 20
@@ -244,8 +245,8 @@ FROM `PROJECT_ID.mart.mart_city_score_history_v2`
 ORDER BY city_id, date;
 ```
 
-Cold currently enters history only. Detail-view projection and API/UI exposure
-are the next integration steps. Existing global score, driver, counts and
+Cold is now available in history and the detail view. API/UI exposure is a
+later integration step. Existing global score, driver, counts and
 coverage stay on five factors until the six-factor aggregation change is
 released with compatible backend/frontend contracts.
 Current/detail worst-day selection and zone/ranking behavior must be checked at
@@ -284,11 +285,43 @@ standalone safety advice.
 
 ### `mart_city_score_detail_v2` (view)
 
-Exposes all five nullable component scores, their monitoring/availability/
-coverage metadata and raw forecast context for the city detail page. One
+Exposes the five aggregate component scores plus the independent Cold score,
+their monitoring/availability/coverage metadata and raw forecast context. One
 `ROW_NUMBER` selection chooses the complete worst-day row, ordered by score
 availability, score descending and date ascending. Every returned field
 therefore belongs to the same deterministic date, including on a tie.
+
+The Cold projection adds `cold_score`, `cold_status`, `cold_monitored`,
+`cold_available`, `cold_coverage`, `temperature_2m_min`,
+`normal_temperature_2m_min` and `cold_anomaly_c`. All eight values come directly
+from the row identified by `score_date` and `operational_ingestion_run_id`.
+NULL scores, fractional coverage and unmonitored states are preserved.
+
+The chosen date still uses the five-factor global score. A larger Cold score
+on the other date does not change the selection. For example, if today has
+global score 20 and Cold 100, while tomorrow has global score 40 and Cold 10,
+detail selects tomorrow and exposes Cold 10. When both dates lack a five-factor
+score, the earlier date wins even if Cold is available. Cold does not change
+ranking, driver selection, factor counts or overall coverage in this step.
+
+The backend's explicit SELECT and typed response still expose only Heat, Wind,
+Rain, Air Quality and River. Cold can be inspected in BigQuery now; API/UI
+exposure requires the following application changes. After `make dbt-run` and
+`make dbt-test`, inspect the view (replace `PROJECT_ID`):
+
+```sql
+SELECT city_id, score_date, current_tipping_score, current_primary_driver,
+       cold_score, cold_status, cold_monitored, cold_available, cold_coverage,
+       temperature_2m_min, normal_temperature_2m_min, cold_anomaly_c
+FROM `PROJECT_ID.mart.mart_city_score_detail_v2`
+ORDER BY city_id;
+```
+
+The unit test `test_cold_detail_v2` covers date selection, ties, Cold missingness,
+zero/unmonitored states and dates outside the two-day window using complete SQL
+fixtures. The warehouse test `assert_city_score_v2_worst_day_deterministic`
+checks the selected run/date and all eight Cold values against history. The
+existing city-spine test continues to check one detail row per configured city.
 
 ### Temporary legacy rollback marts
 
