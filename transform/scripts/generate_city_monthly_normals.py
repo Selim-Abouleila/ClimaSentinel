@@ -38,7 +38,7 @@ SOURCE_CITATION = "https://doi.org/10.5281/ZENODO.7970649"
 MODEL_SELECTOR = "best_match"
 START_DATE = date(2014, 1, 1)
 END_DATE = date(2023, 12, 31)
-BATCH_SIZE = 10
+BATCH_SIZE = 2
 
 CITY_COLUMNS = (
     "city_id",
@@ -57,12 +57,14 @@ OUTPUT_COLUMNS = (
     "month",
     "normal_temperature_2m_mean",
     "normal_temperature_2m_max",
+    "normal_temperature_2m_min",
     "normal_daily_precipitation_mm",
     "normal_wind_speed_10m_max",
 )
 VARIABLES = (
     ("normal_temperature_2m_mean", "temperature_2m_mean"),
     ("normal_temperature_2m_max", "temperature_2m_max"),
+    ("normal_temperature_2m_min", "temperature_2m_min"),
     ("normal_daily_precipitation_mm", "precipitation_sum"),
     ("normal_wind_speed_10m_max", "wind_speed_10m_max"),
 )
@@ -173,6 +175,7 @@ def _request_batch(cities: list[dict[str, str]], max_attempts: int) -> list[dict
     )
 
     for attempt in range(1, max_attempts + 1):
+        delay_seconds = min(60, 5 * (2 ** (attempt - 1)))
         try:
             with urlopen(request, timeout=240) as response:
                 payload = json.load(response)
@@ -184,11 +187,26 @@ def _request_batch(cities: list[dict[str, str]], max_attempts: int) -> list[dict
                 raise GenerationError(
                     f"Open-Meteo request failed with HTTP {exc.code}: {body}"
                 ) from exc
+            if exc.code == 429:
+                # Decade-long requests consume weighted API quota. Give the
+                # minute window time to clear; bound any server-requested wait.
+                delay_seconds = 60
+                try:
+                    retry_after = float((exc.headers or {}).get("Retry-After", "60"))
+                except (TypeError, ValueError):
+                    retry_after = 60
+                if math.isfinite(retry_after):
+                    if retry_after > 300:
+                        raise GenerationError(
+                            f"Open-Meteo requests a {retry_after:g}s retry delay, "
+                            "exceeding the 300s automatic wait limit; retry "
+                            "generation after that delay"
+                        ) from exc
+                    delay_seconds = max(60, retry_after)
         except (URLError, TimeoutError) as exc:
             if attempt == max_attempts:
                 raise GenerationError(f"Open-Meteo request failed: {exc}") from exc
 
-        delay_seconds = min(60, 5 * (2 ** (attempt - 1)))
         print(
             f"Open-Meteo request attempt {attempt} failed; retrying in "
             f"{delay_seconds}s",
@@ -322,6 +340,11 @@ def generate(
             rows, metadata = _aggregate_city(city, response, expected_dates)
             output_rows.extend(rows)
             response_metadata.append(metadata)
+        print(
+            f"Validated {len(response_metadata)}/{len(cities)} cities "
+            f"({len(expected_dates)} daily values per variable and city)",
+            file=sys.stderr,
+        )
     return output_rows, response_metadata
 
 
@@ -446,7 +469,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.output:
         args.output.parent.mkdir(parents=True, exist_ok=True)
-        args.output.write_text(csv_text, encoding="utf-8")
+        args.output.write_text(csv_text, encoding="utf-8", newline="")
     else:
         sys.stdout.write(csv_text)
     if args.metadata_output:

@@ -51,6 +51,7 @@ class CityConfigurationValidationTests(unittest.TestCase):
                 "month": str(month),
                 "normal_temperature_2m_mean": "12.0",
                 "normal_temperature_2m_max": "18.0",
+                "normal_temperature_2m_min": "6.0",
                 "normal_daily_precipitation_mm": "2.0",
                 "normal_wind_speed_10m_max": "20.0",
             }
@@ -159,6 +160,27 @@ class CityConfigurationValidationTests(unittest.TestCase):
 
         self.assertIn("frozen forecast allowlist is missing city IDs", errors)
         self.assertIn("frozen forecast allowlist has unexpected city IDs", errors)
+
+    def test_accepts_zero_and_negative_minimum_temperature_normals(self) -> None:
+        self.normal_rows[0]["normal_temperature_2m_min"] = "0.0"
+        self.normal_rows[1]["normal_temperature_2m_min"] = "-12.5"
+        self.assertEqual(self._validate(), [])
+
+    def test_rejects_missing_nonfinite_and_out_of_range_minimum_normals(self) -> None:
+        for value in ("", "nan", "inf", "-91"):
+            with self.subTest(value=value):
+                self.normal_rows[0]["normal_temperature_2m_min"] = value
+                errors = "\n".join(self._validate())
+                self.assertIn("normal_temperature_2m_min", errors)
+
+    def test_rejects_minimum_temperature_above_mean(self) -> None:
+        self.normal_rows[0]["normal_temperature_2m_min"] = "13.0"
+        errors = "\n".join(self._validate())
+        self.assertIn(
+            "normal_temperature_2m_min must be less than or equal to "
+            "normal_temperature_2m_mean",
+            errors,
+        )
 
     def test_rejects_monitoring_seed_drift(self) -> None:
         removed = self.monitoring_rows.pop()

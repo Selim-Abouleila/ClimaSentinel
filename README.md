@@ -70,6 +70,15 @@ proxy until the backend reports the same exact release ID before E2E starts.
 
 See the full guide in [docs/1-bootstrap-initialization.md](docs/1-bootstrap-initialization.md).
 
+For a dbt-only refresh in an existing GCP environment, use an updated checkout
+with dbt installed, GCP credentials and `.env` configured, then run
+`make validate-cities`, `make dbt-run` and `make dbt-test`.
+`make dbt-run` validates city files and loads static seeds before rebuilding
+models, including the new minimum-temperature baseline. It does not fetch
+historical data or deploy an ingestion image. Use `make deploy` from the updated checkout to keep the
+embedded CSV used by scheduled ingestion current. See the
+[Cloud Shell steps](docs/3-staging-layer.md#apply-the-cold-baseline-from-gcp-cloud-shell).
+
 ### All commands
 
 | Command | Description |
@@ -80,6 +89,7 @@ See the full guide in [docs/1-bootstrap-initialization.md](docs/1-bootstrap-init
 | `make deploy` | Validate city files, build/push, apply Terraform, execute and wait for ingestion, then run dbt seed/run/test |
 | `make plan` | Dry run — show changes without applying |
 | `make destroy` | Destroy Terraform-managed resources only; it does not remove the state bucket, Artifact Registry/images, BigQuery data, enabled APIs, or other imperatively created resources |
+| `make dbt-run` | Validate city files, load static seeds, then run all staging and mart models |
 | `make dbt-stg` | Run staging dbt models only |
 | `make dbt-test` | Run dbt schema and singular data tests |
 
@@ -332,6 +342,13 @@ rows and 240 city-month rows. The normals generator and provenance manifest
 record the expansion's 2014–2023 Open-Meteo procedure without silently
 refreshing the original 10 cities' retained values.
 
+The seed also includes `normal_temperature_2m_min` for all 20 cities: the
+average daily minimum for each local calendar month over 2014–2023. This new
+column has separate retrieval provenance and leaves existing baseline values
+unchanged. It prepares a future Cold score; current scoring and serving
+contracts still expose the existing five factors. See
+[the baseline methodology](docs/3-staging-layer.md#static-seeds-3).
+
 Run `make validate-cities` before building or deploying. It checks schemas,
 identifiers, coordinates, IANA time-zone names, display order, strict booleans,
 physical ranges, city/month completeness, the provenance checksum/count
@@ -374,10 +391,12 @@ current limits:
   outside that state, so Quick Start is not a complete clean-room recreation.
 - **Data transformations:** dbt defines Silver and Gold, but requires initialized
   Bronze sources and successful credentials/source access. All 240 monthly
-  normals rows are structurally validated. The new cities' 120 rows have a
+  normals rows are structurally validated. The new cities' existing columns have a
   checked-in generator and provenance manifest for their 2014–2023 Open-Meteo
-  procedure; the retained legacy 120 rows predate that generator and are not
+  procedure; the retained legacy columns predate that generator and are not
   claimed to be exactly reproducible from a provider dataset that can change.
+  The added minimum-temperature column has its own retrieval provenance for
+  all 240 rows; existing columns retain their original provenance.
 - **Machine learning:** MLflow records runs, but the DVC pointer on the current
   `dev` line is a legacy snapshot that predates the schema-v3 six-output
   training contract. Workflow-generated pointer commits are branch-local, so

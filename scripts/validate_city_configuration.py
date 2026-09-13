@@ -50,6 +50,7 @@ NORMALS_COLUMNS = (
     "month",
     "normal_temperature_2m_mean",
     "normal_temperature_2m_max",
+    "normal_temperature_2m_min",
     "normal_daily_precipitation_mm",
     "normal_wind_speed_10m_max",
 )
@@ -89,6 +90,7 @@ STRICT_BOOLEANS = frozenset({"true", "false"})
 NORMAL_RANGES = {
     "normal_temperature_2m_mean": (-80.0, 60.0),
     "normal_temperature_2m_max": (-80.0, 70.0),
+    "normal_temperature_2m_min": (-90.0, 60.0),
     "normal_daily_precipitation_mm": (0.0, 100.0),
     "normal_wind_speed_10m_max": (0.0, 250.0),
 }
@@ -323,7 +325,17 @@ def validate_normals(
                 )
 
         mean_temperature = values.get("normal_temperature_2m_mean")
+        min_temperature = values.get("normal_temperature_2m_min")
         max_temperature = values.get("normal_temperature_2m_max")
+        if (
+            min_temperature is not None
+            and mean_temperature is not None
+            and min_temperature > mean_temperature
+        ):
+            errors.append(
+                f"{path}:{line_number}: normal_temperature_2m_min must be less than "
+                "or equal to normal_temperature_2m_mean"
+            )
         if (
             mean_temperature is not None
             and max_temperature is not None

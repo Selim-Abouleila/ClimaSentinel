@@ -5,6 +5,12 @@ seeds:
     description: >
       One complete set of twelve monthly climate baselines per configured city.
       These values are required by the operational dashboard score models.
+      The minimum-temperature baseline prepares a future cold score.
+    config:
+      # Rebuild this small lookup so every seed entry point applies new columns.
+      full_refresh: true
+      column_types:
+        normal_temperature_2m_min: float64
     columns:
       - name: city_id
         description: Stable city identifier matching config/cities.csv.
@@ -15,6 +21,13 @@ seeds:
       - name: normal_temperature_2m_mean
         tests: [not_null]
       - name: normal_temperature_2m_max
+        tests: [not_null]
+      - name: normal_temperature_2m_min
+        description: >
+          Average of daily minimum temperatures in degrees Celsius for this
+          city's local calendar month over 2014-2023; not the month's lowest
+          temperature. Source and retrieval details are recorded in the
+          accompanying provenance manifest.
         tests: [not_null]
       - name: normal_daily_precipitation_mm
         tests: [not_null]
