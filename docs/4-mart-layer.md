@@ -84,6 +84,37 @@ each retrieval. A missing selected-run payload is not filled from an older run,
 and a later build can replace the table's dates; use the forecast-vintage marts
 for as-of analysis.
 
+#### Cold-temperature diagnostic
+
+The history mart exposes three additional columns for inspecting cold conditions:
+
+| Column | Meaning |
+|---|---|
+| `temperature_2m_min` | Daily minimum forecast temperature from the selected operational run, in °C. |
+| `normal_temperature_2m_min` | Seeded 2014–2023 average daily minimum for the same city and calendar month, in °C. |
+| `cold_anomaly_c` | `ROUND(GREATEST(0, normal_temperature_2m_min - temperature_2m_min), 2)`, in °C below normal. |
+
+The anomaly requires 24 non-null hourly temperature readings and a finite daily
+minimum and baseline. Missing, incomplete or non-finite inputs produce NULL.
+At or above normal produces zero; an actual 0°C temperature remains valid input.
+For example, a normal minimum of 2.3°C and a forecast minimum of −5°C produce
+7.3°C below normal. Only the current day is required, so the last complete
+forecast day can have a cold anomaly even when Heat lacks its next-day input.
+
+This diagnostic uses the existing operational date and city/month join. The
+staging date is derived from `DATE(valid_ts_utc)`, while the seed averages
+city-local calendar days. This addition preserves that existing date convention.
+
+The anomaly is not a 0–100 risk score. It does not enter the global score,
+primary driver, factor counts or coverage aggregates. Current/detail views,
+typed API responses and ML models continue to expose their existing contracts.
+Inspect the diagnostic directly in `mart.mart_city_score_history_v2`.
+
+After updating the GCP checkout, run `make dbt-run` and `make dbt-test`.
+The cold-anomaly fixture unit test covers calculation boundaries, missingness,
+city/month selection and unchanged five-factor outputs. The singular test
+`assert_city_cold_anomaly_contract` checks lineage and availability on built data.
+
 ### `mart_city_score_current_v2` (view)
 
 Selects the highest forecast-derived score for each city across the two UTC

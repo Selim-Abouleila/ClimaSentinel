@@ -254,8 +254,13 @@ separately in the provenance manifest. Previously checked-in columns are
 preserved. This value is the average daily minimum, not the month's single
 lowest reading or a value inferred from the mean/maximum columns.
 
-This addition prepares the seasonal Cold baseline only. Cold scoring rules,
-mart/API fields, dashboard factors and ML contracts are subsequent work.
+The operational `mart_city_score_history_v2` now exposes forecast minimum,
+normal minimum and `cold_anomaly_c` (degrees below normal). The diagnostic
+requires 24 non-null hourly readings and finite aggregate inputs; otherwise it
+is NULL. It does not affect the five-factor score or require tomorrow's data.
+See [Doc 4](../docs/4-mart-layer.md#cold-temperature-diagnostic) for the formula
+and tests. Cold risk scoring, API/dashboard factors and ML integration remain
+subsequent work.
 `seeds/_seeds.yml` sets `full_refresh: true` on `city_monthly_normals` so every
 seed run recreates that small lookup, including the new column, from its CSV.
 The setting is scoped to this seed; mart models keep their configured

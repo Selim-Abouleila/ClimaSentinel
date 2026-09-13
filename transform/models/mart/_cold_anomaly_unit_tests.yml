@@ -1,0 +1,20 @@
+version: 2
+
+unit_tests:
+  - name: test_cold_anomaly_v2
+    description: >
+      Exercise the operational cold diagnostic with real model SQL: city/month
+      baseline matching, zero and negative temperatures, two-decimal rounding,
+      incomplete or non-finite inputs, and independence from Heat monitoring or
+      a following forecast day. Existing scores, counts and drivers stay intact.
+    model: mart_city_score_history_v2
+    given:
+      - input: ref('stg_city_signal_input_v2')
+        format: sql
+        fixture: cold_anomaly_signals
+      - input: ref('city_monthly_normals')
+        format: sql
+        fixture: cold_anomaly_normals
+    expect:
+      format: sql
+      fixture: cold_anomaly_expected

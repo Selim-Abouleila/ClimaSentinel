@@ -17,7 +17,26 @@ WITH daily_signals AS (
 signals_with_baselines AS (
     SELECT
         signals.*,
-        normals.normal_temperature_2m_max
+        normals.normal_temperature_2m_max,
+        normals.normal_temperature_2m_min,
+        -- Degrees below the monthly minimum-temperature normal, not a score.
+        -- Current-day coverage is sufficient; no next-day value is required.
+        CASE
+            WHEN signals.temperature_2m_value_count = 24
+                AND signals.temperature_2m_min IS NOT NULL
+                AND NOT IS_NAN(signals.temperature_2m_min)
+                AND NOT IS_INF(signals.temperature_2m_min)
+                AND normals.normal_temperature_2m_min IS NOT NULL
+                AND NOT IS_NAN(normals.normal_temperature_2m_min)
+                AND NOT IS_INF(normals.normal_temperature_2m_min)
+                THEN ROUND(
+                    GREATEST(
+                        0.0,
+                        normals.normal_temperature_2m_min - signals.temperature_2m_min
+                    ),
+                    2
+                )
+        END AS cold_anomaly_c
     FROM daily_signals AS signals
     LEFT JOIN {{ ref('city_monthly_normals') }} AS normals
         ON signals.city_id = normals.city_id
@@ -275,6 +294,9 @@ final_scores AS (
 
         -- Raw values for context.
         temperature_2m_max,
+        temperature_2m_min,
+        normal_temperature_2m_min,
+        cold_anomaly_c,
         precipitation_sum_mm,
         wind_gusts_10m_max,
         european_aqi_max,

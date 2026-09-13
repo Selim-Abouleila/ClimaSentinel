@@ -87,6 +87,8 @@ models:
       required inputs are available. Monitoring, availability, status, and
       coverage metadata distinguish a genuine zero-risk measurement from an
       unavailable or unmonitored signal.
+      Also exposes the daily minimum temperature, monthly minimum-temperature
+      normal and cold_anomaly_c as diagnostics outside the five-factor score.
     columns:
       - name: operational_ingestion_run_id
         description: Exact raw ingestion snapshot used across every v2 source.
@@ -115,6 +117,22 @@ models:
         description: Mean input coverage across monitored factors, from 0 through 1.
       - name: primary_driver
         description: "Highest available factor, Stable, or Unavailable when none can be scored."
+      - name: temperature_2m_min
+        description: >
+          Minimum forecast temperature in degrees Celsius for this operational
+          date and selected run. May reflect an incomplete day; consult
+          cold_anomaly_c for a coverage-gated diagnostic.
+      - name: normal_temperature_2m_min
+        description: >
+          Seeded average daily minimum temperature for this city and the month
+          of the operational date, using the 2014-2023 city-local archive baseline.
+      - name: cold_anomaly_c
+        description: >
+          Degrees below the monthly minimum-temperature normal:
+          ROUND(GREATEST(0, normal_temperature_2m_min - temperature_2m_min), 2).
+          Requires 24 non-null hourly temperature readings and finite daily
+          minimum and baseline; otherwise NULL. Zero means at or above normal.
+          Does not require tomorrow's data and is not a 0-100 score or factor.
 
   - name: mart_city_score_current_v2
     description: >

@@ -114,9 +114,10 @@ misrepresenting the legacy half of the seed.
 estimate from the existing mean or maximum baseline, nor the lowest
 temperature recorded in that month. Its column-specific provenance records
 the new retrieval separately; all previously checked-in baseline values remain
-unchanged. This is the first Cold implementation step: scoring thresholds,
-mart/API outputs, dashboard factors and ML contracts still require a later
-change.
+unchanged. The operational history mart now joins this baseline and exposes
+`cold_anomaly_c` alongside the forecast and normal minimum temperatures; see
+[the cold diagnostic](4-mart-layer.md#cold-temperature-diagnostic).
+Cold risk scoring, API/dashboard factors and ML integration remain later steps.
 
 The standard-library city validator checks unique city/month keys, exactly 12
 months for every active city, finite physical ranges, registry consistency,

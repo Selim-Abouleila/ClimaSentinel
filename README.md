@@ -345,8 +345,10 @@ refreshing the original 10 cities' retained values.
 The seed also includes `normal_temperature_2m_min` for all 20 cities: the
 average daily minimum for each local calendar month over 2014–2023. This new
 column has separate retrieval provenance and leaves existing baseline values
-unchanged. It prepares a future Cold score; current scoring and serving
-contracts still expose the existing five factors. See
+unchanged. The operational history mart exposes a coverage-gated
+`cold_anomaly_c` in degrees below normal, preparing a future Cold score.
+Current scoring and serving contracts still expose the existing five factors.
+See [the cold diagnostic](docs/4-mart-layer.md#cold-temperature-diagnostic) and
 [the baseline methodology](docs/3-staging-layer.md#static-seeds-3).
 
 Run `make validate-cities` before building or deploying. It checks schemas,
