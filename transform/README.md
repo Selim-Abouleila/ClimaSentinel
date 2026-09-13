@@ -259,8 +259,10 @@ normal minimum and `cold_anomaly_c` (degrees below normal). The diagnostic
 requires 24 non-null hourly readings and finite aggregate inputs; otherwise it
 is NULL. It does not affect the five-factor score or require tomorrow's data.
 See [Doc 4](../docs/4-mart-layer.md#cold-temperature-diagnostic) for the formula
-and tests. Cold risk scoring, API/dashboard factors and ML integration remain
-subsequent work.
+and tests. The [initial Cold scoring rule](../docs/4-mart-layer.md#cold-scoring-rule-cold_anomaly_v1-specified-not-implemented)
+is now specified: five points per degree below the monthly Tmin reference,
+capped at 100 and rounded to one decimal. Score implementation, API/dashboard
+factors and ML integration remain subsequent work.
 `seeds/_seeds.yml` sets `full_refresh: true` on `city_monthly_normals` so every
 seed run recreates that small lookup, including the new column, from its CSV.
 The setting is scoped to this seed; mart models keep their configured
