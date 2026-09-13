@@ -114,6 +114,15 @@ After updating the GCP checkout, run `make dbt-run` and `make dbt-test`.
 The cold-anomaly fixture unit test covers calculation boundaries, missingness,
 city/month selection and unchanged five-factor outputs. The singular test
 `assert_city_cold_anomaly_contract` checks lineage and availability on built data.
+The unit test uses SQL fixtures to represent NaN and infinity. Its expected
+fixture includes every history-model output column, as required by
+[dbt's SQL fixture format](https://docs.getdbt.com/reference/resource-properties/data-formats),
+including run/source metadata and the existing factor outputs. Keep that
+fixture aligned when adding model columns. To rerun only this unit test:
+
+```bash
+dbt test --project-dir transform --profiles-dir transform --select test_cold_anomaly_v2
+```
 
 ### `mart_city_score_current_v2` (view)
 
