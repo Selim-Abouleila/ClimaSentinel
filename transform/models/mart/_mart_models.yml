@@ -88,7 +88,8 @@ models:
       coverage metadata distinguish a genuine zero-risk measurement from an
       unavailable or unmonitored signal.
       Also exposes the daily minimum temperature, monthly minimum-temperature
-      normal and cold_anomaly_c as diagnostics outside the five-factor score.
+      normal, cold_anomaly_c and a nullable Cold score with availability metadata.
+      Cold remains outside the five-factor aggregate pending API/UI integration.
     columns:
       - name: operational_ingestion_run_id
         description: Exact raw ingestion snapshot used across every v2 source.
@@ -103,18 +104,18 @@ models:
         tests:
           - not_null
       - name: global_tipping_score
-        description: "Maximum available factor score (0-100); NULL when no factor is available."
+        description: "Maximum available Heat/Wind/Rain/Air/River score (0-100); excludes Cold. NULL when none is available."
       - name: global_score_available
         description: True when at least one factor contributed to the global score.
         tests: [not_null]
       - name: monitored_factor_count
-        description: Number of factors configured for monitoring for the city.
+        description: Number of monitored Heat/Wind/Rain/Air/River factors; excludes Cold.
         tests: [not_null]
       - name: available_factor_count
-        description: Number of monitored factors with a defensible score on the date.
+        description: Number of available Heat/Wind/Rain/Air/River factors; excludes Cold.
         tests: [not_null]
       - name: overall_coverage
-        description: Mean input coverage across monitored factors, from 0 through 1.
+        description: Mean coverage across monitored Heat/Wind/Rain/Air/River factors; excludes Cold.
       - name: primary_driver
         description: "Highest available factor, Stable, or Unavailable when none can be scored."
       - name: temperature_2m_min
@@ -133,6 +134,27 @@ models:
           Requires 24 non-null hourly temperature readings and finite daily
           minimum and baseline; otherwise NULL. Zero means at or above normal.
           Does not require tomorrow's data and is not a 0-100 score or factor.
+      - name: cold_score
+        description: >
+          cold_anomaly_v1: five points per degree below the monthly minimum
+          reference, capped at 100 and rounded to one decimal using NUMERIC
+          arithmetic, exposed as FLOAT64. NULL unless Cold is monitored and
+          its current-day anomaly is usable. Excluded from the global aggregate.
+      - name: cold_monitored
+        description: Cold-monitoring policy from the exact-run staging city/date spine.
+        tests: [not_null]
+      - name: cold_available
+        description: True exactly when cold_score is non-null, including a valid zero.
+        tests: [not_null]
+      - name: cold_status
+        description: One of available, unavailable or not_monitored, consistent with Cold inputs and policy.
+        tests: [not_null]
+      - name: cold_coverage
+        description: >
+          NULL when not monitored, 1 when available, or the fraction of 24
+          readings for a partial day with finite Tmin/reference. Missing or
+          invalid inputs give 0. Rounded to three decimals; excluded from
+          overall_coverage until the six-factor cutover.
 
   - name: mart_city_score_current_v2
     description: >

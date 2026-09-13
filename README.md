@@ -346,16 +346,17 @@ The seed also includes `normal_temperature_2m_min` for all 20 cities: the
 average daily minimum for each local calendar month over 2014–2023. This new
 column has separate retrieval provenance and leaves existing baseline values
 unchanged. The operational history mart exposes a coverage-gated
-`cold_anomaly_c` in degrees below normal, preparing a future Cold score.
-Current scoring and serving contracts still expose the existing five factors.
+`cold_anomaly_c` in degrees below normal, plus a nullable Cold score and its
+availability metadata. Global scoring and serving contracts still use the
+existing five factors.
 See [the cold diagnostic](docs/4-mart-layer.md#cold-temperature-diagnostic) and
 [the baseline methodology](docs/3-staging-layer.md#static-seeds-3).
-The [initial Cold score contract](docs/4-mart-layer.md#cold-scoring-rule-cold_anomaly_v1-specified-not-implemented)
-defines the next implementation: five points per degree below the monthly Tmin
-reference, capped at 100. This rule is documented but not yet active.
+The [initial Cold score contract](docs/4-mart-layer.md#cold-scoring-rule-cold_anomaly_v1)
+is implemented in history: five points per degree below the monthly Tmin
+reference, capped at 100 and rounded to one decimal.
 Cold monitoring is now configured for all 20 cities through `cold_monitored`
-in the monitoring seed and `stg_city_signal_input_v2`. This prepares the score;
-existing score aggregates still use five factors.
+in the monitoring seed and `stg_city_signal_input_v2`. The live aggregate and
+API/UI integration of Cold will follow in later steps.
 
 Run `make validate-cities` before building or deploying. It checks schemas,
 identifiers, coordinates, IANA time-zone names, display order, strict booleans,

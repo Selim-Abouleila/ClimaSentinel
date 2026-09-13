@@ -229,7 +229,7 @@ therefore three separate checks.
 contract. Heat, Cold, Wind, Rain and Air Quality are enabled for every active
 city; River must match `config/cities.csv:river_enabled` exactly. The separate
 `cold_monitored` boolean is carried into `stg_city_signal_input_v2`, including
-weather-gap rows, in preparation for Cold scoring. Both the standard
+weather-gap rows, and controls the independent history Cold score. Both the standard
 validator and warehouse singular tests reject missing/extra cities, disabled
 required factors or River disagreement. Cold also has seed/staging not-null
 tests and a warehouse check that the staging flag matches the seed by city.
@@ -257,15 +257,17 @@ separately in the provenance manifest. Previously checked-in columns are
 preserved. This value is the average daily minimum, not the month's single
 lowest reading or a value inferred from the mean/maximum columns.
 
-The operational `mart_city_score_history_v2` now exposes forecast minimum,
+The operational `mart_city_score_history_v2` exposes forecast minimum,
 normal minimum and `cold_anomaly_c` (degrees below normal). The diagnostic
 requires 24 non-null hourly readings and finite aggregate inputs; otherwise it
 is NULL. It does not affect the five-factor score or require tomorrow's data.
 See [Doc 4](../docs/4-mart-layer.md#cold-temperature-diagnostic) for the formula
-and tests. The [initial Cold scoring rule](../docs/4-mart-layer.md#cold-scoring-rule-cold_anomaly_v1-specified-not-implemented)
-is now specified: five points per degree below the monthly Tmin reference,
-capped at 100 and rounded to one decimal. Score implementation, API/dashboard
-factors and ML integration remain subsequent work.
+and tests. The [initial Cold scoring rule](../docs/4-mart-layer.md#cold-scoring-rule-cold_anomaly_v1)
+is implemented in history: five points per degree below the monthly Tmin
+reference, capped at 100 and rounded to one decimal. It exposes `cold_score`,
+`cold_monitored`, `cold_available`, `cold_status` and `cold_coverage`. The global
+score and aggregate metadata still use five factors. Serving-view/API/dashboard
+integration and ML support remain subsequent work.
 `seeds/_seeds.yml` sets `full_refresh: true` on `city_monthly_normals` and
 `city_signal_monitoring` so every seed run applies their new baseline and
 monitoring columns from the CSVs. The setting is scoped to these two seeds;

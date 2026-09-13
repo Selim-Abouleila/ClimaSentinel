@@ -37,6 +37,8 @@ independent from the frozen 10-city same-vintage ML path.
 
 Calculates the forecast-derived Tipping Score for every city and valid date. It
 combines five component indicators and takes their maximum as the global score.
+It also calculates Cold independently in the history table, with its own
+monitoring and availability fields, ready for later serving integration.
 
 These formulas, multipliers, activation thresholds and the maximum aggregation
 are product-defined and uncalibrated. Their permitted uses and evidence gaps are
@@ -111,9 +113,11 @@ typed API responses and ML models continue to expose their existing contracts.
 Inspect the diagnostic directly in `mart.mart_city_score_history_v2`.
 
 After updating the GCP checkout, run `make dbt-run` and `make dbt-test`.
-The cold-anomaly fixture unit test covers calculation boundaries, missingness,
-city/month selection and unchanged five-factor outputs. The singular test
-`assert_city_cold_anomaly_contract` checks lineage and availability on built data.
+The cold-anomaly fixture unit test covers anomaly and Cold-score boundaries,
+missingness, city/month selection and unchanged five-factor outputs. The
+singular test `assert_city_cold_anomaly_contract` checks diagnostic lineage and
+availability on built data. `assert_city_cold_score_contract` checks Cold's
+monitoring lineage, eligibility, status, coverage and finite score range.
 The unit test uses SQL fixtures to represent NaN and infinity. Its expected
 fixture includes every history-model output column, as required by
 [dbt's SQL fixture format](https://docs.getdbt.com/reference/resource-properties/data-formats),
@@ -124,18 +128,19 @@ fixture aligned when adding model columns. To rerun only this unit test:
 dbt test --project-dir transform --profiles-dir transform --select test_cold_anomaly_v2
 ```
 
-#### Cold scoring rule: `cold_anomaly_v1` (specified, not implemented)
+#### Cold scoring rule: `cold_anomaly_v1`
 
-**Status:** this is the implementation contract for the next Cold microsteps.
-The deployed history mart currently exposes only the minimum-temperature
-diagnostic above. It does not yet calculate `cold_score` or include Cold in the
-global score. The rule identifier versions this specification; it is not a new
-warehouse column in this step.
+**Status:** implemented in `mart_city_score_history_v2`. After applying the
+dbt changes, the history table exposes `cold_score`, `cold_status`,
+`cold_monitored`, `cold_available` and `cold_coverage`, alongside the raw Tmin,
+monthly reference and anomaly. Cold is excluded from the live global score,
+driver, factor counts and overall coverage pending coordinated API/UI support.
+Current/detail views and typed API responses still use their five-factor
+contracts. The rule identifier names this specification, not a warehouse column.
 
-The monitoring prerequisite is implemented: `city_signal_monitoring` and
-`stg_city_signal_input_v2` now expose `cold_monitored`, required true for all
-20 active cities. The history mart's public projection and existing factor
-counts do not yet include it. See [the seed and staging contract](3-staging-layer.md#static-seeds-3).
+`cold_monitored` comes from `city_signal_monitoring` through
+`stg_city_signal_input_v2`, and the city policy requires it true for all 20
+active cities. See [the seed and staging contract](3-staging-layer.md#static-seeds-3).
 
 **Meaning:** Cold measures how far the daily forecast minimum falls below this
 city's monthly minimum-temperature reference. Absolute Tmin contributes only
@@ -165,15 +170,18 @@ absolute-temperature term would require a revised rule and reviewed examples.
 | Saturation | Clipping starts at a 20°C anomaly; larger anomalies stay at `100.0`. Final rounding can also display `100.0` just below that threshold. |
 | Rounding | Reuse `cold_anomaly_c` already rounded to two decimals; multiply, cap at 100, then round the score to one decimal. Use decimal arithmetic for this calculation, with halfway values rounding away from zero. |
 | Missingness | Missing/incomplete/non-finite inputs produce a NULL score; never substitute zero or an older run. |
-| Monitoring | `cold_monitored = false` will produce a NULL score when scoring is implemented. Cold monitoring is independent of `heat_monitored`; the current city policy requires it true for every active city. Missing monitoring configuration is a contract error. |
+| Monitoring | `cold_monitored = false` produces a NULL score. Cold monitoring is independent of `heat_monitored`; the current city policy requires it true for every active city. Missing monitoring configuration is a contract error. |
 | Forecast horizon | Require only the current operational date. The last complete forecast day remains eligible without tomorrow's inputs. |
 
-For BigQuery implementation, cast the two-decimal anomaly to `NUMERIC` before
-multiplication so binary floating-point representation does not decide a
-rounding tie. Use the default [BigQuery `ROUND` mode](https://cloud.google.com/bigquery/docs/reference/standard-sql/mathematical_functions#round),
-then expose the final score as `FLOAT64`, consistent with the existing factors.
+The BigQuery implementation caps the non-negative anomaly at 20°C before
+casting it to `NUMERIC` and multiplying by five. This is equivalent to capping
+the score at 100 and avoids overflowing the decimal cast for very large finite
+anomalies. Decimal arithmetic prevents binary floating-point representation
+from deciding a rounding tie. The default [BigQuery `ROUND` mode](https://cloud.google.com/bigquery/docs/reference/standard-sql/mathematical_functions#round)
+is used, and the final score is exposed as `FLOAT64`, consistent with the other
+factors.
 
-The future factor uses the existing availability conventions. Required inputs
+The factor uses the existing availability conventions. Required inputs
 are a finite daily Tmin, a finite monthly Tmin reference and exactly 24 non-null
 temperature readings from the selected run. The existing count measures
 non-null readings; it is not a count of individually finite hourly values.
@@ -185,15 +193,16 @@ non-null readings; it is not a count of individually finite hourly values.
 | Monitored, finite Tmin/reference, 1–23 non-null readings | NULL | `unavailable` | false | `ROUND(reading_count / 24.0, 3)` |
 | Monitored, missing/non-finite Tmin/reference or invalid count (NULL, 0, negative or >24) | NULL | `unavailable` | false | `0.0` |
 | Monitored, otherwise usable inputs but invalid anomaly (NULL, non-finite or negative) | NULL | `unavailable` | false | `0.0` |
+| Missing monitoring flag (contract error) | NULL | `unavailable` | false | `0.0` |
 
 An invalid anomaly with otherwise usable inputs is also a contract violation;
 the contract test must fail for that state. The diagnostic itself stays independent
-of monitoring. These score/metadata columns will be implemented in later steps.
+of monitoring. Missing monitoring configuration also fails the contract tests.
 
 **Worked examples.** These are illustrative inputs, not additional seed values.
 Unless noted, Cold is monitored, all inputs are finite and the count is 24.
 
-| Example | Normal Tmin (°C) | Forecast Tmin (°C) | `cold_anomaly_c` | Future `cold_score` |
+| Example | Normal Tmin (°C) | Forecast Tmin (°C) | `cold_anomaly_c` | `cold_score` |
 |---|---:|---:|---:|---:|
 | Below the monthly reference | 2.30 | -5.00 | 7.30 | 36.5 |
 | Exactly normal | 4.10 | 4.10 | 0.00 | 0.0 |
@@ -218,16 +227,27 @@ index: for comparison, the [Climdex CSDI definition](https://climate-scenarios.c
 counts days in spells of at least six consecutive days below a daily Tmin
 10th-percentile threshold. The monthly mean seed does not supply that percentile.
 
-**Implementation acceptance:** later dbt tests must cover the examples,
-monotonicity below the cap, non-negative finite scores bounded by 100, missing
-and invalid counts, non-finite values, monitoring/status/coverage consistency,
-city/month selection and independence from tomorrow. SQL expected fixtures
-must continue to include every model output column. Each implementing step
-must pass warehouse tests as well as local checks.
+**Verification:** fixture unit tests cover rounding, clipping, increasing
+anomalies, missing and invalid counts, non-finite values, unmonitored Cold,
+city/month selection and independence from Heat or tomorrow. The expected SQL
+includes all history output columns and verifies the existing five-factor
+results even when Cold exceeds their maximum. Schema and singular tests check
+Cold metadata, source lineage, eligibility, coverage and finite 0–100 scores.
+Run `make dbt-run` followed by `make dbt-test` against BigQuery, then inspect
+the new fields directly (replace `PROJECT_ID`):
 
-Cold first enters history/detail as an additional factor. Existing global
-score, driver, counts and coverage stay on five factors until the six-factor
-aggregation change is released with compatible backend/frontend contracts.
+```sql
+SELECT city_id, date, temperature_2m_min, normal_temperature_2m_min,
+       cold_anomaly_c, cold_score, cold_status, cold_monitored,
+       cold_available, cold_coverage, global_tipping_score
+FROM `PROJECT_ID.mart.mart_city_score_history_v2`
+ORDER BY city_id, date;
+```
+
+Cold currently enters history only. Detail-view projection and API/UI exposure
+are the next integration steps. Existing global score, driver, counts and
+coverage stay on five factors until the six-factor aggregation change is
+released with compatible backend/frontend contracts.
 Current/detail worst-day selection and zone/ranking behavior must be checked at
 that activation. ML features, labels and the three-day forecast experience
 require their own later Cold specification.

@@ -113,6 +113,24 @@ factor_scores AS (
                 )
         END AS heat_score,
 
+        -- cold_anomaly_v1: current-day anomaly only. Cap in degrees before
+        -- converting to NUMERIC to keep even very large finite inputs safe.
+        -- Decimal arithmetic fixes score rounding; the public type is FLOAT64.
+        CASE
+            WHEN cold_monitored
+                AND temperature_2m_value_count = 24
+                AND cold_anomaly_c IS NOT NULL
+                AND NOT IS_NAN(cold_anomaly_c)
+                AND NOT IS_INF(cold_anomaly_c)
+                AND cold_anomaly_c >= 0
+                THEN CAST(
+                    ROUND(
+                        CAST(LEAST(cold_anomaly_c, 20.0) AS NUMERIC) * NUMERIC '5',
+                        1
+                    ) AS FLOAT64
+                )
+        END AS cold_score,
+
         CASE
             WHEN wind_monitored
                 AND wind_gusts_10m_max IS NOT NULL
@@ -157,6 +175,7 @@ scores_with_metadata AS (
         *,
 
         heat_score IS NOT NULL AS heat_available,
+        cold_score IS NOT NULL AS cold_available,
         wind_score IS NOT NULL AS wind_available,
         rain_score IS NOT NULL AS rain_available,
         air_score IS NOT NULL AS air_available,
@@ -167,6 +186,11 @@ scores_with_metadata AS (
             WHEN heat_score IS NULL THEN 'unavailable'
             ELSE 'available'
         END AS heat_status,
+        CASE
+            WHEN NOT cold_monitored THEN 'not_monitored'
+            WHEN cold_score IS NULL THEN 'unavailable'
+            ELSE 'available'
+        END AS cold_status,
         CASE
             WHEN NOT wind_monitored THEN 'not_monitored'
             WHEN wind_score IS NULL THEN 'unavailable'
@@ -204,6 +228,20 @@ scores_with_metadata AS (
                 IF(normal_temperature_2m_max IS NOT NULL, 1.0, 0.0)
             )
         END AS heat_coverage,
+        CASE
+            WHEN NOT cold_monitored THEN NULL
+            WHEN cold_score IS NOT NULL THEN 1.0
+            WHEN cold_monitored
+                AND temperature_2m_value_count BETWEEN 1 AND 23
+                AND temperature_2m_min IS NOT NULL
+                AND NOT IS_NAN(temperature_2m_min)
+                AND NOT IS_INF(temperature_2m_min)
+                AND normal_temperature_2m_min IS NOT NULL
+                AND NOT IS_NAN(normal_temperature_2m_min)
+                AND NOT IS_INF(normal_temperature_2m_min)
+                THEN SAFE_DIVIDE(temperature_2m_value_count, 24)
+            ELSE 0.0
+        END AS cold_coverage,
         CASE
             WHEN NOT wind_monitored THEN NULL
             ELSE LEAST(
@@ -246,6 +284,7 @@ scores_with_metadata AS (
 scores_with_global AS (
     SELECT
         *,
+        -- Cold remains outside the live aggregate until the API/UI cutover.
         (
             SELECT MAX(score)
             FROM UNNEST([
@@ -304,6 +343,7 @@ final_scores AS (
 
         -- Nullable factor scores: NULL means no defensible score exists.
         ROUND(heat_score, 1) AS heat_score,
+        cold_score,
         ROUND(wind_score, 1) AS wind_score,
         ROUND(rain_score, 1) AS rain_score,
         ROUND(air_score, 1) AS air_score,
@@ -313,6 +353,10 @@ final_scores AS (
         heat_monitored,
         heat_available,
         ROUND(heat_coverage, 3) AS heat_coverage,
+        cold_status,
+        cold_monitored,
+        cold_available,
+        ROUND(cold_coverage, 3) AS cold_coverage,
         wind_status,
         wind_monitored,
         wind_available,

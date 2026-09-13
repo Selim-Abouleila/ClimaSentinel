@@ -85,9 +85,9 @@ Static configuration data loaded directly into BigQuery tables via `dbt seed`.
 
 | Seed | Description | Source |
 |---|---|---|
-| `city_monthly_normals` | Structurally validated 240-row lookup: one temperature, precipitation and wind baseline row for each of 12 months across 20 operational cities. The Gold layer uses its maximum-temperature value as the Heat baseline; the minimum-temperature column prepares a future Cold score. | `transform/seeds/city_monthly_normals.csv` |
+| `city_monthly_normals` | Structurally validated 240-row lookup: one temperature, precipitation and wind baseline row for each of 12 months across 20 operational cities. The Gold layer uses its maximum-temperature value as the Heat baseline and its minimum-temperature value for the independent history Cold score. | `transform/seeds/city_monthly_normals.csv` |
 | `forecast_city_allowlist` | Frozen original 10-city/timezone contract for forecast-vintage staging and calendar-day retrieval-vintage feature, training and serving outputs. The other 10 operational cities remain outside that path. | `transform/seeds/forecast_city_allowlist.csv` |
-| `city_signal_monitoring` | One row per active operational city declaring whether Heat, Cold, Wind, Rain, Air Quality and River are monitored. Weather and AQ are enabled for all 20 cities; River mirrors `config/cities.csv:river_enabled`. Cold currently supplies configuration for later scoring. | `transform/seeds/city_signal_monitoring.csv` |
+| `city_signal_monitoring` | One row per active operational city declaring whether Heat, Cold, Wind, Rain, Air Quality and River are monitored. Weather and AQ are enabled for all 20 cities; River mirrors `config/cities.csv:river_enabled`. Cold is scored independently in history while live aggregates still use five factors. | `transform/seeds/city_signal_monitoring.csv` |
 
 `transform/scripts/generate_city_monthly_normals.py` generated the expansion's
 120 rows from the Open-Meteo Historical Weather endpoint with
@@ -117,14 +117,16 @@ the new retrieval separately; all previously checked-in baseline values remain
 unchanged. The operational history mart now joins this baseline and exposes
 `cold_anomaly_c` alongside the forecast and normal minimum temperatures; see
 [the cold diagnostic](4-mart-layer.md#cold-temperature-diagnostic).
-Cold risk scoring, API/dashboard factors and ML integration remain later steps.
+The [initial Cold score](4-mart-layer.md#cold-scoring-rule-cold_anomaly_v1)
+is implemented in history; serving-view/API/dashboard integration and ML
+support remain later steps.
 
 `cold_monitored` is a separate boolean in `city_signal_monitoring`, required
 `true` for all 20 active cities. `stg_city_signal_input_v2` carries it directly
 from the city/date spine, including rows with missing weather data. It is a
 monitoring policy, not a claim that Cold inputs are available. The history mart
-still exposes the existing Cold anomaly without a Cold score; its five-factor
-aggregates and serving contracts remain unchanged.
+uses it to calculate the nullable Cold score and availability metadata; its
+global aggregates and serving contracts continue to use five factors.
 
 The standard-library city validator checks unique city/month keys, exactly 12
 months for every active city, finite physical ranges, registry consistency,

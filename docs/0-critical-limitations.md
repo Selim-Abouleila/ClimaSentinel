@@ -39,13 +39,14 @@ Heat uses project baselines, not validated climate normals. The expansion
 cohort uses 2014-2023 Open-Meteo Archive API data; the original cohort lacks
 exact retrieval provenance. See [Static Seeds](3-staging-layer.md#static-seeds-3).
 
-The [initial Cold scoring contract](4-mart-layer.md#cold-scoring-rule-cold_anomaly_v1-specified-not-implemented)
-is specified but not yet implemented: five points per degree below the monthly
+The [initial Cold scoring contract](4-mart-layer.md#cold-scoring-rule-cold_anomaly_v1)
+is implemented in the history mart: five points per degree below the monthly
 Tmin reference, capped at 100. Its coefficient is a product choice with no
 Cold outcome calibration or backtest. It measures relative cold anomaly;
 absolute cold severity, wind chill and persistence are not evaluated. A zero
-would mean no below-reference anomaly, not safe absolute conditions. The
-current mart exposes only `cold_anomaly_c`; Cold is not an active sixth factor.
+means no below-reference anomaly, not safe absolute conditions. The
+history mart exposes the anomaly, score and availability metadata; Cold is
+excluded from the live aggregate and current API/UI contracts.
 
 ## Evidence by component
 

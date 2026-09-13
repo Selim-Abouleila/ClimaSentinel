@@ -5,7 +5,7 @@ seeds:
     description: >
       One complete set of twelve monthly climate baselines per configured city.
       These values are required by the operational dashboard score models.
-      The minimum-temperature baseline prepares a future cold score.
+      The minimum-temperature baseline supports the independent history Cold score.
     config:
       # Rebuild this small lookup so every seed entry point applies new columns.
       full_refresh: true
@@ -56,7 +56,7 @@ seeds:
       Operational factor-monitoring contract for every active dashboard city.
       The repository city validator enforces exact membership against
       config/cities.csv and requires river_monitored to match river_enabled.
-      Cold is enabled for every active city in preparation for its future score.
+      Cold is enabled for every active city and controls its independent history score.
     config:
       # Apply monitoring-schema additions at every seed entry point.
       full_refresh: true
@@ -76,7 +76,7 @@ seeds:
       - name: cold_monitored
         description: >
           Cold-monitoring policy, independent of Heat. Required true for all
-          active cities; prepares Cold scoring without activating a sixth factor.
+          active cities; controls Cold scoring outside the live aggregate.
         tests: [not_null]
       - name: wind_monitored
         tests: [not_null]

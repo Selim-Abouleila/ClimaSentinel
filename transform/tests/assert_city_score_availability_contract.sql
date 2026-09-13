@@ -22,6 +22,14 @@ WITH factor_rows AS (
             heat_coverage AS coverage
         ),
         STRUCT(
+            'cold' AS factor_name,
+            cold_score AS score,
+            cold_status AS status,
+            cold_monitored AS monitored,
+            cold_available AS available,
+            cold_coverage AS coverage
+        ),
+        STRUCT(
             'wind' AS factor_name,
             wind_score AS score,
             wind_status AS status,
@@ -94,6 +102,8 @@ factor_violations AS (
         )
 ),
 
+-- Cold metadata is checked above, but aggregation remains on the original
+-- five factors until the serving contracts support six-factor aggregation.
 global_expectations AS (
     SELECT
         *,
