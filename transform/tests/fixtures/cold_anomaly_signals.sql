@@ -32,6 +32,7 @@ SELECT
     scenarios.city_id,
     scenarios.date,
     scenarios.heat_monitored,
+    TRUE AS cold_monitored,
     TRUE AS wind_monitored,
     TRUE AS rain_monitored,
     TRUE AS air_monitored,

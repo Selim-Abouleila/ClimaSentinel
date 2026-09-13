@@ -353,6 +353,9 @@ See [the cold diagnostic](docs/4-mart-layer.md#cold-temperature-diagnostic) and
 The [initial Cold score contract](docs/4-mart-layer.md#cold-scoring-rule-cold_anomaly_v1-specified-not-implemented)
 defines the next implementation: five points per degree below the monthly Tmin
 reference, capped at 100. This rule is documented but not yet active.
+Cold monitoring is now configured for all 20 cities through `cold_monitored`
+in the monitoring seed and `stg_city_signal_input_v2`. This prepares the score;
+existing score aggregates still use five factors.
 
 Run `make validate-cities` before building or deploying. It checks schemas,
 identifiers, coordinates, IANA time-zone names, display order, strict booleans,

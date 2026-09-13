@@ -58,6 +58,7 @@ FORECAST_ALLOWLIST_COLUMNS = ("city_id", "forecast_origin_time_zone")
 SIGNAL_MONITORING_COLUMNS = (
     "city_id",
     "heat_monitored",
+    "cold_monitored",
     "wind_monitored",
     "rain_monitored",
     "air_monitored",
@@ -484,6 +485,7 @@ def validate_signal_monitoring(
         row = actual[city_id]
         expected = {
             "heat_monitored": "true",
+            "cold_monitored": "true",
             "wind_monitored": "true",
             "rain_monitored": "true",
             "air_monitored": "true",

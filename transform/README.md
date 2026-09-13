@@ -226,10 +226,13 @@ therefore three separate checks.
 ## Static-Seed Provenance
 
 `city_signal_monitoring.csv` is the checked-in 20-city operational monitoring
-contract. Heat, Wind, Rain and Air Quality are enabled for every active city;
-River must match `config/cities.csv:river_enabled` exactly. Both the standard
+contract. Heat, Cold, Wind, Rain and Air Quality are enabled for every active
+city; River must match `config/cities.csv:river_enabled` exactly. The separate
+`cold_monitored` boolean is carried into `stg_city_signal_input_v2`, including
+weather-gap rows, in preparation for Cold scoring. Both the standard
 validator and warehouse singular tests reject missing/extra cities, disabled
-required factors or River disagreement.
+required factors or River disagreement. Cold also has seed/staging not-null
+tests and a warehouse check that the staging flag matches the seed by city.
 
 `city_monthly_normals.csv` is a checked-in 240-row city/month lookup used by the
 Heat rules and labels. Structural validation requires unique keys, exactly 12
@@ -263,9 +266,10 @@ and tests. The [initial Cold scoring rule](../docs/4-mart-layer.md#cold-scoring-
 is now specified: five points per degree below the monthly Tmin reference,
 capped at 100 and rounded to one decimal. Score implementation, API/dashboard
 factors and ML integration remain subsequent work.
-`seeds/_seeds.yml` sets `full_refresh: true` on `city_monthly_normals` so every
-seed run recreates that small lookup, including the new column, from its CSV.
-The setting is scoped to this seed; mart models keep their configured
+`seeds/_seeds.yml` sets `full_refresh: true` on `city_monthly_normals` and
+`city_signal_monitoring` so every seed run applies their new baseline and
+monitoring columns from the CSVs. The setting is scoped to these two seeds;
+mart models keep their configured
 materializations and seeding does not modify raw data. `make dbt-run`
 validates city files and seeds all static configuration before running models;
 `make dbt-stg` continues to run staging models only.

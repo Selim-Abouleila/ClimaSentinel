@@ -132,6 +132,11 @@ diagnostic above. It does not yet calculate `cold_score` or include Cold in the
 global score. The rule identifier versions this specification; it is not a new
 warehouse column in this step.
 
+The monitoring prerequisite is implemented: `city_signal_monitoring` and
+`stg_city_signal_input_v2` now expose `cold_monitored`, required true for all
+20 active cities. The history mart's public projection and existing factor
+counts do not yet include it. See [the seed and staging contract](3-staging-layer.md#static-seeds-3).
+
 **Meaning:** Cold measures how far the daily forecast minimum falls below this
 city's monthly minimum-temperature reference. Absolute Tmin contributes only
 through that difference; there is no separate freezing threshold, absolute-cold
@@ -160,7 +165,7 @@ absolute-temperature term would require a revised rule and reviewed examples.
 | Saturation | Clipping starts at a 20°C anomaly; larger anomalies stay at `100.0`. Final rounding can also display `100.0` just below that threshold. |
 | Rounding | Reuse `cold_anomaly_c` already rounded to two decimals; multiply, cap at 100, then round the score to one decimal. Use decimal arithmetic for this calculation, with halfway values rounding away from zero. |
 | Missingness | Missing/incomplete/non-finite inputs produce a NULL score; never substitute zero or an older run. |
-| Monitoring | A future `cold_monitored = false` produces a NULL score. Cold monitoring is independent of `heat_monitored`. Missing monitoring configuration is a contract error. |
+| Monitoring | `cold_monitored = false` will produce a NULL score when scoring is implemented. Cold monitoring is independent of `heat_monitored`; the current city policy requires it true for every active city. Missing monitoring configuration is a contract error. |
 | Forecast horizon | Require only the current operational date. The last complete forecast day remains eligible without tomorrow's inputs. |
 
 For BigQuery implementation, cast the two-decimal anomaly to `NUMERIC` before

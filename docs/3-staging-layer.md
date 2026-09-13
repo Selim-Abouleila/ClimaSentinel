@@ -87,7 +87,7 @@ Static configuration data loaded directly into BigQuery tables via `dbt seed`.
 |---|---|---|
 | `city_monthly_normals` | Structurally validated 240-row lookup: one temperature, precipitation and wind baseline row for each of 12 months across 20 operational cities. The Gold layer uses its maximum-temperature value as the Heat baseline; the minimum-temperature column prepares a future Cold score. | `transform/seeds/city_monthly_normals.csv` |
 | `forecast_city_allowlist` | Frozen original 10-city/timezone contract for forecast-vintage staging and calendar-day retrieval-vintage feature, training and serving outputs. The other 10 operational cities remain outside that path. | `transform/seeds/forecast_city_allowlist.csv` |
-| `city_signal_monitoring` | One row per active operational city declaring whether Heat, Wind, Rain, Air Quality and River are monitored. Weather and AQ are enabled for all 20 cities; River mirrors `config/cities.csv:river_enabled`. | `transform/seeds/city_signal_monitoring.csv` |
+| `city_signal_monitoring` | One row per active operational city declaring whether Heat, Cold, Wind, Rain, Air Quality and River are monitored. Weather and AQ are enabled for all 20 cities; River mirrors `config/cities.csv:river_enabled`. Cold currently supplies configuration for later scoring. | `transform/seeds/city_signal_monitoring.csv` |
 
 `transform/scripts/generate_city_monthly_normals.py` generated the expansion's
 120 rows from the Open-Meteo Historical Weather endpoint with
@@ -119,13 +119,22 @@ unchanged. The operational history mart now joins this baseline and exposes
 [the cold diagnostic](4-mart-layer.md#cold-temperature-diagnostic).
 Cold risk scoring, API/dashboard factors and ML integration remain later steps.
 
+`cold_monitored` is a separate boolean in `city_signal_monitoring`, required
+`true` for all 20 active cities. `stg_city_signal_input_v2` carries it directly
+from the city/date spine, including rows with missing weather data. It is a
+monitoring policy, not a claim that Cold inputs are available. The history mart
+still exposes the existing Cold anomaly without a Cold score; its five-factor
+aggregates and serving contracts remain unchanged.
+
 The standard-library city validator checks unique city/month keys, exactly 12
 months for every active city, finite physical ranges, registry consistency,
 the frozen original forecast IDs, and exact monitoring-seed alignment before
-deployment. It rejects a missing active city, a disabled weather/AQ factor, or
+deployment. It rejects a missing active city, a disabled weather/AQ factor
+(including Cold), a missing/invalid Cold boolean, or
 a River monitoring value that differs from `river_enabled`. dbt adds seed-level
 not-null/unique checks and warehouse-side monitoring and normal-completeness
-contracts.
+contracts. The monitoring contract also verifies that each staging row's Cold
+flag matches its city's seeded value.
 
 ### Active Exact-Run Operational v2 Models (5)
 
@@ -307,7 +316,7 @@ gcloud auth application-default login
 | `make deploy` | Full GCP data pipeline: validate + build + Terraform + waited ingestion + dbt seed/run/test |
 | `make dbt-stg` | Run staging models only |
 | `make dbt-run` | Validate city files, load static seeds, then run all models (stg + mart); stop on failure |
-| `make dbt-test` | Run schema and singular data tests |
+| `make dbt-test` | Run schema, singular data and fixture unit tests |
 
 ### Apply the Cold baseline from GCP Cloud Shell
 
@@ -323,9 +332,11 @@ make dbt-test
 ```
 
 `make dbt-run` validates city files and loads the checked-in CSVs before
-rebuilding their dependent models. The `city_monthly_normals` seed has
-`full_refresh: true` in `transform/seeds/_seeds.yml`, so dbt recreates that
-small lookup with the new minimum-temperature column. This setting is scoped to that seed; the command
+rebuilding their dependent models. Both `city_monthly_normals` and
+`city_signal_monitoring` have `full_refresh: true` in
+`transform/seeds/_seeds.yml`, so dbt recreates these small lookups with the
+minimum-temperature baseline and `cold_monitored` columns. The setting is
+scoped to those two seeds; the command
 does not pass a full-refresh flag to mart models, and seeding does not modify
 raw data. `make dbt-stg` remains a staging-only command and does not seed.
 
@@ -333,6 +344,23 @@ This refresh reads the CSV; it does not fetch historical API data or deploy a
 new ingestion image. Scheduled ingestion uses the CSV embedded in its deployed
 image. Run `make deploy` from the updated checkout to keep scheduled runs on
 the same seed version; an older image can otherwise reload its older CSV.
+
+To inspect Cold monitoring after the run, use the BigQuery console (replace
+`PROJECT_ID` with your project). The seed should return 20 rows with `true`,
+and the staging query should return no rows:
+
+```sql
+SELECT city_id, cold_monitored
+FROM `PROJECT_ID.stg.city_signal_monitoring`
+ORDER BY city_id;
+
+SELECT signals.city_id, signals.date, signals.cold_monitored
+FROM `PROJECT_ID.stg.stg_city_signal_input_v2` AS signals
+LEFT JOIN `PROJECT_ID.stg.city_signal_monitoring` AS monitoring
+  ON signals.city_id = monitoring.city_id
+WHERE monitoring.city_id IS NULL
+   OR signals.cold_monitored IS DISTINCT FROM monitoring.cold_monitored;
+```
 
 ### From the transform directory
 

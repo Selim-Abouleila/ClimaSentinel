@@ -154,6 +154,7 @@ models:
       Monitoring-city/date spine joined only to exact-selected-run source
       aggregates. Includes all selected forecast-source dates plus UTC Day 0
       through Day +2 so a city remains present during a complete weather gap.
+      Carries the separate Cold monitoring policy for later score implementation.
     columns:
       - name: operational_ingestion_run_id
         tests: [not_null]
@@ -164,6 +165,11 @@ models:
       - name: date
         tests: [not_null]
       - name: heat_monitored
+        tests: [not_null]
+      - name: cold_monitored
+        description: >
+          City Cold-monitoring policy from city_signal_monitoring, retained even
+          when forecast inputs are missing. Does not change current factor counts.
         tests: [not_null]
       - name: wind_monitored
         tests: [not_null]
