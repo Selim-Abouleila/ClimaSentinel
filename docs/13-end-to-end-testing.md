@@ -16,7 +16,7 @@ Cold backend contract tests now cover required warehouse aggregation mode,
 five-/six-factor validation, endpoint field projection, missing/partial and
 unmonitored states, valid zero and nullable temperature context. dbt fixtures
 check the persisted mode and selected-row lineage. The city-detail UI now
-displays Cold and its temperature context, with a dedicated local fixture
+displays Cold's score, status and coverage, with a dedicated local fixture
 browser suite described below. Cold-specific live staging checks and data
 isolation remain pending; existing staging E2E must not be treated as proof of
 Cold activation. Keep the aggregation setting false until those checks pass in
@@ -39,8 +39,8 @@ does not depend on the deployed backend or Google Fonts requests.
 The Cold cases cover:
 
 - the Cold row after Heat, with its independent score, status and coverage;
-- forecast Tmin, monthly normal Tmin and the anomaly on the selected score
-  date, including finite negative temperatures and valid zero values;
+- a valid zero Cold score and omission of the temperature-context panel,
+  including its raw temperatures, anomaly and selected-date explanation;
 - neutral unavailable, partial, unmonitored and older-payload states without
   invented zero scores or Stable bands;
 - `cold_in_global_score: false`, where a larger Cold score remains separate

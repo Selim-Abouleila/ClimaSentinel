@@ -118,17 +118,6 @@ function getAggregateCounts(city: CityDetail, factors: ScoreFactor[]) {
   };
 }
 
-function formatTemperature(value: number | null | undefined, precision = 1) {
-  return typeof value === "number" && Number.isFinite(value) ? `${value.toFixed(precision)} °C` : "—";
-}
-
-function formatScoreDate(value: string | undefined) {
-  if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
-  const date = new Date(`${value}T00:00:00Z`);
-  if (!Number.isFinite(date.getTime()) || date.toISOString().slice(0, 10) !== value) return null;
-  return date.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric", timeZone: "UTC" });
-}
-
 function getFactorStatusLabel(factor: ScoreFactor) {
   if (factor.status === "not_reported") return "Not reported";
   if (factor.status === "not_monitored") return "Not monitored";
@@ -174,7 +163,6 @@ export default async function CityDetailPage({
     : city.cold_in_global_score === false
       ? "Cold is shown separately from the current tipping score."
       : "Cold’s contribution to the current tipping score is not reported.";
-  const scoreDateLabel = formatScoreDate(city.score_date);
   const snapshot = getSnapshotFreshness(city.operational_ingested_at_utc);
   const snapshotLabel = snapshot?.ingestedAt.toLocaleString("en-GB", {
     day: "2-digit",
@@ -288,7 +276,7 @@ export default async function CityDetailPage({
               return (
                 <article
                   key={factor.label}
-                  className={`city-factor-row ${stateClass}${factor.label === "Cold" ? " city-factor-row--cold" : ""}`}
+                  className={`city-factor-row ${stateClass}`}
                   aria-label={`${factor.label} signal: ${statusLabel}`}
                 >
                   <span className="city-factor-row__index">{String(index + 1).padStart(2, "0")}</span>
@@ -316,21 +304,6 @@ export default async function CityDetailPage({
                   >
                     {score !== null && <span style={{ width: `${score}%` }} />}
                   </div>
-                  {factor.label === "Cold" && (
-                    <div className="city-cold-context" role="region" aria-label="Cold temperature context">
-                      <p className="city-cold-context__date">
-                        {scoreDateLabel
-                          ? <>Selected score day · <time dateTime={city.score_date}>{scoreDateLabel}</time> (UTC)</>
-                          : "Score date not reported"}
-                      </p>
-                      <dl>
-                        <div><dt>Forecast Tmin</dt><dd>{formatTemperature(city.temperature_2m_min)}</dd></div>
-                        <div><dt>Monthly normal Tmin</dt><dd>{formatTemperature(city.normal_temperature_2m_min)}</dd></div>
-                        <div><dt>Below-normal anomaly</dt><dd>{formatTemperature(city.cold_anomaly_c, 2)}</dd></div>
-                      </dl>
-                      <p>Cold measures how far the daily minimum falls below its monthly normal. A score requires complete daily temperature coverage.</p>
-                    </div>
-                  )}
                 </article>
               );
             })}

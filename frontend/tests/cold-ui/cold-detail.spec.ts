@@ -2,7 +2,15 @@ import { expect, test, type Locator, type Page } from '@playwright/test';
 
 const cold = (page: Page) => page.getByRole('article', { name: /^Cold signal:/ });
 const composition = (page: Page) => page.getByRole('region', { name: 'Overall score composition' });
-const context = (page: Page) => page.getByRole('region', { name: 'Cold temperature context' });
+
+async function expectNoTemperaturePanel(page: Page) {
+  await expect(page.getByRole('region', { name: 'Cold temperature context' })).toHaveCount(0);
+  for (const label of ['Forecast Tmin', 'Monthly normal Tmin', 'Below-normal anomaly']) {
+    await expect(page.getByText(label, { exact: true })).toHaveCount(0);
+  }
+  await expect(page.getByRole('main')).not.toContainText('°C');
+  await expect(page.getByRole('main')).not.toContainText('Selected score day');
+}
 
 async function expectNeutral(row: Locator, status: string) {
   await expect(row).toHaveAccessibleName(`Cold signal: ${status}`);
@@ -24,27 +32,21 @@ test('six factors include a valid measured Cold zero immediately after Heat', as
   await expect(cold(page).locator('strong')).toHaveText('0.0');
   await expect(cold(page).getByRole('img')).toHaveAccessibleName('Cold: 0.0 out of 100');
   await expect(cold(page).getByText('/ 100', { exact: true })).toBeVisible();
-  await expect(context(page)).toContainText(/Forecast Tmin\s*0\.0 °C/);
-  await expect(context(page)).toContainText(/Monthly normal Tmin\s*0\.0 °C/);
-  await expect(context(page)).toContainText(/Below-normal anomaly\s*0\.00 °C/);
+  await expectNoTemperaturePanel(page);
 });
 
-test('partial daily temperature coverage keeps Cold neutral and preserves negative context', async ({ page }) => {
+test('partial daily temperature coverage keeps Cold neutral without a temperature panel', async ({ page }) => {
   await page.goto('/city/partial_fr');
   await expectNeutral(cold(page), 'Unavailable');
   await expect(cold(page)).toContainText('96% daily temperature coverage');
   await expect(composition(page)).toContainText('100% aggregate coverage.');
-  await expect(context(page)).toContainText(/Forecast Tmin\s*-5\.0 °C/);
-  await expect(context(page)).toContainText(/Monthly normal Tmin\s*0\.0 °C/);
-  await expect(context(page)).toContainText(/Below-normal anomaly\s*—/);
-  await expect(context(page).locator('time')).toHaveAttribute('datetime', '2026-09-15');
-  await expect(context(page)).toContainText(/15 Sept? 2026/);
+  await expectNoTemperaturePanel(page);
 });
 
-test('a small positive anomaly preserves hundredths instead of becoming zero', async ({ page }) => {
+test('a small positive Cold score remains visible instead of becoming zero', async ({ page }) => {
   await page.goto('/city/smallanomaly_fr');
   await expect(cold(page).locator('strong')).toHaveText('0.1');
-  await expect(context(page)).toContainText(/Below-normal anomaly\s*0\.01 °C/);
+  await expectNoTemperaturePanel(page);
 });
 
 test('not-monitored Cold is neutral without a score or coverage percentage', async ({ page }) => {
@@ -58,9 +60,7 @@ test('older APIs report absent Cold as unknown rather than zero', async ({ page 
   await page.goto('/city/legacy_fr');
   await expectNeutral(cold(page), 'Not reported');
   await expect(cold(page)).toContainText('Cold data not reported');
-  await expect(context(page)).toContainText(/Forecast Tmin\s*—/);
-  await expect(context(page)).toContainText(/Monthly normal Tmin\s*—/);
-  await expect(context(page)).toContainText(/Below-normal anomaly\s*—/);
+  await expectNoTemperaturePanel(page);
   await expect(composition(page)).toContainText('contribution to the current tipping score is not reported');
   await expect(composition(page)).not.toContainText('shown separately');
 });
@@ -74,9 +74,7 @@ test('false mode shows Cold separately without changing API score, counts or dri
   await expect(composition(page)).toContainText('5 of 5 monitored signals available for the current score.');
   await expect(composition(page)).toContainText('Cold is shown separately from the current tipping score.');
   await expect(composition(page)).toContainText('100% aggregate coverage.');
-  await expect(context(page)).toContainText(/Forecast Tmin\s*-20\.0 °C/);
-  await expect(context(page)).toContainText(/Monthly normal Tmin\s*0\.0 °C/);
-  await expect(context(page)).toContainText(/Below-normal anomaly\s*20\.00 °C/);
+  await expectNoTemperaturePanel(page);
   await page.screenshot({ path: testInfo.outputPath('cold-desktop.png'), fullPage: true });
 });
 
@@ -117,12 +115,12 @@ test('available independent Cold does not create a missing five-factor aggregate
   await expect(cold(page).getByText('Dominant driver', { exact: true })).toHaveCount(0);
 });
 
-test('Cold context and all six rows fit a narrow mobile viewport', async ({ page }, testInfo) => {
+test('Cold row and all six signals fit a narrow mobile viewport', async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/city/partial_fr');
   await expect(page.getByRole('article')).toHaveCount(6);
   await expectNeutral(cold(page), 'Unavailable');
-  await expect(context(page)).toBeVisible();
+  await expectNoTemperaturePanel(page);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   await page.screenshot({ path: testInfo.outputPath('cold-mobile.png'), fullPage: true });
 });
