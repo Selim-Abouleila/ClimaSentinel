@@ -349,7 +349,7 @@ unchanged. The operational history mart exposes a coverage-gated
 `cold_anomaly_c` in degrees below normal, plus a nullable Cold score and its
 availability metadata. History/detail APIs now expose those fields and the
 stored aggregation mode. The city-detail UI displays Cold after Heat, including
-its score, status, coverage and temperature context; global scoring still uses
+its score, status and coverage; global scoring still uses
 five factors by default.
 See [the cold diagnostic](docs/4-mart-layer.md#cold-temperature-diagnostic) and
 [the baseline methodology](docs/3-staging-layer.md#static-seeds-3).

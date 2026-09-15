@@ -119,8 +119,8 @@ unchanged. The operational history mart now joins this baseline and exposes
 [the cold diagnostic](4-mart-layer.md#cold-temperature-diagnostic).
 The [initial Cold score](4-mart-layer.md#cold-scoring-rule-cold_anomaly_v1)
 is implemented in history and projected into the detail view on its selected
-score date. Their APIs expose Cold, and the city-detail UI renders its score,
-availability and temperature context. ML support remains a separate later step.
+score date. Their APIs expose Cold and its temperature context; the city-detail
+UI renders its score and availability. ML support remains a separate later step.
 
 `cold_monitored` is a separate boolean in `city_signal_monitoring`, required
 `true` for all 20 active cities. `stg_city_signal_input_v2` carries it directly

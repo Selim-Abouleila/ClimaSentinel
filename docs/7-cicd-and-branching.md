@@ -211,7 +211,7 @@ not live BigQuery, Open-Meteo, DagsHub or Railway integration tests.
 | `test_model_serving_integration.py` | Registry-independent rule policy, null model provenance/intervals and all three horizons |
 | `frontend/tests/unit/signal-availability.spec.ts` | Legacy numeric compatibility, explicit v2 availability precedence, partial/all-unavailable aggregation, measured zero, missing/unmonitored factors and 36-hour freshness |
 | `frontend/tests/unit/backend-health-route.spec.ts` | Dynamic backend-health proxy target, no-cache request/response headers, exact payload pass-through and unreachable-backend `502` behavior |
-| `frontend/tests/cold-ui/` (`npm run test:cold-ui`) | Local browser fixtures for Cold scores/context, missingness, older payloads and reported aggregate participation; separate from live staging E2E |
+| `frontend/tests/cold-ui/` (`npm run test:cold-ui`) | Local browser fixtures for Cold scores/status/coverage, omitted temperature panel, missingness, older payloads and reported aggregate participation; separate from live staging E2E |
 | `assert_city_score_availability_contract.sql`, `assert_city_score_v2_*.sql`, `assert_city_signal_monitoring_contract.sql` and `assert_city_signal_v2_*.sql` | Operational spine, monitoring contract, exact-run coherence, raw-payload consistency, availability semantics and deterministic worst day |
 | `frontend/tests/e2e/dashboard.spec.ts` | Live Paris three-horizon forecast flow and Stockholm unmonitored-River presentation |
 

@@ -33,7 +33,7 @@ on detail. These additions remain optional for the frontend-first rollout:
 an omitted field means the older API did not report it, while an explicit null
 score means unavailable data. An absent aggregation mode is unknown, not false.
 The city-detail catalogue now displays Cold after Heat, with its own score,
-status, coverage and temperature context. Keep dbt aggregation false until
+status and coverage. Keep dbt aggregation false until
 isolated staging activation and deployment checks pass. Implementing the UI
 does not enable Cold in live aggregate scores.
 
@@ -67,12 +67,9 @@ Detail copy reports available versus monitored factor counts and states that
 missing factors are excluded from the overall maximum. A fully covered input
 whose rule genuinely evaluates to zero remains `0.0 · Stable`.
 
-The Cold row also displays the forecast minimum temperature, monthly normal
-minimum and below-normal anomaly for the API's selected `score_date`. It
-preserves finite negative temperatures and zero values. Forecast and normal
-Tmin use one decimal place; the anomaly uses two, matching its warehouse
-precision. Missing or unreported context uses a neutral placeholder. An older
-API payload that omits Cold shows
+The Cold row does not render a temperature-context panel or its selected-date
+explanation. Forecast Tmin, monthly normal Tmin, anomaly and `score_date` remain
+available in the API and warehouse. An older API payload that omits Cold shows
 “Not reported,” without a synthetic zero, Stable band or meter fill.
 
 The reported `cold_in_global_score` mode controls the aggregate explanation and
@@ -213,8 +210,9 @@ no-cache pass-through and unreachable-backend `502` response in
 does not contact a browser or live service.
 
 `npm run test:cold-ui` runs a separate local browser suite against deterministic
-Cold fixtures. It checks the rendered Cold score/context, valid zero,
-missing/partial/unmonitored states, older payloads and both reported aggregation
+Cold fixtures. It checks the rendered Cold score/status/coverage, valid zero,
+the absence of the temperature-context panel, missing/partial/unmonitored
+states, older payloads and both reported aggregation
 modes. See [End-to-End Testing](13-end-to-end-testing.md#local-cold-ui-fixture-suite)
 for its scope and execution. It does not replace live BigQuery or staging
 release verification and is separate from `npm run test:e2e`.

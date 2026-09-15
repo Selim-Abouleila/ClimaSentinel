@@ -47,8 +47,9 @@ absolute cold severity, wind chill and persistence are not evaluated. A zero
 means no below-reference anomaly, not safe absolute conditions. The
 history mart exposes the anomaly, score and availability metadata, and the
 detail view projects them from its selected date. History/detail APIs expose
-these fields, and the city-detail UI displays Cold with its selected-date
-temperature context. Cold is excluded from the default live aggregate.
+these fields, and the city-detail UI displays Cold's score and availability.
+Temperature context remains available through the API and warehouse. Cold is
+excluded from the default live aggregate.
 Six-factor aggregation code is available behind `cold_in_global_score`, default
 false, pending isolated staging verification and a coordinated release. The backend supports
 both modes using warehouse metadata. Enabling Cold changes score composition;

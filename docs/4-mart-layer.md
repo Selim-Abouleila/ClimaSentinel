@@ -251,9 +251,9 @@ ORDER BY city_id, date;
 ```
 
 Cold is now available in history, the detail view and their API responses. The
-city-detail UI displays its score, availability and temperature context from the
-selected row. Existing global score, driver, counts and
-coverage stay on five factors until the six-factor aggregation change is
+city-detail UI displays its score and availability from the selected row;
+temperature context remains in the API and warehouse. Existing global score,
+driver, counts and coverage stay on five factors until the six-factor aggregation change is
 released with compatible backend/frontend contracts.
 The opt-in aggregation and consumer selection are tested as described below.
 ML features, labels and the three-day forecast experience
@@ -382,9 +382,9 @@ aggregate described above; every projected field still comes from one row.
 
 The backend's explicit SELECT and typed response expose all six factors, Cold
 temperature context and the stored aggregation mode. The city-detail UI displays
-Cold after Heat, with the forecast Tmin, monthly normal Tmin and anomaly for
-`score_date`. It uses the API's aggregate counts; a visible Cold row does not
-add a participant while the mode is false. After `make dbt-run` and
+Cold after Heat with its score, status and coverage. The raw temperature context
+and selected-date panel are not rendered. It uses the API's aggregate counts;
+a visible Cold row does not add a participant while the mode is false. After `make dbt-run` and
 `make dbt-test`, inspect the view (replace `PROJECT_ID`):
 
 ```sql
