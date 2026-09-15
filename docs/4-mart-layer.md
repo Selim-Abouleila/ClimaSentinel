@@ -40,7 +40,8 @@ combines five component indicators by default and takes their maximum as the
 global score.
 It also calculates Cold independently in the history table, with its own
 monitoring and availability fields. Six-factor aggregation is implemented behind
-`cold_in_global_score: false`, pending compatible API/UI contracts.
+`cold_in_global_score: false`, pending isolated staging verification and a
+coordinated application/data release.
 
 These formulas, multipliers, activation thresholds and the maximum aggregation
 are product-defined and uncalibrated. Their permitted uses and evidence gaps are
@@ -250,7 +251,8 @@ ORDER BY city_id, date;
 ```
 
 Cold is now available in history, the detail view and their API responses. The
-visible UI remains the next integration step. Existing global score, driver, counts and
+city-detail UI displays its score, availability and temperature context from the
+selected row. Existing global score, driver, counts and
 coverage stay on five factors until the six-factor aggregation change is
 released with compatible backend/frontend contracts.
 The opt-in aggregation and consumer selection are tested as described below.
@@ -308,8 +310,10 @@ use mocked inputs and do not activate six-factor scoring in the built marts.
 `assert_city_score_v2_current_detail_consistent` checks matching aggregates,
 run provenance and ranking across the built consumer views.
 
-**Release boundary:** backend code now supports both modes and frontend types
-accept Cold, but the visible Cold UI and staging activation checks remain.
+**Release boundary:** backend and frontend code now support both modes, and the
+city-detail UI displays Cold independently when the stored mode is false.
+Local fixture browser tests cover the visible states; isolated staging and
+Cold-specific deployment gates remain required.
 Keep this setting false until compatible application versions are deployed and
 staging data is isolated. Use PR `dev` → `staging`, deploy and verify both modes
 there, and only then open PR `staging` → `main`. Enable the setting in the release's dbt
@@ -377,8 +381,10 @@ With `cold_in_global_score: true`, the same selector uses the six-factor
 aggregate described above; every projected field still comes from one row.
 
 The backend's explicit SELECT and typed response expose all six factors, Cold
-temperature context and the stored aggregation mode. The frontend types accept
-these additions, while the visible Cold row is a later UI step. After `make dbt-run` and
+temperature context and the stored aggregation mode. The city-detail UI displays
+Cold after Heat, with the forecast Tmin, monthly normal Tmin and anomaly for
+`score_date`. It uses the API's aggregate counts; a visible Cold row does not
+add a participant while the mode is false. After `make dbt-run` and
 `make dbt-test`, inspect the view (replace `PROJECT_ID`):
 
 ```sql

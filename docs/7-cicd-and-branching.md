@@ -12,7 +12,7 @@ GitHub rather than in this repository and must be verified separately.
 The intended four-tier branching strategy is:
 
 ```
-feature/* ──PR──▸ dev ──push──▸ staging ──push──▸ main
+feature/* ──PR──▸ dev ──PR──▸ staging ──PR──▸ main
 ```
 
 | Branch | Role | Trigger |
@@ -211,6 +211,7 @@ not live BigQuery, Open-Meteo, DagsHub or Railway integration tests.
 | `test_model_serving_integration.py` | Registry-independent rule policy, null model provenance/intervals and all three horizons |
 | `frontend/tests/unit/signal-availability.spec.ts` | Legacy numeric compatibility, explicit v2 availability precedence, partial/all-unavailable aggregation, measured zero, missing/unmonitored factors and 36-hour freshness |
 | `frontend/tests/unit/backend-health-route.spec.ts` | Dynamic backend-health proxy target, no-cache request/response headers, exact payload pass-through and unreachable-backend `502` behavior |
+| `frontend/tests/cold-ui/` (`npm run test:cold-ui`) | Local browser fixtures for Cold scores/context, missingness, older payloads and reported aggregate participation; separate from live staging E2E |
 | `assert_city_score_availability_contract.sql`, `assert_city_score_v2_*.sql`, `assert_city_signal_monitoring_contract.sql` and `assert_city_signal_v2_*.sql` | Operational spine, monitoring contract, exact-run coherence, raw-payload consistency, availability semantics and deterministic worst day |
 | `frontend/tests/e2e/dashboard.spec.ts` | Live Paris three-horizon forecast flow and Stockholm unmonitored-River presentation |
 
@@ -219,6 +220,13 @@ commit/run identifier before Playwright starts. The suite then verifies the
 rule-baseline API rather than assuming that the newly registered candidate
 passed. See
 [End-to-End Testing](13-end-to-end-testing.md).
+
+The Cold UI fixture suite runs locally with `npm run test:cold-ui`; the current
+workflows do not invoke that command. It verifies deterministic rendered states
+without deploying the application or changing warehouse aggregation. Keep
+`cold_in_global_score` false until staging data isolation and Cold-specific
+deployment checks are in place. Merge the `dev` → `staging` PR, deploy and verify
+there, and only then open the `staging` → `main` PR.
 
 ### Checks not provided by the current workflows
 

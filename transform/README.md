@@ -271,8 +271,9 @@ now passes through those Cold fields and Tmin/reference/anomaly context from
 the same selected `score_date`. The date is still chosen by the five-factor
 aggregate; Cold does not independently choose a different day. See the
 [detail-view contract](../docs/4-mart-layer.md#mart_city_score_detail_v2-view)
-for verification queries and tests. The history/detail APIs now expose Cold;
-visible dashboard integration and ML support remain subsequent work.
+for verification queries and tests. The history/detail APIs expose Cold, and the
+city-detail UI displays its score, availability and temperature context from
+that row. Isolated staging activation and ML support remain separate work.
 Six-factor aggregation is implemented behind the strict boolean
 `cold_in_global_score`, default `false` in `dbt_project.yml`. `make dbt-test`
 exercises both modes through unit-test overrides without changing the live

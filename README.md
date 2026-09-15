@@ -348,25 +348,29 @@ column has separate retrieval provenance and leaves existing baseline values
 unchanged. The operational history mart exposes a coverage-gated
 `cold_anomaly_c` in degrees below normal, plus a nullable Cold score and its
 availability metadata. History/detail APIs now expose those fields and the
-stored aggregation mode; global scoring and the visible UI still use five
-factors by default.
+stored aggregation mode. The city-detail UI displays Cold after Heat, including
+its score, status, coverage and temperature context; global scoring still uses
+five factors by default.
 See [the cold diagnostic](docs/4-mart-layer.md#cold-temperature-diagnostic) and
 [the baseline methodology](docs/3-staging-layer.md#static-seeds-3).
 The [initial Cold score contract](docs/4-mart-layer.md#cold-scoring-rule-cold_anomaly_v1)
 is implemented in history: five points per degree below the monthly Tmin
 reference, capped at 100 and rounded to one decimal.
 Cold monitoring is now configured for all 20 cities through `cold_monitored`
-in the monitoring seed and `stg_city_signal_input_v2`. The visible Cold row and
-live six-factor activation will follow in later steps.
+in the monitoring seed and `stg_city_signal_input_v2`. Cold is displayed
+separately from the aggregate while `cold_in_global_score` is false. Live
+six-factor activation still requires isolated staging verification.
 The [detail view](docs/4-mart-layer.md#mart_city_score_detail_v2-view) now exposes
 Cold and its temperature context from the same date selected by the existing
 five-factor global score.
 Six-factor aggregation is prepared behind `cold_in_global_score: false`.
 The standard tests exercise the enabled mode with fixture data; live activation
-requires the [coordinated API/UI update](docs/4-mart-layer.md#six-factor-aggregation-activation).
+requires the [coordinated release](docs/4-mart-layer.md#six-factor-aggregation-activation).
 The backend validates both modes using `cold_in_global_score` persisted in the
 warehouse; frontend types tolerate the older API during rollout. Refresh the
-marts before deploying this backend. Promotion follows PR `dev` → `staging`,
+marts before deploying this backend. The local `npm run test:cold-ui` command
+in `frontend/` checks the visible Cold states with fixture data; it does not
+verify the deployed staging application. Promotion follows PR `dev` → `staging`,
 deployed staging verification, then PR `staging` → `main`.
 
 Run `make validate-cities` before building or deploying. It checks schemas,

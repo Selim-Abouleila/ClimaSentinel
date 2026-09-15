@@ -64,7 +64,8 @@ map non-finite values to JSON null; this does not manufacture an available score
 
 Refresh the warehouse with `make dbt-run` and `make dbt-test` before deploying
 this backend: it requires the new mode column and Cold fields. Keep the setting
-false until the Cold UI and isolated staging activation checks are ready. The
+false until isolated staging activation and deployment checks pass. The Cold UI
+is implemented and uses the row's mode to distinguish display from participation. The
 [mart activation contract](4-mart-layer.md#six-factor-aggregation-activation)
 describes the coordinated release and tests for both modes.
 
