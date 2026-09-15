@@ -50,5 +50,15 @@ def test_backend_cutover_remains_ordered_and_release_verified() -> None:
     assert "backend/app/release_id.txt" in workflow
     assert 'payload.get("release_id")' in workflow
     assert workflow.count('/api/backend-health') >= 2
-    assert workflow.count("deadline_seconds=600") >= 2
-    assert workflow.count("while (( SECONDS < deadline ))") >= 2
+
+    frontend_gate = workflow[positions[2]:positions[3]]
+    backend_gate = workflow[positions[5]:workflow.index("\n  e2e-test:")]
+    assert "deadline_seconds=600" in frontend_gate
+    assert "deadline_seconds=1200" in backend_gate
+    assert 'payload.get("status") != "healthy"' in backend_gate
+    assert 'payload.get("release_id") != os.environ["EXPECTED_RELEASE_ID"]' in backend_gate
+    for gate in (frontend_gate, backend_gate):
+        assert "while (( SECONDS < deadline ))" in gate
+        assert "request_timeout=$((remaining < 10 ? remaining : 10))" in gate
+        assert "sleep_seconds=$((remaining < 10 ? remaining : 10))" in gate
+        assert 'exit 1' in gate

@@ -126,9 +126,10 @@ concurrently.
 The workflow pins Railway CLI `5.30.4` and submits both services with
 `railway up --detach`. This prevents an intermittent attached build-log stream
 failure from terminating CI after Railway accepted an upload. Detached
-submission is not counted as deployment success: each service has a bounded
-600-second release deadline, with individual requests capped at 10 seconds and
-no more than 10 seconds between attempts.
+submission is not counted as deployment success: the primary frontend release
+poll has a 600-second deadline, and the backend release poll allows 1200 seconds
+(20 minutes). Individual requests remain capped at 10 seconds, with no more than
+10 seconds between attempts.
 
 The frontend build includes a unique
 `/releases/<commit-sha>-<workflow-run-id>.txt` marker. The backend health payload
