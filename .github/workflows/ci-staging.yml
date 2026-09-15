@@ -458,7 +458,7 @@ jobs:
           PY
           }
 
-          deadline_seconds=600
+          deadline_seconds=1200
           deadline=$((SECONDS + deadline_seconds))
           attempt=0
 

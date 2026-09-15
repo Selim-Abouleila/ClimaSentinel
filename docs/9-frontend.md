@@ -186,10 +186,10 @@ The availability release uses a deliberate expand-and-contract order:
 
 Both submissions are asynchronous, but the cutovers are intentionally not
 parallel: mart readiness and frontend confirmation must both pass before the
-backend is submitted. Each primary release poll has a strict 600-second
-deadline, caps individual requests at 10 seconds and waits no more than 10
-seconds between attempts. The E2E job reconfirms both identities after its job
-boundary.
+backend is submitted. The primary frontend release poll has a strict 600-second
+deadline; the backend release poll allows 1200 seconds (20 minutes). Both cap
+individual requests at 10 seconds and wait no more than 10 seconds between
+attempts. The E2E job reconfirms both identities after its job boundary.
 
 The unsuffixed marts remain temporary rollback compatibility and do not expose
 the v2 column contract.
