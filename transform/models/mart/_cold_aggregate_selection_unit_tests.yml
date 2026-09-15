@@ -23,7 +23,7 @@ unit_tests:
 
   - name: test_cold_aggregate_detail_v2
     description: >
-      Project all 59 detail fields from the selected six-factor history row.
+      Project all 60 detail fields from the selected six-factor history row.
       Literal expectations cover Cold-driven date changes, earlier-date ties,
       a scored zero versus an unavailable day, two unavailable days, missing or
       partial Cold when another factor wins, unmonitored Cold, coherent

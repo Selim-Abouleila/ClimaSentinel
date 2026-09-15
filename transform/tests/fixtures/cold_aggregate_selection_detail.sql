@@ -1,5 +1,5 @@
 -- Independently listed selected rows; no window, MAX or ranking query here.
--- All 59 detail columns are expected, including source and factor metadata.
+-- All 60 detail columns are expected, including source and factor metadata.
 -- The earliest date wins ties, including when neither date has an available score.
 WITH expected AS (
     SELECT 'cold_today' AS city_id,
@@ -94,5 +94,6 @@ SELECT
     wind_score / 2.5 + 40.0 AS wind_gusts_10m_max,
     rain_score / 2.0 AS precipitation_sum_mm,
     air_score / 1.67 + 40.0 AS european_aqi_max,
-    IF(river_score IS NULL, CAST(NULL AS FLOAT64), IF(river_score > 0.0, 80.0, 20.0)) AS river_discharge_m3s
+    IF(river_score IS NULL, CAST(NULL AS FLOAT64), IF(river_score > 0.0, 80.0, 20.0)) AS river_discharge_m3s,
+    TRUE AS cold_in_global_score
 FROM expected

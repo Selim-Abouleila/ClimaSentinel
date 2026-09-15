@@ -93,6 +93,9 @@ models:
       True includes Cold in the maximum, driver, counts and coverage; activation
       requires compatible API/UI contracts.
     columns:
+      - name: cold_in_global_score
+        description: Boolean mode persisted from the dbt setting used to calculate this row; independent of Cold monitoring and availability.
+        tests: [not_null]
       - name: operational_ingestion_run_id
         description: Exact raw ingestion snapshot used across every v2 source.
         tests: [not_null]
@@ -165,6 +168,9 @@ models:
       Identifies the current tipping score and ranks the cities from most tense (1) to least.
       Follows the history aggregate mode, including Cold when cold_in_global_score is true.
     columns:
+      - name: cold_in_global_score
+        description: Aggregate mode from the selected history row; not inferred from counts or the current deployment setting.
+        tests: [not_null]
       - name: operational_ingestion_run_id
         tests: [not_null]
       - name: operational_ingested_at_utc
@@ -204,9 +210,13 @@ models:
       Includes Cold score, availability and temperature context from that date;
       Cold affects the aggregate and date selection only when cold_in_global_score
       is true (default false). The API currently
-      selects only the existing five factors from this wider warehouse view.
+      exposes all six factors and validates aggregate participation using the
+      cold_in_global_score value persisted with the history row.
       Consumed by GET /data/city/{city_id}/scores to power the city detail page.
     columns:
+      - name: cold_in_global_score
+        description: Aggregate mode from the same selected history row as every score and metadata field.
+        tests: [not_null]
       - name: operational_ingestion_run_id
         tests: [not_null]
       - name: operational_ingested_at_utc

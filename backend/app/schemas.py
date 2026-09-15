@@ -1,10 +1,10 @@
 """Typed API contracts exposed by the ClimaSentinel backend."""
 
 from datetime import date as CalendarDate
-from math import isclose
+from math import isclose, isfinite
 from typing import Annotated, Literal, Self
 
-from pydantic import AwareDatetime, BaseModel, Field, model_validator
+from pydantic import AwareDatetime, BaseModel, Field, StrictBool, field_validator, model_validator
 
 
 ComponentMethod = Literal["forecast_rule"]
@@ -18,6 +18,16 @@ SignalStatus = Literal["available", "not_monitored", "unavailable"]
 SignalScore = Annotated[float | None, Field(ge=0.0, le=100.0)]
 CoverageRatio = Annotated[float | None, Field(ge=0.0, le=1.0)]
 TippingScore = Annotated[float | None, Field(ge=0.0, le=100.0)]
+ORIGINAL_FACTORS = ("heat", "wind", "rain", "air", "river")
+OPERATIONAL_FACTORS = (*ORIGINAL_FACTORS, "cold")
+OPERATIONAL_DRIVER_FACTORS = {
+    "Heat": "heat",
+    "River/Flood": "river",
+    "Wind": "wind",
+    "Rain": "rain",
+    "Air Quality": "air",
+    "Cold": "cold",
+}
 
 
 class CurrentCityScoreResponse(BaseModel):
@@ -29,13 +39,19 @@ class CurrentCityScoreResponse(BaseModel):
     current_tipping_score: TippingScore
     current_primary_driver: str | None
     current_score_available: bool
-    monitored_factor_count: Annotated[int, Field(ge=0, le=5)]
-    available_factor_count: Annotated[int, Field(ge=0, le=5)]
+    cold_in_global_score: StrictBool
+    monitored_factor_count: Annotated[int, Field(ge=0, le=6)]
+    available_factor_count: Annotated[int, Field(ge=0, le=6)]
     overall_coverage: CoverageRatio
     rank: Annotated[int, Field(ge=1)]
 
     @model_validator(mode="after")
     def aggregate_availability_is_consistent(self) -> Self:
+        if not self.cold_in_global_score:
+            if self.monitored_factor_count > 5 or self.available_factor_count > 5:
+                raise ValueError("five-factor mode cannot contain six-factor counts")
+            if self.current_primary_driver == "Cold":
+                raise ValueError("Cold cannot be the driver when cold_in_global_score is false")
         if self.current_score_available != (self.current_tipping_score is not None):
             raise ValueError(
                 "current_score_available must reflect whether "
@@ -76,11 +92,25 @@ class SignalScores(BaseModel):
     must never cross the API boundary as a synthetic zero-risk score.
     """
 
+    # This mode comes from the selected warehouse row, never backend settings
+    # or an inference from counts, which can match across the two modes.
+    cold_in_global_score: StrictBool
+
     heat_score: SignalScore
     heat_status: SignalStatus
     heat_monitored: bool
     heat_available: bool
     heat_coverage: CoverageRatio
+
+    cold_score: SignalScore
+    cold_status: SignalStatus
+    cold_monitored: bool
+    cold_available: bool
+    cold_coverage: CoverageRatio
+
+    temperature_2m_min: float | None
+    normal_temperature_2m_min: float | None
+    cold_anomaly_c: float | None
 
     wind_score: SignalScore
     wind_status: SignalStatus
@@ -106,10 +136,16 @@ class SignalScores(BaseModel):
     river_available: bool
     river_coverage: CoverageRatio
 
+    @field_validator("temperature_2m_min", "normal_temperature_2m_min", "cold_anomaly_c")
+    @classmethod
+    def finite_cold_context(cls, value: float | None) -> float | None:
+        """Invalid raw diagnostics remain JSON null; valid negatives survive."""
+        return value if value is None or isfinite(value) else None
+
     @model_validator(mode="after")
     def availability_metadata_is_consistent(self) -> Self:
         """Reject contradictory score/status combinations at the API edge."""
-        for factor in ("heat", "wind", "rain", "air", "river"):
+        for factor in OPERATIONAL_FACTORS:
             score = getattr(self, f"{factor}_score")
             status = getattr(self, f"{factor}_status")
             monitored = getattr(self, f"{factor}_monitored")
@@ -154,22 +190,25 @@ class SignalScores(BaseModel):
 
         return self
 
+    def aggregate_factors(self) -> tuple[str, ...]:
+        return OPERATIONAL_FACTORS if self.cold_in_global_score else ORIGINAL_FACTORS
+
     def monitored_count(self) -> int:
         return sum(
             bool(getattr(self, f"{factor}_monitored"))
-            for factor in ("heat", "wind", "rain", "air", "river")
+            for factor in self.aggregate_factors()
         )
 
     def available_count(self) -> int:
         return sum(
             bool(getattr(self, f"{factor}_available"))
-            for factor in ("heat", "wind", "rain", "air", "river")
+            for factor in self.aggregate_factors()
         )
 
     def maximum_available_score(self) -> float | None:
         scores = [
             getattr(self, f"{factor}_score")
-            for factor in ("heat", "wind", "rain", "air", "river")
+            for factor in self.aggregate_factors()
             if getattr(self, f"{factor}_available")
         ]
         return max(scores) if scores else None
@@ -177,7 +216,7 @@ class SignalScores(BaseModel):
     def mean_monitored_coverage(self) -> float | None:
         coverage = [
             getattr(self, f"{factor}_coverage")
-            for factor in ("heat", "wind", "rain", "air", "river")
+            for factor in self.aggregate_factors()
             if getattr(self, f"{factor}_monitored")
         ]
         return sum(coverage) / len(coverage) if coverage else None
@@ -227,6 +266,23 @@ class SignalScores(BaseModel):
             raise ValueError(
                 "aggregate driver must be null or 'Unavailable' without an available score"
             )
+        if driver == "Cold" and not self.cold_in_global_score:
+            raise ValueError("Cold cannot be the driver when cold_in_global_score is false")
+        if expected_score is not None:
+            if driver == "Stable":
+                if expected_score != 0.0:
+                    raise ValueError("Stable requires a zero aggregate score")
+            else:
+                factor = OPERATIONAL_DRIVER_FACTORS.get(driver)
+                driver_score = getattr(self, f"{factor}_score") if factor else None
+                # SQL chooses a winner before display rounding. Validate its
+                # displayed maximum without inventing precedence for apparent ties.
+                if (
+                    factor not in self.aggregate_factors()
+                    or driver_score is None
+                    or not isclose(driver_score, expected_score, rel_tol=0.0, abs_tol=0.05)
+                ):
+                    raise ValueError("aggregate driver must name a participating maximum score")
 
 
 class CityScoreDetailResponse(SignalScores):
@@ -239,8 +295,8 @@ class CityScoreDetailResponse(SignalScores):
     current_tipping_score: TippingScore
     current_primary_driver: str | None
     current_score_available: bool
-    monitored_factor_count: Annotated[int, Field(ge=0, le=5)]
-    available_factor_count: Annotated[int, Field(ge=0, le=5)]
+    monitored_factor_count: Annotated[int, Field(ge=0, le=6)]
+    available_factor_count: Annotated[int, Field(ge=0, le=6)]
     overall_coverage: CoverageRatio
 
     @model_validator(mode="after")
@@ -268,8 +324,8 @@ class CityScoreHistoryResponse(SignalScores):
     wind_gusts_10m_max: float | None
     european_aqi_max: float | None
     river_discharge_m3s: float | None
-    monitored_factor_count: Annotated[int, Field(ge=0, le=5)]
-    available_factor_count: Annotated[int, Field(ge=0, le=5)]
+    monitored_factor_count: Annotated[int, Field(ge=0, le=6)]
+    available_factor_count: Annotated[int, Field(ge=0, le=6)]
     overall_coverage: CoverageRatio
     global_score_available: bool
     global_tipping_score: TippingScore

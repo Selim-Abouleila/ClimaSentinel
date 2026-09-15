@@ -1,5 +1,5 @@
 -- All scores, factor coverages and aggregate outcomes below are literals.
--- Include support days and all 59 history output columns for dbt's SQL fixture.
+-- Include support days and all 60 history output columns for dbt's SQL fixture.
 -- raw_coverage_rounding averages raw fractions (23 + 1 + 1 + 3) / 24 / 6:
 -- 0.194 after rounding. Averaging rounded factor columns would wrongly give 0.195.
 WITH expected AS (
@@ -88,5 +88,6 @@ SELECT
     overall_coverage,
     global_tipping_score IS NOT NULL AS global_score_available,
     global_tipping_score,
-    primary_driver
+    primary_driver,
+    TRUE AS cold_in_global_score
 FROM expected

@@ -18,7 +18,8 @@ WITH current_window AS (
         primary_driver,
         monitored_factor_count,
         available_factor_count,
-        overall_coverage
+        overall_coverage,
+        cold_in_global_score
     FROM {{ ref('mart_city_score_history_v2') }}
     -- Look at the two UTC calendar dates: today and tomorrow.
     WHERE date BETWEEN CURRENT_DATE('UTC')
@@ -55,7 +56,8 @@ SELECT
     -- Unavailable cities sort after every scored city.
     RANK() OVER (
         ORDER BY global_score_available DESC, global_tipping_score DESC
-    ) AS rank
+    ) AS rank,
+    cold_in_global_score
 FROM worst_day
 WHERE _row_number = 1
 ORDER BY current_score_available DESC, rank ASC

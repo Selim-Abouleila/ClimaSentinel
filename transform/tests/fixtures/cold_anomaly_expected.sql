@@ -102,5 +102,6 @@ SELECT
     IF(heat_monitored, 0.8, 1.0) AS overall_coverage,
     TRUE AS global_score_available,
     10.0 AS global_tipping_score,
-    'Rain' AS primary_driver
+    'Rain' AS primary_driver,
+    FALSE AS cold_in_global_score
 FROM expected

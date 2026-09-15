@@ -1,4 +1,4 @@
--- Complete 59-column history input for the opted-in six-factor aggregate.
+-- Complete 60-column history input for the opted-in six-factor aggregate.
 -- Literal scores, counts and coverage are internally consistent; selectors only
 -- choose a row. Cold reverses the five-factor date preference in both directions.
 -- Driver ties preserve Heat > River/Flood > Wind > Rain > Air Quality > Cold.
@@ -110,5 +110,6 @@ SELECT
     overall_coverage,
     global_tipping_score IS NOT NULL AS global_score_available,
     global_tipping_score,
-    primary_driver
+    primary_driver,
+    TRUE AS cold_in_global_score
 FROM scenarios

@@ -1,4 +1,4 @@
--- Literal selected cities and ranks; all 15 CURRENT output columns are checked.
+-- Literal selected cities and ranks; all 16 CURRENT output columns are checked.
 -- The two Cold-driven 90s share rank 1; rank 2 is skipped. The available zero
 -- ranks before the unavailable city, and the outside-only city is absent.
 WITH expected AS (
@@ -37,5 +37,6 @@ SELECT
     monitored_factor_count,
     available_factor_count,
     overall_coverage,
-    rank
+    rank,
+    TRUE AS cold_in_global_score
 FROM expected

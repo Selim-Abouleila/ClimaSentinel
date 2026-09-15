@@ -20,6 +20,7 @@ WHERE current_scores.city_id IS NULL
     OR current_scores.operational_ingested_at_utc IS DISTINCT FROM expected.operational_ingested_at_utc
     OR current_scores.current_tipping_score IS DISTINCT FROM expected.current_tipping_score
     OR current_scores.current_primary_driver IS DISTINCT FROM expected.current_primary_driver
+    OR current_scores.cold_in_global_score IS DISTINCT FROM expected.cold_in_global_score
     OR current_scores.current_score_available IS DISTINCT FROM expected.current_score_available
     OR current_scores.monitored_factor_count IS DISTINCT FROM expected.monitored_factor_count
     OR current_scores.available_factor_count IS DISTINCT FROM expected.available_factor_count

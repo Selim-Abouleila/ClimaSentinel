@@ -407,7 +407,10 @@ final_scores AS (
             -- Preserve every existing positive tie priority; Cold follows them.
             {% if include_cold %}WHEN global_tipping_score = cold_score THEN 'Cold'{% endif %}
             ELSE 'Unknown'
-        END AS primary_driver
+        END AS primary_driver,
+        -- Persist the mode used for these aggregates so consumers never infer
+        -- it from factor counts or their own deployment configuration.
+        {{ 'TRUE' if include_cold else 'FALSE' }} AS cold_in_global_score
 
     FROM scores_with_global
 )

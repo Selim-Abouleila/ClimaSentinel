@@ -271,13 +271,17 @@ now passes through those Cold fields and Tmin/reference/anomaly context from
 the same selected `score_date`. The date is still chosen by the five-factor
 aggregate; Cold does not independently choose a different day. See the
 [detail-view contract](../docs/4-mart-layer.md#mart_city_score_detail_v2-view)
-for verification queries and tests. API/dashboard integration and ML support
-remain subsequent work.
+for verification queries and tests. The history/detail APIs now expose Cold;
+visible dashboard integration and ML support remain subsequent work.
 Six-factor aggregation is implemented behind the strict boolean
 `cold_in_global_score`, default `false` in `dbt_project.yml`. `make dbt-test`
 exercises both modes through unit-test overrides without changing the live
 marts. Keep the default until compatible backend/frontend support is deployed;
 see [activation and verification](../docs/4-mart-layer.md#six-factor-aggregation-activation).
+History persists the chosen mode in a Boolean `cold_in_global_score` column,
+and current/detail pass it through from the selected row. The backend requires
+this field to validate both modes without guessing from counts. Run `make dbt-run`
+and `make dbt-test` before deploying the updated backend; the default remains false.
 `seeds/_seeds.yml` sets `full_refresh: true` on `city_monthly_normals` and
 `city_signal_monitoring` so every seed run applies their new baseline and
 monitoring columns from the CSVs. The setting is scoped to these two seeds;

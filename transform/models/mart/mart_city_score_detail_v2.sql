@@ -92,7 +92,8 @@ SELECT
     wind_gusts_10m_max,
     precipitation_sum_mm,
     european_aqi_max,
-    river_discharge_m3s
+    river_discharge_m3s,
+    cold_in_global_score
 
 FROM worst_day
 WHERE _row_number = 1

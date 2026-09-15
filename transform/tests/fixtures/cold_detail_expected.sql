@@ -1,5 +1,5 @@
 -- Literal selected rows: do not repeat the model's window or ranking query.
--- SQL-format expectations include all 59 detail output columns.
+-- SQL-format expectations include all 60 detail output columns.
 WITH expected AS (
     SELECT 'tomorrow_higher' AS city_id, 1 AS day_offset,
         40.0 AS current_tipping_score, 15.0 AS cold_score,
@@ -75,5 +75,6 @@ SELECT
     IF(current_tipping_score IS NOT NULL, 20.0, CAST(NULL AS FLOAT64)) AS wind_gusts_10m_max,
     IF(current_tipping_score IS NOT NULL, current_tipping_score / 2.0, CAST(NULL AS FLOAT64)) AS precipitation_sum_mm,
     IF(current_tipping_score IS NOT NULL, 20.0, CAST(NULL AS FLOAT64)) AS european_aqi_max,
-    IF(current_tipping_score IS NOT NULL, 20.0, CAST(NULL AS FLOAT64)) AS river_discharge_m3s
+    IF(current_tipping_score IS NOT NULL, 20.0, CAST(NULL AS FLOAT64)) AS river_discharge_m3s,
+    FALSE AS cold_in_global_score
 FROM expected

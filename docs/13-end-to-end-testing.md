@@ -12,6 +12,16 @@ failure branches. This test increases confidence in the
 deployed contracts, but it is not a complete release, browser, city or
 failure-mode suite.
 
+Cold backend contract tests now cover required warehouse aggregation mode,
+five-/six-factor validation, endpoint field projection, missing/partial and
+unmonitored states, valid zero and nullable temperature context. dbt fixtures
+check the persisted mode and selected-row lineage. Frontend Cold types compile,
+but the visible Cold row and Cold-specific live browser checks are still pending;
+existing staging E2E must not be treated as proof of Cold activation. Keep the
+aggregation setting false until those checks pass in isolated staging. The
+promotion order remains PR `dev` → `staging`, deployed verification, then PR
+`staging` → `main`.
+
 ## What the staging test verifies
 
 `frontend/tests/e2e/dashboard.spec.ts` first opens `/forecast`, selects Paris

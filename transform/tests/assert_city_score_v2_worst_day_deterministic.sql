@@ -30,6 +30,7 @@ WHERE actual.city_id IS NULL
     OR actual.score_date IS DISTINCT FROM expected.date
     OR actual.current_tipping_score IS DISTINCT FROM expected.global_tipping_score
     OR actual.current_primary_driver IS DISTINCT FROM expected.primary_driver
+    OR actual.cold_in_global_score IS DISTINCT FROM expected.cold_in_global_score
     OR actual.heat_score IS DISTINCT FROM expected.heat_score
     OR actual.wind_score IS DISTINCT FROM expected.wind_score
     OR actual.rain_score IS DISTINCT FROM expected.rain_score

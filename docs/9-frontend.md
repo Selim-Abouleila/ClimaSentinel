@@ -27,6 +27,15 @@ operational payloads with dedicated Pydantic models. The TypeScript interfaces
 in `frontend/src/lib/api.ts` are compile-time only: the browser currently trusts
 parsed JSON and does not perform independent runtime-schema validation.
 
+The API types now include optional `cold_in_global_score` on overview/detail,
+plus Cold score/status/monitoring/availability/coverage and Tmin/reference/anomaly
+on detail. These additions remain optional for the frontend-first rollout:
+an omitted field means the older API did not report it, while an explicit null
+score means unavailable data. An absent aggregation mode is unknown, not false.
+The visible factor catalogue still has five rows; adding the Cold row, context
+and mode-aware aggregate copy is the next UI step. Keep dbt aggregation false
+until that step and isolated staging verification are complete.
+
 ## Main dashboard and city detail
 
 The `/` dashboard renders the current operational heuristic score from

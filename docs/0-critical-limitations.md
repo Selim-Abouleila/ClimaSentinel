@@ -46,10 +46,11 @@ Cold outcome calibration or backtest. It measures relative cold anomaly;
 absolute cold severity, wind chill and persistence are not evaluated. A zero
 means no below-reference anomaly, not safe absolute conditions. The
 history mart exposes the anomaly, score and availability metadata, and the
-detail view projects them from its selected date. Cold is excluded from the
-live aggregate and current API/UI contracts.
+detail view projects them from its selected date. History/detail APIs expose
+these fields. Cold is excluded from the default live aggregate and the visible UI.
 Six-factor aggregation code is available behind `cold_in_global_score`, default
-false, pending coordinated API/UI support. Enabling it changes score composition;
+false, pending the Cold UI and verified staging release. The backend supports
+both modes using warehouse metadata. Enabling Cold changes score composition;
 it does not add outcome calibration or validate the existing zone thresholds.
 
 ## Evidence by component

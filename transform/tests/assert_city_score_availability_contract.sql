@@ -176,6 +176,7 @@ global_violations AS (
         CAST(NULL AS STRING) AS factor_name
     FROM global_expectations
     WHERE global_tipping_score IS DISTINCT FROM expected_global_score
+        OR cold_in_global_score IS DISTINCT FROM {{ 'TRUE' if include_cold else 'FALSE' }}
         OR global_score_available IS DISTINCT FROM (expected_global_score IS NOT NULL)
         OR monitored_factor_count IS DISTINCT FROM expected_monitored_count
         OR available_factor_count IS DISTINCT FROM expected_available_count

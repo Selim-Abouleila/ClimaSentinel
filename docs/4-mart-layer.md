@@ -112,7 +112,8 @@ city-local calendar days. This addition preserves that existing date convention.
 The anomaly is not a 0–100 risk score. It does not enter the global score,
 primary driver, factor counts or coverage aggregates. Inspect it in
 `mart.mart_city_score_history_v2` or on the selected date in
-`mart.mart_city_score_detail_v2`. The API and ML contracts still omit Cold.
+`mart.mart_city_score_detail_v2`. The history/detail APIs expose the Cold fields;
+the ML and three-day forecast contracts still omit Cold.
 
 After updating the GCP checkout, run `make dbt-run` and `make dbt-test`.
 The cold-anomaly fixture unit test covers anomaly and Cold-score boundaries,
@@ -138,7 +139,8 @@ dbt changes, the history table exposes `cold_score`, `cold_status`,
 monthly reference and anomaly. Cold is excluded from the live global score,
 driver, factor counts and overall coverage pending coordinated API/UI support.
 The detail view passes through these fields from its selected history row;
-current/detail aggregates and typed API responses still use five factors.
+current/detail aggregates still use five factors by default. Typed API responses
+expose Cold independently and validate aggregates using the stored mode.
 The rule identifier names this specification, not a warehouse column.
 
 `cold_monitored` comes from `city_signal_monitoring` through
@@ -247,8 +249,8 @@ FROM `PROJECT_ID.mart.mart_city_score_history_v2`
 ORDER BY city_id, date;
 ```
 
-Cold is now available in history and the detail view. API/UI exposure is a
-later integration step. Existing global score, driver, counts and
+Cold is now available in history, the detail view and their API responses. The
+visible UI remains the next integration step. Existing global score, driver, counts and
 coverage stay on five factors until the six-factor aggregation change is
 released with compatible backend/frontend contracts.
 The opt-in aggregation and consumer selection are tested as described below.
@@ -262,6 +264,15 @@ require their own later Cold specification.
 remain on Heat, Wind, Rain, Air Quality and River. Cold's individual score and
 detail fields are available in either mode. Non-boolean values, including the
 string `"false"`, cause a compilation error instead of silently enabling Cold.
+
+The history table now persists that mode as a Boolean column also named
+`cold_in_global_score`. Current/detail project it from their selected history
+row; they do not recompute it from a later dbt invocation. API validators use
+this stored mode so both five- and six-factor rows have an explicit contract.
+The mode is independent of `cold_monitored` and `cold_available`; a non-river
+city can have five monitored factors even when six-factor aggregation is enabled.
+Schema tests require the field, and data tests verify configuration and
+history/current/detail lineage. Refresh the marts before deploying the new API.
 
 When the setting is `true`, the same history model includes Cold in:
 
@@ -297,16 +308,19 @@ use mocked inputs and do not activate six-factor scoring in the built marts.
 `assert_city_score_v2_current_detail_consistent` checks matching aggregates,
 run provenance and ranking across the built consumer views.
 
-**Release boundary:** keep this setting false while the deployed backend
-validates only five factors. Activation requires backend support for Cold
-fields and six-factor aggregate validation, plus frontend support for Cold
-drivers, scores and coverage. Then enable the setting in the release's dbt
+**Release boundary:** backend code now supports both modes and frontend types
+accept Cold, but the visible Cold UI and staging activation checks remain.
+Keep this setting false until compatible application versions are deployed and
+staging data is isolated. Use PR `dev` → `staging`, deploy and verify both modes
+there, and only then open PR `staging` → `main`. Enable the setting in the release's dbt
 configuration and rebuild/deploy the ingestion image so scheduled runs retain
 the same mode. Run the models and tests with matching configuration and verify
 API responses and dashboard behavior together. Changing `--target` alone does
 not create an isolated preview: the project uses the same explicit `stg`/`mart`
 schemas. The normal `make dbt-run` / `make dbt-test` workflow keeps the default
-five-factor live behavior while validating the enabled unit cases.
+five-factor live behavior while validating the enabled unit cases. The current
+production Railway workflow does not deploy the application; merging `main`
+alone is not evidence that compatible production services are running.
 
 ### `mart_city_score_current_v2` (view)
 
@@ -317,7 +331,8 @@ from highest to lowest operational heuristic score. This is not a rolling
 scored date always wins over an unavailable date; exact ties choose the earlier
 date deterministically.
 Rows also expose `current_score_available`, monitored/available factor counts
-and `overall_coverage`. Cities without a score rank after scored cities.
+and `overall_coverage`, plus the stored `cold_in_global_score` mode. Cities
+without a score rank after scored cities.
 
 ### `mart_city_zone_current_v2` (view)
 
@@ -361,13 +376,14 @@ ranking, driver selection, factor counts or overall coverage in that mode.
 With `cold_in_global_score: true`, the same selector uses the six-factor
 aggregate described above; every projected field still comes from one row.
 
-The backend's explicit SELECT and typed response still expose only Heat, Wind,
-Rain, Air Quality and River. Cold can be inspected in BigQuery now; API/UI
-exposure requires the following application changes. After `make dbt-run` and
+The backend's explicit SELECT and typed response expose all six factors, Cold
+temperature context and the stored aggregation mode. The frontend types accept
+these additions, while the visible Cold row is a later UI step. After `make dbt-run` and
 `make dbt-test`, inspect the view (replace `PROJECT_ID`):
 
 ```sql
 SELECT city_id, score_date, current_tipping_score, current_primary_driver,
+       cold_in_global_score,
        cold_score, cold_status, cold_monitored, cold_available, cold_coverage,
        temperature_2m_min, normal_temperature_2m_min, cold_anomaly_c
 FROM `PROJECT_ID.mart.mart_city_score_detail_v2`

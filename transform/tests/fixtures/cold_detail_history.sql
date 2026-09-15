@@ -86,5 +86,6 @@ SELECT
     IF(global_tipping_score IS NOT NULL, 0.8, 0.0) AS overall_coverage,
     global_tipping_score IS NOT NULL AS global_score_available,
     global_tipping_score,
-    IF(global_tipping_score IS NOT NULL, 'Rain', 'Unavailable') AS primary_driver
+    IF(global_tipping_score IS NOT NULL, 'Rain', 'Unavailable') AS primary_driver,
+    FALSE AS cold_in_global_score
 FROM scenarios
