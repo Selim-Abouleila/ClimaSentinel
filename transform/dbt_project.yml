@@ -21,6 +21,11 @@ clean-targets:
   - "target"
   - "dbt_packages"
 
+# Cold is calculated independently. Activate six-factor aggregates only with
+# compatible backend/frontend contracts; native unit tests exercise both modes.
+vars:
+  cold_in_global_score: false
+
 # ─── Model materialization defaults ──────────────────────────────────────────
 models:
   clima_sentinel:

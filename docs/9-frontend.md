@@ -16,8 +16,8 @@ does not query BigQuery or load MLflow artifacts directly.
 - Next.js 16 and React 19;
 - TypeScript API types in `frontend/src/lib/api.ts`;
 - Tailwind CSS v4 plus shared design tokens; and
-- Playwright for pure availability and backend-health proxy unit tests plus live
-  staging end-to-end tests.
+- Playwright for pure availability and backend-health proxy unit tests, local
+  Cold UI fixture tests and live staging end-to-end tests.
 
 `NEXT_PUBLIC_API_URL` identifies the backend and is embedded into the
 browser-facing bundle at build time. Railway must therefore provide the correct
@@ -27,10 +27,20 @@ operational payloads with dedicated Pydantic models. The TypeScript interfaces
 in `frontend/src/lib/api.ts` are compile-time only: the browser currently trusts
 parsed JSON and does not perform independent runtime-schema validation.
 
+The API types now include optional `cold_in_global_score` on overview/detail,
+plus Cold score/status/monitoring/availability/coverage and Tmin/reference/anomaly
+on detail. These additions remain optional for the frontend-first rollout:
+an omitted field means the older API did not report it, while an explicit null
+score means unavailable data. An absent aggregation mode is unknown, not false.
+The city-detail catalogue now displays Cold after Heat, with its own score,
+status, coverage and temperature context. Keep dbt aggregation false until
+isolated staging activation and deployment checks pass. Implementing the UI
+does not enable Cold in live aggregate scores.
+
 ## Main dashboard and city detail
 
 The `/` dashboard renders the current operational heuristic score from
-`GET /data/current-scores`. `/city/[city_id]` renders the five-factor signal
+`GET /data/current-scores`. `/city/[city_id]` renders the six-factor signal
 catalogue from `GET /data/city/{city_id}/scores`, but only factors with complete
 required input coverage receive a numeric score. These pages describe the
 current operational marts; they must not be interpreted as model-validation
@@ -44,20 +54,45 @@ spine keeps that operational surface at 20 cities, including the 10
 dashboard-only additions, even when some selected-run signals are unavailable.
 
 The underlying mart selects the two UTC dates “today + tomorrow,” not a rolling
-48-hour interval. The current overview and city page still display “48-hour”
-copy, which is a known product-label mismatch. Unlike `/forecast`, they do not
-currently render the beta/validation disclosure.
+48-hour interval. City detail now labels the window “Today / tomorrow (UTC).”
+The overview still displays “48-hour” copy, which remains a known product-label
+mismatch. Unlike `/forecast`, these pages do not currently render the
+beta/validation disclosure.
 
-Operational factors have three explicit UI states. `available` renders the
-numeric heuristic score and product band; `unavailable` renders a neutral em dash plus the
-reported coverage; `not_monitored` renders “Not monitored / No source
+Operational factors have three explicit availability states. `available`
+renders the numeric heuristic score and product band; `unavailable` renders a
+neutral em dash plus the reported coverage; `not_monitored` renders “Not monitored / No source
 configured.” Neither missing state receives a green Stable label or meter fill.
 Detail copy reports available versus monitored factor counts and states that
 missing factors are excluded from the overall maximum. A fully covered input
 whose rule genuinely evaluates to zero remains `0.0 · Stable`.
 
-The overview accepts a nullable city-level score. Cities without any available
-factor are excluded from the network mean, highest-risk selection and spectrum,
+The Cold row also displays the forecast minimum temperature, monthly normal
+minimum and below-normal anomaly for the API's selected `score_date`. It
+preserves finite negative temperatures and zero values. Forecast and normal
+Tmin use one decimal place; the anomaly uses two, matching its warehouse
+precision. Missing or unreported context uses a neutral placeholder. An older
+API payload that omits Cold shows
+“Not reported,” without a synthetic zero, Stable band or meter fill.
+
+The reported `cold_in_global_score` mode controls the aggregate explanation and
+dominant-factor eligibility:
+
+| API mode | Cold presentation |
+|---|---|
+| `false` | Display the independent Cold score, while stating that it is excluded from the aggregate. Even a larger Cold score does not become the dominant participating factor. |
+| `true` | Identify Cold as participating; an available Cold score can be the dominant factor. |
+| Omitted | Explain that participation was not reported. Do not infer a mode from the presence of a Cold score or the number of monitored factors. |
+
+Aggregate availability and coverage copy displays the counts and overall
+coverage supplied by the API. If an older payload omits counts, only a reported
+mode permits a fallback count of its participating factors; otherwise counts
+remain unreported.
+This keeps the default five-factor aggregate consistent with the separately
+displayed Cold score, rather than counting all six visible rows.
+
+The overview accepts a nullable city-level score. Cities without an available
+participating factor are excluded from the network mean, highest-risk selection and spectrum,
 but remain visible as Unavailable cards. Tied worst dates resolve to one
 deterministic dbt row before the UI receives them; see
 [Mart Layer](4-mart-layer.md#mart_city_score_detail_v2-view).
@@ -162,12 +197,27 @@ boundary.
 The unsuffixed marts remain temporary rollback compatibility and do not expose
 the v2 column contract.
 
+Cold release verification remains a separate gate: keep
+`cold_in_global_score: false` on the shared warehouse until staging datasets
+are isolated and the Cold schema/activation checks are ready. Promote through
+PR `dev` → `staging`, deploy and verify the warehouse, API and UI there, and
+only then open PR `staging` → `main`. Local fixture browser success does not
+establish that the staging release is deployed or that production is ready;
+the production Railway deployment workflow remains disabled.
+
 The pure unit suite checks legacy compatibility, explicit v2 false precedence,
 measured zero, unavailable factors and aggregation with partial/all-unavailable
 inputs in `signal-availability.spec.ts`. It also verifies the health proxy's
 no-cache pass-through and unreachable-backend `502` response in
 `backend-health-route.spec.ts`. It runs in PR CI with `npm run test:unit` and
 does not contact a browser or live service.
+
+`npm run test:cold-ui` runs a separate local browser suite against deterministic
+Cold fixtures. It checks the rendered Cold score/context, valid zero,
+missing/partial/unmonitored states, older payloads and both reported aggregation
+modes. See [End-to-End Testing](13-end-to-end-testing.md#local-cold-ui-fixture-suite)
+for its scope and execution. It does not replace live BigQuery or staging
+release verification and is separate from `npm run test:e2e`.
 
 The staging Playwright smoke test verifies the
 `forecast_rules_baseline` API contract for Paris across all three horizons and

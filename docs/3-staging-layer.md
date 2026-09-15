@@ -85,9 +85,9 @@ Static configuration data loaded directly into BigQuery tables via `dbt seed`.
 
 | Seed | Description | Source |
 |---|---|---|
-| `city_monthly_normals` | Structurally validated 240-row lookup: one temperature, precipitation and wind baseline row for each of 12 months across 20 operational cities. The Gold layer uses its maximum-temperature value as the Heat baseline. | `transform/seeds/city_monthly_normals.csv` |
+| `city_monthly_normals` | Structurally validated 240-row lookup: one temperature, precipitation and wind baseline row for each of 12 months across 20 operational cities. The Gold layer uses its maximum-temperature value as the Heat baseline and its minimum-temperature value for the independent history Cold score. | `transform/seeds/city_monthly_normals.csv` |
 | `forecast_city_allowlist` | Frozen original 10-city/timezone contract for forecast-vintage staging and calendar-day retrieval-vintage feature, training and serving outputs. The other 10 operational cities remain outside that path. | `transform/seeds/forecast_city_allowlist.csv` |
-| `city_signal_monitoring` | One row per active operational city declaring whether Heat, Wind, Rain, Air Quality and River are monitored. Weather and AQ are enabled for all 20 cities; River mirrors `config/cities.csv:river_enabled`. | `transform/seeds/city_signal_monitoring.csv` |
+| `city_signal_monitoring` | One row per active operational city declaring whether Heat, Cold, Wind, Rain, Air Quality and River are monitored. Weather and AQ are enabled for all 20 cities; River mirrors `config/cities.csv:river_enabled`. Cold is scored independently in history while live aggregates still use five factors. | `transform/seeds/city_signal_monitoring.csv` |
 
 `transform/scripts/generate_city_monthly_normals.py` generated the expansion's
 120 rows from the Open-Meteo Historical Weather endpoint with
@@ -100,19 +100,48 @@ rounds outputs to two decimal places.
 model, 2026-08-01 retrieval date, interval, variables, units and aggregation
 policy.
 
-The original cities' 120 rows are intentionally retained from the historical
-seed. They predate the generator and cannot be claimed as exactly regenerable;
-Open-Meteo's Best Match archive can also be revised after retrieval. The
-generator/provenance pair makes the new expansion procedure auditable without
+The original cities' existing baseline columns are intentionally retained from
+the historical seed. They predate the generator and cannot be claimed as
+exactly regenerable; Open-Meteo's Best Match archive can also be revised after
+retrieval. The generator/provenance pair makes the new expansion procedure auditable without
 misrepresenting the legacy half of the seed.
+
+`normal_temperature_2m_min` is a separate addition across **all 20 cities and
+240 city/month rows**. It is the arithmetic mean of daily
+`temperature_2m_min` archive values for each city-local calendar month over
+2014-01-01 through 2023-12-31, in degrees Celsius, using the same
+`models=best_match` archive request and two-decimal rounding. It is not an
+estimate from the existing mean or maximum baseline, nor the lowest
+temperature recorded in that month. Its column-specific provenance records
+the new retrieval separately; all previously checked-in baseline values remain
+unchanged. The operational history mart now joins this baseline and exposes
+`cold_anomaly_c` alongside the forecast and normal minimum temperatures; see
+[the cold diagnostic](4-mart-layer.md#cold-temperature-diagnostic).
+The [initial Cold score](4-mart-layer.md#cold-scoring-rule-cold_anomaly_v1)
+is implemented in history and projected into the detail view on its selected
+score date. Their APIs expose Cold, and the city-detail UI renders its score,
+availability and temperature context. ML support remains a separate later step.
+
+`cold_monitored` is a separate boolean in `city_signal_monitoring`, required
+`true` for all 20 active cities. `stg_city_signal_input_v2` carries it directly
+from the city/date spine, including rows with missing weather data. It is a
+monitoring policy, not a claim that Cold inputs are available. The history mart
+uses it to calculate the nullable Cold score and availability metadata; its
+global aggregates use five factors by default. API responses expose Cold and
+the stored aggregate mode; the city-detail UI presents six factors and identifies
+Cold's participation separately from its monitoring and availability.
+The [six-factor aggregation setting](4-mart-layer.md#six-factor-aggregation-activation)
+defaults false; it controls aggregate participation separately from monitoring.
 
 The standard-library city validator checks unique city/month keys, exactly 12
 months for every active city, finite physical ranges, registry consistency,
 the frozen original forecast IDs, and exact monitoring-seed alignment before
-deployment. It rejects a missing active city, a disabled weather/AQ factor, or
+deployment. It rejects a missing active city, a disabled weather/AQ factor
+(including Cold), a missing/invalid Cold boolean, or
 a River monitoring value that differs from `river_enabled`. dbt adds seed-level
 not-null/unique checks and warehouse-side monitoring and normal-completeness
-contracts.
+contracts. The monitoring contract also verifies that each staging row's Cold
+flag matches its city's seeded value.
 
 ### Active Exact-Run Operational v2 Models (5)
 
@@ -293,8 +322,52 @@ gcloud auth application-default login
 | `make validate-cities` | Validate the operational registry, 240-row normals seed, 20-row signal-monitoring contract, and frozen forecast allowlist |
 | `make deploy` | Full GCP data pipeline: validate + build + Terraform + waited ingestion + dbt seed/run/test |
 | `make dbt-stg` | Run staging models only |
-| `make dbt-run` | Run all models (stg + mart) |
-| `make dbt-test` | Run schema and singular data tests |
+| `make dbt-run` | Validate city files, load static seeds, then run all models (stg + mart); stop on failure |
+| `make dbt-test` | Run schema, singular data and fixture unit tests |
+
+### Apply the Cold baseline from GCP Cloud Shell
+
+Use the updated `dev` checkout in the repository root, with `.env` populated
+and the dbt installation and GCP authentication prerequisites above satisfied:
+
+```bash
+git switch dev
+git pull --ff-only origin dev
+make validate-cities
+make dbt-run
+make dbt-test
+```
+
+`make dbt-run` validates city files and loads the checked-in CSVs before
+rebuilding their dependent models. Both `city_monthly_normals` and
+`city_signal_monitoring` have `full_refresh: true` in
+`transform/seeds/_seeds.yml`, so dbt recreates these small lookups with the
+minimum-temperature baseline and `cold_monitored` columns. The setting is
+scoped to those two seeds; the command
+does not pass a full-refresh flag to mart models, and seeding does not modify
+raw data. `make dbt-stg` remains a staging-only command and does not seed.
+
+This refresh reads the CSV; it does not fetch historical API data or deploy a
+new ingestion image. Scheduled ingestion uses the CSV embedded in its deployed
+image. Run `make deploy` from the updated checkout to keep scheduled runs on
+the same seed version; an older image can otherwise reload its older CSV.
+
+To inspect Cold monitoring after the run, use the BigQuery console (replace
+`PROJECT_ID` with your project). The seed should return 20 rows with `true`,
+and the staging query should return no rows:
+
+```sql
+SELECT city_id, cold_monitored
+FROM `PROJECT_ID.stg.city_signal_monitoring`
+ORDER BY city_id;
+
+SELECT signals.city_id, signals.date, signals.cold_monitored
+FROM `PROJECT_ID.stg.stg_city_signal_input_v2` AS signals
+LEFT JOIN `PROJECT_ID.stg.city_signal_monitoring` AS monitoring
+  ON signals.city_id = monitoring.city_id
+WHERE monitoring.city_id IS NULL
+   OR signals.cold_monitored IS DISTINCT FROM monitoring.cold_monitored;
+```
 
 ### From the transform directory
 
@@ -303,6 +376,7 @@ cd transform
 set -a
 source ../.env
 set +a
+dbt seed --profiles-dir .                   # Load static CSVs before models
 dbt run --profiles-dir . --select stg        # Build staging relations
 dbt test --profiles-dir . --select stg       # Run schema + singular staging tests
 dbt build --profiles-dir . --select tag:forecast_vintage

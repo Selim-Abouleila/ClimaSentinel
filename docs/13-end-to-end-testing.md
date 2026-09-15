@@ -12,6 +12,49 @@ failure branches. This test increases confidence in the
 deployed contracts, but it is not a complete release, browser, city or
 failure-mode suite.
 
+Cold backend contract tests now cover required warehouse aggregation mode,
+five-/six-factor validation, endpoint field projection, missing/partial and
+unmonitored states, valid zero and nullable temperature context. dbt fixtures
+check the persisted mode and selected-row lineage. The city-detail UI now
+displays Cold and its temperature context, with a dedicated local fixture
+browser suite described below. Cold-specific live staging checks and data
+isolation remain pending; existing staging E2E must not be treated as proof of
+Cold activation. Keep the aggregation setting false until those checks pass in
+isolated staging. The promotion order remains PR `dev` → `staging`, deployed
+verification, then PR `staging` → `main`.
+
+## Local Cold UI fixture suite
+
+`npm run test:cold-ui` exercises the rendered city-detail page with deterministic
+API fixtures in a local browser. It is separate from the existing live staging
+`npm run test:e2e` suite and does not call BigQuery or activate six-factor
+aggregation in the warehouse.
+
+The dedicated configuration starts a local fixture API on port 4319 and a Next
+server on port 4318; both are bound to `127.0.0.1`. It supplies fixtures at the
+server's fetch boundary because the city page loads its API data on the Next
+server. The suite uses separate build output and local font responses, so it
+does not depend on the deployed backend or Google Fonts requests.
+
+The Cold cases cover:
+
+- the Cold row after Heat, with its independent score, status and coverage;
+- forecast Tmin, monthly normal Tmin and the anomaly on the selected score
+  date, including finite negative temperatures and valid zero values;
+- neutral unavailable, partial, unmonitored and older-payload states without
+  invented zero scores or Stable bands;
+- `cold_in_global_score: false`, where a larger Cold score remains separate
+  from the aggregate and its dominant factor;
+- `cold_in_global_score: true`, where Cold participates and can dominate;
+- an omitted mode, shown as unreported rather than inferred from counts; and
+- aggregate copy that follows the API counts instead of all six visible rows.
+
+These fixtures make Cold-positive and missingness branches repeatable without
+waiting for matching weather in live data. They verify rendering against the
+supplied API contract, not ingestion, dbt arithmetic, deployed release identity
+or the state of the staging warehouse. Isolated staging must still verify the
+real API, stored mode, selected-row lineage and UI before a production PR.
+
 ## What the staging test verifies
 
 `frontend/tests/e2e/dashboard.spec.ts` first opens `/forecast`, selects Paris
@@ -145,7 +188,9 @@ These are coverage gaps, not claims that those paths are broken.
 frontend/
 ├── playwright.config.ts
 ├── playwright.unit.config.ts
+├── playwright.cold-ui.config.ts
 └── tests/
+    ├── cold-ui/              # Local browser specs and fixture servers
     ├── e2e/
     │   └── dashboard.spec.ts
     └── unit/
@@ -162,6 +207,7 @@ cd frontend
 npm ci
 npm run test:unit
 npx playwright install --with-deps chromium
+npm run test:cold-ui
 ```
 
 The unit command runs pure TypeScript availability/aggregation cases without a
@@ -171,7 +217,7 @@ unavailable AQ, unmonitored River and the exact 36-hour stale threshold. It also
 invokes the backend-health route directly with a mocked fetch to verify no-cache
 proxying and its `502` failure response.
 
-The Playwright configuration does not start a web server. The frontend must
+The existing live E2E Playwright configuration does not start a web server. The frontend must
 already be running at the default target `http://localhost:3000`, built or
 started with `NEXT_PUBLIC_API_URL` pointing to the compatible backend. Override
 only the frontend target for a live deployment:

@@ -7,6 +7,8 @@
     }
 ) }}
 
+{% set include_cold = cold_in_global_score() %}
+
 WITH daily_signals AS (
     SELECT
         signals.*,
@@ -17,7 +19,26 @@ WITH daily_signals AS (
 signals_with_baselines AS (
     SELECT
         signals.*,
-        normals.normal_temperature_2m_max
+        normals.normal_temperature_2m_max,
+        normals.normal_temperature_2m_min,
+        -- Degrees below the monthly minimum-temperature normal, not a score.
+        -- Current-day coverage is sufficient; no next-day value is required.
+        CASE
+            WHEN signals.temperature_2m_value_count = 24
+                AND signals.temperature_2m_min IS NOT NULL
+                AND NOT IS_NAN(signals.temperature_2m_min)
+                AND NOT IS_INF(signals.temperature_2m_min)
+                AND normals.normal_temperature_2m_min IS NOT NULL
+                AND NOT IS_NAN(normals.normal_temperature_2m_min)
+                AND NOT IS_INF(normals.normal_temperature_2m_min)
+                THEN ROUND(
+                    GREATEST(
+                        0.0,
+                        normals.normal_temperature_2m_min - signals.temperature_2m_min
+                    ),
+                    2
+                )
+        END AS cold_anomaly_c
     FROM daily_signals AS signals
     LEFT JOIN {{ ref('city_monthly_normals') }} AS normals
         ON signals.city_id = normals.city_id
@@ -94,6 +115,24 @@ factor_scores AS (
                 )
         END AS heat_score,
 
+        -- cold_anomaly_v1: current-day anomaly only. Cap in degrees before
+        -- converting to NUMERIC to keep even very large finite inputs safe.
+        -- Decimal arithmetic fixes score rounding; the public type is FLOAT64.
+        CASE
+            WHEN cold_monitored
+                AND temperature_2m_value_count = 24
+                AND cold_anomaly_c IS NOT NULL
+                AND NOT IS_NAN(cold_anomaly_c)
+                AND NOT IS_INF(cold_anomaly_c)
+                AND cold_anomaly_c >= 0
+                THEN CAST(
+                    ROUND(
+                        CAST(LEAST(cold_anomaly_c, 20.0) AS NUMERIC) * NUMERIC '5',
+                        1
+                    ) AS FLOAT64
+                )
+        END AS cold_score,
+
         CASE
             WHEN wind_monitored
                 AND wind_gusts_10m_max IS NOT NULL
@@ -138,6 +177,7 @@ scores_with_metadata AS (
         *,
 
         heat_score IS NOT NULL AS heat_available,
+        cold_score IS NOT NULL AS cold_available,
         wind_score IS NOT NULL AS wind_available,
         rain_score IS NOT NULL AS rain_available,
         air_score IS NOT NULL AS air_available,
@@ -148,6 +188,11 @@ scores_with_metadata AS (
             WHEN heat_score IS NULL THEN 'unavailable'
             ELSE 'available'
         END AS heat_status,
+        CASE
+            WHEN NOT cold_monitored THEN 'not_monitored'
+            WHEN cold_score IS NULL THEN 'unavailable'
+            ELSE 'available'
+        END AS cold_status,
         CASE
             WHEN NOT wind_monitored THEN 'not_monitored'
             WHEN wind_score IS NULL THEN 'unavailable'
@@ -185,6 +230,20 @@ scores_with_metadata AS (
                 IF(normal_temperature_2m_max IS NOT NULL, 1.0, 0.0)
             )
         END AS heat_coverage,
+        CASE
+            WHEN NOT cold_monitored THEN NULL
+            WHEN cold_score IS NOT NULL THEN 1.0
+            WHEN cold_monitored
+                AND temperature_2m_value_count BETWEEN 1 AND 23
+                AND temperature_2m_min IS NOT NULL
+                AND NOT IS_NAN(temperature_2m_min)
+                AND NOT IS_INF(temperature_2m_min)
+                AND normal_temperature_2m_min IS NOT NULL
+                AND NOT IS_NAN(normal_temperature_2m_min)
+                AND NOT IS_INF(normal_temperature_2m_min)
+                THEN SAFE_DIVIDE(temperature_2m_value_count, 24)
+            ELSE 0.0
+        END AS cold_coverage,
         CASE
             WHEN NOT wind_monitored THEN NULL
             ELSE LEAST(
@@ -227,10 +286,12 @@ scores_with_metadata AS (
 scores_with_global AS (
     SELECT
         *,
+        -- The default remains five factors until the coordinated API/UI cutover.
         (
             SELECT MAX(score)
             FROM UNNEST([
                 heat_score,
+                {% if include_cold %}cold_score,{% endif %}
                 wind_score,
                 rain_score,
                 air_score,
@@ -239,6 +300,7 @@ scores_with_global AS (
         ) AS global_tipping_score,
         (
             IF(heat_monitored, 1, 0)
+            {% if include_cold %}+ IF(cold_monitored, 1, 0){% endif %}
             + IF(wind_monitored, 1, 0)
             + IF(rain_monitored, 1, 0)
             + IF(air_monitored, 1, 0)
@@ -246,6 +308,7 @@ scores_with_global AS (
         ) AS monitored_factor_count,
         (
             IF(heat_available, 1, 0)
+            {% if include_cold %}+ IF(cold_available, 1, 0){% endif %}
             + IF(wind_available, 1, 0)
             + IF(rain_available, 1, 0)
             + IF(air_available, 1, 0)
@@ -275,6 +338,9 @@ final_scores AS (
 
         -- Raw values for context.
         temperature_2m_max,
+        temperature_2m_min,
+        normal_temperature_2m_min,
+        cold_anomaly_c,
         precipitation_sum_mm,
         wind_gusts_10m_max,
         european_aqi_max,
@@ -282,6 +348,7 @@ final_scores AS (
 
         -- Nullable factor scores: NULL means no defensible score exists.
         ROUND(heat_score, 1) AS heat_score,
+        cold_score,
         ROUND(wind_score, 1) AS wind_score,
         ROUND(rain_score, 1) AS rain_score,
         ROUND(air_score, 1) AS air_score,
@@ -291,6 +358,10 @@ final_scores AS (
         heat_monitored,
         heat_available,
         ROUND(heat_coverage, 3) AS heat_coverage,
+        cold_status,
+        cold_monitored,
+        cold_available,
+        ROUND(cold_coverage, 3) AS cold_coverage,
         wind_status,
         wind_monitored,
         wind_available,
@@ -313,6 +384,7 @@ final_scores AS (
         ROUND(
             SAFE_DIVIDE(
                 COALESCE(heat_coverage, 0.0)
+                {% if include_cold %}+ COALESCE(cold_coverage, 0.0){% endif %}
                 + COALESCE(wind_coverage, 0.0)
                 + COALESCE(rain_coverage, 0.0)
                 + COALESCE(air_coverage, 0.0)
@@ -332,8 +404,13 @@ final_scores AS (
             WHEN global_tipping_score = wind_score THEN 'Wind'
             WHEN global_tipping_score = rain_score THEN 'Rain'
             WHEN global_tipping_score = air_score THEN 'Air Quality'
+            -- Preserve every existing positive tie priority; Cold follows them.
+            {% if include_cold %}WHEN global_tipping_score = cold_score THEN 'Cold'{% endif %}
             ELSE 'Unknown'
-        END AS primary_driver
+        END AS primary_driver,
+        -- Persist the mode used for these aggregates so consumers never infer
+        -- it from factor counts or their own deployment configuration.
+        {{ 'TRUE' if include_cold else 'FALSE' }} AS cold_in_global_score
 
     FROM scores_with_global
 )

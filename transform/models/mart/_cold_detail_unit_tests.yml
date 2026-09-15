@@ -1,0 +1,18 @@
+version: 2
+
+unit_tests:
+  - name: test_cold_detail_v2
+    description: >
+      Project Cold scores, availability metadata and temperature context from
+      the same selected history row. Eight city scenarios verify that the
+      existing five-factor global score and earlier-date tie break still choose
+      the detail date, including unavailable aggregates, a valid zero Cold
+      score, partial and unmonitored Cold inputs, and out-of-window rows.
+    model: mart_city_score_detail_v2
+    given:
+      - input: ref('mart_city_score_history_v2')
+        format: sql
+        fixture: cold_detail_history
+    expect:
+      format: sql
+      fixture: cold_detail_expected

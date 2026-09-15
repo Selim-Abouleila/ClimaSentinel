@@ -1,0 +1,25 @@
+version: 2
+
+unit_tests:
+  - name: test_cold_anomaly_v2
+    description: >
+      Exercise the operational cold diagnostic and cold_anomaly_v1 factor with
+      real model SQL: city/month baseline matching, zero and negative temperatures,
+      decimal score rounding, clipping and monotonicity, incomplete or non-finite
+      inputs, Cold monitoring and coverage, and independence from Heat monitoring
+      or a following forecast day. Existing five-factor scores, counts, coverage
+      and drivers stay intact, even when Cold has the highest individual score.
+    model: mart_city_score_history_v2
+    overrides:
+      vars:
+        cold_in_global_score: false
+    given:
+      - input: ref('stg_city_signal_input_v2')
+        format: sql
+        fixture: cold_anomaly_signals
+      - input: ref('city_monthly_normals')
+        format: sql
+        fixture: cold_anomaly_normals
+    expect:
+      format: sql
+      fixture: cold_anomaly_expected

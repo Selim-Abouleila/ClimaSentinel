@@ -8,7 +8,7 @@
 #   make deploy      → Validate + build + Terraform + GCP ingestion + dbt checks
 #   make plan        → Terraform plan only (dry run, no build)
 #   make destroy     → Terraform destroy (tear down all resources)
-#   make dbt-run     → Run all dbt models (stg + mart)
+#   make dbt-run     → Validate and seed reference data, then run all dbt models
 #   make dbt-stg     → Run staging models only
 #   make dbt-test    → Run dbt schema tests
 #   make help        → Show this help message
@@ -75,10 +75,7 @@ deploy: validate-cities build ensure-terraform
 	@echo ""
 	@echo "── Installing dbt (if needed) ──────────────────────────────────"
 	@pip install -q -r $(DBT_DIR)/requirements.txt
-	@echo "── Seeding static data (CSV to BigQuery) ───────────────────────"
-	@dbt seed --project-dir $(DBT_DIR) --profiles-dir $(DBT_DIR)
-	@echo "── Running dbt models (staging views) ──────────────────────────"
-	@dbt run --project-dir $(DBT_DIR) --profiles-dir $(DBT_DIR)
+	@$(MAKE) dbt-run
 	@echo ""
 	@echo "── Running dbt tests ───────────────────────────────────────────"
 	@dbt test --project-dir $(DBT_DIR) --profiles-dir $(DBT_DIR)
@@ -97,8 +94,9 @@ destroy:
 		-var="region=$(GCP_REGION)" \
 		-var="ingest_image=$(IMAGE_URI)"
 
-## Run all dbt models (stg + mart)
-dbt-run:
+## Validate and seed reference data, then run all dbt models (stg + mart)
+dbt-run: validate-cities
+	@dbt seed --project-dir $(DBT_DIR) --profiles-dir $(DBT_DIR)
 	@dbt run --project-dir $(DBT_DIR) --profiles-dir $(DBT_DIR)
 
 ## Run staging models only
@@ -120,7 +118,7 @@ help:
 	@echo "  make deploy      GCP data deploy: build + Terraform + ingest + dbt validation"
 	@echo "  make plan        Dry run (plan only, no build or apply)"
 	@echo "  make destroy     Tear down all GCP resources"
-	@echo "  make dbt-run     Run all dbt models (stg + mart)"
+	@echo "  make dbt-run     Validate and seed reference data, then run all dbt models"
 	@echo "  make dbt-stg     Run staging models only"
 	@echo "  make dbt-test    Run dbt schema tests"
 	@echo "  Image URI: $(IMAGE_URI)"
