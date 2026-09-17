@@ -17,11 +17,15 @@ five-/six-factor validation, endpoint field projection, missing/partial and
 unmonitored states, valid zero and nullable temperature context. dbt fixtures
 check the persisted mode and selected-row lineage. The city-detail UI now
 displays Cold's score, status and coverage, with a dedicated local fixture
-browser suite described below. Cold-specific live staging checks and data
-isolation remain pending; existing staging E2E must not be treated as proof of
-Cold activation. Keep the aggregation setting false until those checks pass in
-isolated staging. The promotion order remains PR `dev` → `staging`, deployed
-verification, then PR `staging` → `main`.
+browser suite described below. The checked-in dbt default is true, but existing
+live staging E2E and the CD schema check do not verify Cold-specific activation.
+The chosen rollout uses shared outputs: after PR `dev` → `staging`, run
+`make deploy` from the latest merged staging checkout to update the ingestion
+image and rebuild/test the marts. That rebuild affects both websites. Verify
+the API reports true and check the maximum, driver, counts, coverage, selected
+date and UI participation separately; fixture success is not evidence of live
+activation. Only after deployed verification passes, open PR `staging` → `main`.
+See the [activation and rollback procedure](4-mart-layer.md#six-factor-aggregation-activation).
 
 ## Local Cold UI fixture suite
 

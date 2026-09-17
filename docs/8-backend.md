@@ -44,35 +44,41 @@ The dashboard endpoints read the availability-aware operational v2 marts:
 
 The history and detail APIs expose six operational factors, including Cold,
 plus forecast Tmin, normal Tmin and the Cold anomaly. Global scoring and
-aggregate metadata still use five factors by default. These marts are not the
+aggregate metadata include Cold with the true dbt default after the updated
+models are built. These marts are not the
 realized-label source used to validate the forecast model. A factor score
 is nullable and accompanied by `status`, `monitored`, `available`, and
 `coverage` fields. Missing AQ or River input therefore crosses the API as NULL,
 never as a synthetic green zero.
 
-The dbt setting `cold_in_global_score` defaults false. History persists the
+The dbt setting `cold_in_global_score` defaults true. History persists the
 boolean used to build its aggregates; current/detail copy it from their selected
 history row. All three API response types require that Boolean, with no default,
 string coercion, count inference or separate backend setting. Detail/history
 validate all six factors' metadata in either mode, then validate aggregate
 maximum, counts and coverage against the five or six participating factors.
-False mode can return Cold 100 beside global score 20; Cold is not participating.
+False rollback/compatibility mode can return Cold 100 beside global score 20;
+Cold is not participating.
 True mode permits six monitored factors and a Cold driver. Current responses
 enforce mode-dependent count limits and reject a Cold driver in false mode.
 The new Cold temperature-context fields preserve finite negative values and
 map non-finite values to JSON null; this does not manufacture an available score.
 
-Refresh the warehouse with `make dbt-run` and `make dbt-test` before deploying
-this backend: it requires the new mode column and Cold fields. Keep the setting
-false until isolated staging activation and deployment checks pass. The Cold UI
-is implemented and uses the row's mode to distinguish display from participation. The
+The backend requires the mode column and Cold fields in the warehouse, even
+when the stored mode is false. For activation, use `make deploy` from the latest
+merged staging checkout: it updates the ingestion image and rebuilds/tests the
+marts so scheduled runs preserve the true setting. A local setting change or
+Railway deployment alone does not activate warehouse aggregation. The Cold UI
+uses the row's mode to distinguish display from participation. The
 [mart activation contract](4-mart-layer.md#six-factor-aggregation-activation)
 describes the coordinated release and tests for both modes.
 
 The release order is PR `dev` → `staging`, deploy and verify warehouse/API/UI
-there, then open PR `staging` → `main`. Current staging checks use shared
-datasets and do not isolate dbt outputs; isolation and Cold-specific deployment
-gates remain required before enabling the setting. The production Railway
+there, then open PR `staging` → `main`. The chosen rollout uses the shared backend
+and datasets, so both public and staging websites receive the scoring change
+when dbt rebuilds the marts. The existing CD schema gate and live E2E suite do
+not verify Cold activation; check the live mode and aggregate behavior separately.
+The production Railway
 deployment is currently disabled, so merging to `main` alone does not deploy.
 
 After a complete ingestion/dbt refresh, the current-score and city-detail

@@ -87,7 +87,7 @@ Static configuration data loaded directly into BigQuery tables via `dbt seed`.
 |---|---|---|
 | `city_monthly_normals` | Structurally validated 240-row lookup: one temperature, precipitation and wind baseline row for each of 12 months across 20 operational cities. The Gold layer uses its maximum-temperature value as the Heat baseline and its minimum-temperature value for the independent history Cold score. | `transform/seeds/city_monthly_normals.csv` |
 | `forecast_city_allowlist` | Frozen original 10-city/timezone contract for forecast-vintage staging and calendar-day retrieval-vintage feature, training and serving outputs. The other 10 operational cities remain outside that path. | `transform/seeds/forecast_city_allowlist.csv` |
-| `city_signal_monitoring` | One row per active operational city declaring whether Heat, Cold, Wind, Rain, Air Quality and River are monitored. Weather and AQ are enabled for all 20 cities; River mirrors `config/cities.csv:river_enabled`. Cold is scored independently in history while live aggregates still use five factors. | `transform/seeds/city_signal_monitoring.csv` |
+| `city_signal_monitoring` | One row per active operational city declaring whether Heat, Cold, Wind, Rain, Air Quality and River are monitored. Weather and AQ are enabled for all 20 cities; River mirrors `config/cities.csv:river_enabled`. Cold's aggregate participation is controlled separately by `cold_in_global_score`, which defaults true. | `transform/seeds/city_signal_monitoring.csv` |
 
 `transform/scripts/generate_city_monthly_normals.py` generated the expansion's
 120 rows from the Open-Meteo Historical Weather endpoint with
@@ -127,11 +127,13 @@ UI renders its score and availability. ML support remains a separate later step.
 from the city/date spine, including rows with missing weather data. It is a
 monitoring policy, not a claim that Cold inputs are available. The history mart
 uses it to calculate the nullable Cold score and availability metadata; its
-global aggregates use five factors by default. API responses expose Cold and
+global aggregates include Cold by default when the updated models are built. API responses expose Cold and
 the stored aggregate mode; the city-detail UI presents six factors and identifies
 Cold's participation separately from its monitoring and availability.
 The [six-factor aggregation setting](4-mart-layer.md#six-factor-aggregation-activation)
-defaults false; it controls aggregate participation separately from monitoring.
+defaults true; it controls aggregate participation separately from monitoring.
+The persisted warehouse mode, rather than the checked-in setting alone,
+determines the behavior served by the API.
 
 The standard-library city validator checks unique city/month keys, exactly 12
 months for every active city, finite physical ranges, registry consistency,

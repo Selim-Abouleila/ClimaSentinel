@@ -89,9 +89,9 @@ models:
       unavailable or unmonitored signal.
       Also exposes the daily minimum temperature, monthly minimum-temperature
       normal, cold_anomaly_c and a nullable Cold score with availability metadata.
-      cold_in_global_score defaults false, keeping the aggregate on five factors.
-      True includes Cold in the maximum, driver, counts and coverage; activation
-      requires compatible API/UI contracts.
+      cold_in_global_score defaults true, including Cold in the maximum, driver,
+      counts and coverage after the marts are rebuilt. False retains five-factor
+      aggregation for rollback; consumers follow the persisted mode.
     columns:
       - name: cold_in_global_score
         description: Boolean mode persisted from the dbt setting used to calculate this row; independent of Cold monitoring and availability.
@@ -114,10 +114,10 @@ models:
         description: True when at least one factor contributed to the global score.
         tests: [not_null]
       - name: monitored_factor_count
-        description: Number of monitored participating factors; five-factor scope by default, including Cold when cold_in_global_score is true.
+        description: Number of monitored participating factors; includes Cold with the default true mode and excludes it when cold_in_global_score is false.
         tests: [not_null]
       - name: available_factor_count
-        description: Number of available participating factors; five-factor scope by default, including Cold when cold_in_global_score is true.
+        description: Number of available participating factors; includes Cold with the default true mode and excludes it when cold_in_global_score is false.
         tests: [not_null]
       - name: overall_coverage
         description: Mean raw coverage across monitored participating factors, rounded to three decimals; includes Cold only when cold_in_global_score is true.
@@ -209,7 +209,7 @@ models:
       ascending, so fields can never be mixed across tied dates.
       Includes Cold score, availability and temperature context from that date;
       Cold affects the aggregate and date selection only when cold_in_global_score
-      is true (default false). The API currently
+      is true (the default). The API
       exposes all six factors and validates aggregate participation using the
       cold_in_global_score value persisted with the history row.
       Consumed by GET /data/city/{city_id}/scores to power the city detail page.

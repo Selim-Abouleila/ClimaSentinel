@@ -33,9 +33,9 @@ on detail. These additions remain optional for the frontend-first rollout:
 an omitted field means the older API did not report it, while an explicit null
 score means unavailable data. An absent aggregation mode is unknown, not false.
 The city-detail catalogue now displays Cold after Heat, with its own score,
-status and coverage. Keep dbt aggregation false until
-isolated staging activation and deployment checks pass. Implementing the UI
-does not enable Cold in live aggregate scores.
+status and coverage. The checked-in dbt default is true; deploying the updated
+ingestion image and rebuilding the warehouse applies it to served scores.
+Implementing the UI alone does not enable Cold in live aggregate scores.
 
 ## Main dashboard and city detail
 
@@ -85,8 +85,8 @@ Aggregate availability and coverage copy displays the counts and overall
 coverage supplied by the API. If an older payload omits counts, only a reported
 mode permits a fallback count of its participating factors; otherwise counts
 remain unreported.
-This keeps the default five-factor aggregate consistent with the separately
-displayed Cold score, rather than counting all six visible rows.
+This keeps counts consistent with the stored aggregation mode and each factor's
+monitoring/availability state, rather than counting all six visible rows.
 
 The overview accepts a nullable city-level score. Cities without an available
 participating factor are excluded from the network mean, highest-risk selection and spectrum,
@@ -194,13 +194,16 @@ attempts. The E2E job reconfirms both identities after its job boundary.
 The unsuffixed marts remain temporary rollback compatibility and do not expose
 the v2 column contract.
 
-Cold release verification remains a separate gate: keep
-`cold_in_global_score: false` on the shared warehouse until staging datasets
-are isolated and the Cold schema/activation checks are ready. Promote through
-PR `dev` → `staging`, deploy and verify the warehouse, API and UI there, and
-only then open PR `staging` → `main`. Local fixture browser success does not
-establish that the staging release is deployed or that production is ready;
-the production Railway deployment workflow remains disabled.
+Cold release verification remains separate from the current live E2E suite
+and CD schema check, which do not verify Cold-specific activation. Promote
+through PR `dev` → `staging`, run `make deploy` from the latest merged staging
+checkout to apply the true setting and update the scheduled ingestion image,
+then verify the warehouse, API and UI. This shared-output rollout changes both
+websites when dbt rebuilds the marts. Only after verification passes, open PR
+`staging` → `main`. Local fixture browser success does not establish that the
+release is deployed; the production Railway deployment workflow remains disabled.
+The [mart activation procedure](4-mart-layer.md#six-factor-aggregation-activation)
+also describes reverting to false mode with an updated image and warehouse rebuild.
 
 The pure unit suite checks legacy compatibility, explicit v2 false precedence,
 measured zero, unavailable factors and aggregation with partial/all-unavailable
