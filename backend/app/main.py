@@ -211,6 +211,7 @@ def get_current_scores(
                 current_tipping_score,
                 current_primary_driver,
                 current_score_available,
+                cold_in_global_score,
                 monitored_factor_count,
                 available_factor_count,
                 overall_coverage,
@@ -285,7 +286,7 @@ def get_current_zones(limit: int = 20):
 )
 def get_city_scores(city_id: str):
     """
-    Returns the individual tipping sub-scores (heat, wind, rain, air, river)
+    Returns the individual tipping sub-scores (heat, cold, wind, rain, air, river)
     for a single city across today and tomorrow in UTC. Each score carries
     explicit monitoring, availability, status and input-coverage metadata.
     Unavailable and unmonitored scores remain null instead of becoming 0.
@@ -306,6 +307,7 @@ def get_city_scores(city_id: str):
                 current_tipping_score,
                 current_primary_driver,
                 current_score_available,
+                cold_in_global_score,
                 monitored_factor_count,
                 available_factor_count,
                 overall_coverage,
@@ -314,6 +316,14 @@ def get_city_scores(city_id: str):
                 heat_monitored,
                 heat_available,
                 heat_coverage,
+                cold_score,
+                cold_status,
+                cold_monitored,
+                cold_available,
+                cold_coverage,
+                temperature_2m_min,
+                normal_temperature_2m_min,
+                cold_anomaly_c,
                 wind_score,
                 wind_status,
                 wind_monitored,

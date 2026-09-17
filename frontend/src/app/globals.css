@@ -1713,11 +1713,13 @@ body {
   --risk-color: #6f8195;
 }
 
-.signal-unavailable {
+.signal-unavailable,
+.signal-not-reported {
   --risk-color: #9aa9b8;
 }
 
 .city-factor-row.signal-not-monitored .city-factor-row__meter,
+.city-factor-row.signal-not-reported .city-factor-row__meter,
 .city-factor-row.signal-unavailable .city-factor-row__meter {
   height: 5px;
   background: transparent;
@@ -1725,6 +1727,7 @@ body {
 }
 
 .city-factor-row.signal-not-monitored .city-factor-row__score strong,
+.city-factor-row.signal-not-reported .city-factor-row__score strong,
 .city-factor-row.signal-unavailable .city-factor-row__score strong {
   color: var(--risk-color);
   font-size: 1.35rem;
@@ -2031,6 +2034,7 @@ body {
   .city-factor-row__meter {
     grid-column: 2 / -1;
   }
+
 }
 
 @media (prefers-reduced-motion: reduce) {

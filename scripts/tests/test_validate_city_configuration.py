@@ -51,6 +51,7 @@ class CityConfigurationValidationTests(unittest.TestCase):
                 "month": str(month),
                 "normal_temperature_2m_mean": "12.0",
                 "normal_temperature_2m_max": "18.0",
+                "normal_temperature_2m_min": "6.0",
                 "normal_daily_precipitation_mm": "2.0",
                 "normal_wind_speed_10m_max": "20.0",
             }
@@ -65,6 +66,7 @@ class CityConfigurationValidationTests(unittest.TestCase):
             {
                 "city_id": city["city_id"],
                 "heat_monitored": "true",
+                "cold_monitored": "true",
                 "wind_monitored": "true",
                 "rain_monitored": "true",
                 "air_monitored": "true",
@@ -160,6 +162,27 @@ class CityConfigurationValidationTests(unittest.TestCase):
         self.assertIn("frozen forecast allowlist is missing city IDs", errors)
         self.assertIn("frozen forecast allowlist has unexpected city IDs", errors)
 
+    def test_accepts_zero_and_negative_minimum_temperature_normals(self) -> None:
+        self.normal_rows[0]["normal_temperature_2m_min"] = "0.0"
+        self.normal_rows[1]["normal_temperature_2m_min"] = "-12.5"
+        self.assertEqual(self._validate(), [])
+
+    def test_rejects_missing_nonfinite_and_out_of_range_minimum_normals(self) -> None:
+        for value in ("", "nan", "inf", "-91"):
+            with self.subTest(value=value):
+                self.normal_rows[0]["normal_temperature_2m_min"] = value
+                errors = "\n".join(self._validate())
+                self.assertIn("normal_temperature_2m_min", errors)
+
+    def test_rejects_minimum_temperature_above_mean(self) -> None:
+        self.normal_rows[0]["normal_temperature_2m_min"] = "13.0"
+        errors = "\n".join(self._validate())
+        self.assertIn(
+            "normal_temperature_2m_min must be less than or equal to "
+            "normal_temperature_2m_mean",
+            errors,
+        )
+
     def test_rejects_monitoring_seed_drift(self) -> None:
         removed = self.monitoring_rows.pop()
         self.city_rows[0]["river_enabled"] = "true"
@@ -172,6 +195,56 @@ class CityConfigurationValidationTests(unittest.TestCase):
         self.assertIn("heat_monitored", errors)
         self.assertIn("river_monitored", errors)
         self.assertIn("to match the ingestion contract", errors)
+
+    def test_rejects_disabled_cold_monitoring(self) -> None:
+        self.monitoring_rows[0]["cold_monitored"] = "false"
+
+        errors = "\n".join(self._validate())
+
+        self.assertIn(
+            f"cold_monitored for {self.monitoring_rows[0]['city_id']!r} must be 'true'",
+            errors,
+        )
+
+    def test_rejects_invalid_and_noncanonical_cold_monitoring(self) -> None:
+        for value in ("", "TRUE", "False", "1", "yes"):
+            with self.subTest(value=value):
+                self.monitoring_rows[0]["cold_monitored"] = value
+                errors = "\n".join(self._validate())
+                self.assertIn(
+                    "cold_monitored must be exactly 'true' or 'false'", errors
+                )
+
+        self.monitoring_rows[0]["cold_monitored"] = " true "
+        errors = "\n".join(self._validate())
+        self.assertIn("cold_monitored has surrounding whitespace", errors)
+
+    def test_rejects_missing_cold_monitoring_column(self) -> None:
+        self.assertEqual(self._validate(), [])
+        legacy_columns = tuple(
+            column for column in SIGNAL_MONITORING_COLUMNS if column != "cold_monitored"
+        )
+        self._write_csv(
+            self.monitoring_path,
+            legacy_columns,
+            [
+                {column: row[column] for column in legacy_columns}
+                for row in self.monitoring_rows
+            ],
+        )
+
+        errors = "\n".join(
+            validate_city_configuration(
+                self.cities_path,
+                self.normals_path,
+                self.allowlist_path,
+                self.provenance_path,
+                self.monitoring_path,
+            )
+        )
+
+        self.assertIn(f"{self.monitoring_path}: expected columns", errors)
+        self.assertIn("cold_monitored", errors)
 
     def test_rejects_duplicate_invalid_and_unknown_monitoring_rows(self) -> None:
         duplicate = dict(self.monitoring_rows[0])

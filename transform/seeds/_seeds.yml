@@ -5,6 +5,12 @@ seeds:
     description: >
       One complete set of twelve monthly climate baselines per configured city.
       These values are required by the operational dashboard score models.
+      The minimum-temperature baseline supports the independent history Cold score.
+    config:
+      # Rebuild this small lookup so every seed entry point applies new columns.
+      full_refresh: true
+      column_types:
+        normal_temperature_2m_min: float64
     columns:
       - name: city_id
         description: Stable city identifier matching config/cities.csv.
@@ -15,6 +21,13 @@ seeds:
       - name: normal_temperature_2m_mean
         tests: [not_null]
       - name: normal_temperature_2m_max
+        tests: [not_null]
+      - name: normal_temperature_2m_min
+        description: >
+          Average of daily minimum temperatures in degrees Celsius for this
+          city's local calendar month over 2014-2023; not the month's lowest
+          temperature. Source and retrieval details are recorded in the
+          accompanying provenance manifest.
         tests: [not_null]
       - name: normal_daily_precipitation_mm
         tests: [not_null]
@@ -43,9 +56,13 @@ seeds:
       Operational factor-monitoring contract for every active dashboard city.
       The repository city validator enforces exact membership against
       config/cities.csv and requires river_monitored to match river_enabled.
+      Cold is enabled for every active city and controls its independent history score.
     config:
+      # Apply monitoring-schema additions at every seed entry point.
+      full_refresh: true
       column_types:
         heat_monitored: boolean
+        cold_monitored: boolean
         wind_monitored: boolean
         rain_monitored: boolean
         air_monitored: boolean
@@ -55,6 +72,11 @@ seeds:
         description: Stable city identifier represented exactly once.
         tests: [not_null, unique]
       - name: heat_monitored
+        tests: [not_null]
+      - name: cold_monitored
+        description: >
+          Cold-monitoring policy, independent of Heat. Required true for all
+          active cities; controls Cold scoring outside the live aggregate.
         tests: [not_null]
       - name: wind_monitored
         tests: [not_null]

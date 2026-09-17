@@ -1,5 +1,9 @@
 # 8. Backend Architecture
 
+> **Read first:** [Critical Interpretation and Evidence Limits](0-critical-limitations.md)
+> defines what the score, snapshot, timestamps and validation labels do—and do
+> not—prove. Those limitations apply to every endpoint described here.
+
 The FastAPI backend is the boundary between BigQuery and the Next.js client.
 The operational Day +1/+2/+3 path intentionally serves transparent
 same-vintage rules; registered Heat/Rain models remain offline challengers until
@@ -38,11 +42,44 @@ The dashboard endpoints read the availability-aware operational v2 marts:
 - `GET /data/current-zones` reads `mart_city_zone_current_v2`; and
 - `GET /data/city/{city_id}/scores` reads `mart_city_score_detail_v2`.
 
-These marts calculate up to five factors from operational inputs. They are not
-the realized-label source used to validate the forecast model. A factor score
+The history and detail APIs expose six operational factors, including Cold,
+plus forecast Tmin, normal Tmin and the Cold anomaly. Global scoring and
+aggregate metadata include Cold with the true dbt default after the updated
+models are built. These marts are not the
+realized-label source used to validate the forecast model. A factor score
 is nullable and accompanied by `status`, `monitored`, `available`, and
 `coverage` fields. Missing AQ or River input therefore crosses the API as NULL,
 never as a synthetic green zero.
+
+The dbt setting `cold_in_global_score` defaults true. History persists the
+boolean used to build its aggregates; current/detail copy it from their selected
+history row. All three API response types require that Boolean, with no default,
+string coercion, count inference or separate backend setting. Detail/history
+validate all six factors' metadata in either mode, then validate aggregate
+maximum, counts and coverage against the five or six participating factors.
+False rollback/compatibility mode can return Cold 100 beside global score 20;
+Cold is not participating.
+True mode permits six monitored factors and a Cold driver. Current responses
+enforce mode-dependent count limits and reject a Cold driver in false mode.
+The new Cold temperature-context fields preserve finite negative values and
+map non-finite values to JSON null; this does not manufacture an available score.
+
+The backend requires the mode column and Cold fields in the warehouse, even
+when the stored mode is false. For activation, use `make deploy` from the latest
+merged staging checkout: it updates the ingestion image and rebuilds/tests the
+marts so scheduled runs preserve the true setting. A local setting change or
+Railway deployment alone does not activate warehouse aggregation. The Cold UI
+uses the row's mode to distinguish display from participation. The
+[mart activation contract](4-mart-layer.md#six-factor-aggregation-activation)
+describes the coordinated release and tests for both modes.
+
+The release order is PR `dev` → `staging`, deploy and verify warehouse/API/UI
+there, then open PR `staging` → `main`. The chosen rollout uses the shared backend
+and datasets, so both public and staging websites receive the scoring change
+when dbt rebuilds the marts. The existing CD schema gate and live E2E suite do
+not verify Cold activation; check the live mode and aggregate behavior separately.
+The production Railway
+deployment is currently disabled, so merging to `main` alone does not deploy.
 
 After a complete ingestion/dbt refresh, the current-score and city-detail
 routes can expose all 20 active operational cities. `GET /data/current-scores`
@@ -112,9 +149,12 @@ dependency-readiness guarantee.
 ## Rule-baseline Day +1/+2/+3 forecast
 
 `GET /data/city/{city_id}/forecast?horizon_days=1|2|3` reads one row from
-`mart_ml_serving_features_current`. That view is produced from the same
-point-in-time feature mart as training and returns no row rather than silently
-relabeling an old forecast as today's vintage. The query also resolves the
+`mart_ml_serving_features_current`. That view is produced from the same-vintage,
+leakage-controlled feature mart as training and returns no row rather than
+silently relabeling an old forecast as today's vintage. This controls forecast
+vintage mixing at the ingestion-run and target-date level; it does **not** prove
+exact UTC lead-hour correctness because provider-local offset-free timestamps
+are currently stored in UTC-typed columns. The query also resolves the
 city's temperature normal for the requested **target date month**, avoiding an
 origin-month error when a horizon crosses a month boundary.
 
@@ -127,10 +167,10 @@ city scope across operational and forecast endpoints.
 
 Every response component has `method: forecast_rule`:
 
-| Component | Method | Outcome validation | Uncertainty |
+| Component | Method | Available backtest evidence | Uncertainty |
 |---|---|---|---|
-| Heat | `forecast_rule` | Limited same-vintage backtest against realized archive/reanalysis labels | None |
-| Rain | `forecast_rule` | Backtested against realized archive/reanalysis labels; insufficient predictive skill | None |
+| Heat | `forecast_rule` | Product status says “limited” for an Open-Meteo Archive API backtest; no reproducible report is pinned | None |
+| Rain | `forecast_rule` | Product status says “insufficient skill” for the same source; no reproducible report is pinned | None |
 | Wind | `forecast_rule` | No observed gust label yet | None |
 | Air quality | `forecast_rule` | No observed AQ label yet | None |
 | River | `forecast_rule` | No observed discharge label yet | None |
@@ -156,6 +196,14 @@ observed-impact baseline and is separate from the operational v2 current
 mart's two-date maximum. All component and top-level interval fields are null and
 `uncertainty_method` is `none`; deterministic formulas do not create model
 confidence intervals.
+
+The literal `era5_backtested_limited` and
+`era5_backtested_insufficient_skill` API statuses, plus the
+`open_meteo_era5` label-source value, are retained legacy identifiers. The
+archive request does not pin `models=era5` or persist the returned source
+model/version, so these values are **not verified ERA5 provenance**. Scientific
+prose in this documentation refers instead to the Open-Meteo Archive API
+labels/backtest actually evidenced by the pipeline.
 
 ## Offline challenger boundary
 

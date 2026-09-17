@@ -12,7 +12,7 @@ GitHub rather than in this repository and must be verified separately.
 The intended four-tier branching strategy is:
 
 ```
-feature/* ──PR──▸ dev ──push──▸ staging ──push──▸ main
+feature/* ──PR──▸ dev ──PR──▸ staging ──PR──▸ main
 ```
 
 | Branch | Role | Trigger |
@@ -79,7 +79,7 @@ Railway.
 | **Gate v2 readiness while frontend builds** | Immediately after frontend submission, uses the existing `GCP_SA_KEY` to verify required columns on all four active v2 marts, exact membership of the checked-in monitoring seed, 20-city current/detail coverage, one coherent selected run and snapshot age no greater than 36 hours. This read-only work overlaps the Railway build; it queries relations created earlier by `make deploy` and does not run dbt or continuously monitor later source freshness. |
 | **Confirm frontend marker** | Polls the deployed static marker under a strict 600-second deadline, with each request capped at 10 seconds and at most 10 seconds between attempts, until the exact release ID is served; backend cutover stops unless both mart readiness and the expected frontend release pass. |
 | **Queue v2 backend** | Only after the frontend marker and v2 readiness gates pass, stamps the same release ID into `backend/app/release_id.txt` and submits the v2 backend with `railway up --detach`. |
-| **Confirm backend release** | Polls the frontend's no-cache `/api/backend-health` proxy under the same strict 600-second deadline. Cutover succeeds only when the proxied backend reports `status=healthy` and the exact release ID. |
+| **Confirm backend release** | Polls the frontend's no-cache `/api/backend-health` proxy under a strict 1200-second (20-minute) deadline. Cutover succeeds only when the proxied backend reports `status=healthy` and the exact release ID. |
 | **Live E2E** | Reconfirms both routed release identities after the job boundary, then exercises Paris at every forecast horizon and verifies Stockholm's deterministic `River / Flood · Not monitored` detail state without `0.0` or `Stable`. |
 
 Detached submission makes the CLI responsible only for accepting each upload;
@@ -211,6 +211,7 @@ not live BigQuery, Open-Meteo, DagsHub or Railway integration tests.
 | `test_model_serving_integration.py` | Registry-independent rule policy, null model provenance/intervals and all three horizons |
 | `frontend/tests/unit/signal-availability.spec.ts` | Legacy numeric compatibility, explicit v2 availability precedence, partial/all-unavailable aggregation, measured zero, missing/unmonitored factors and 36-hour freshness |
 | `frontend/tests/unit/backend-health-route.spec.ts` | Dynamic backend-health proxy target, no-cache request/response headers, exact payload pass-through and unreachable-backend `502` behavior |
+| `frontend/tests/cold-ui/` (`npm run test:cold-ui`) | Local browser fixtures for Cold scores/status/coverage, omitted temperature panel, missingness, older payloads and reported aggregate participation; separate from live staging E2E |
 | `assert_city_score_availability_contract.sql`, `assert_city_score_v2_*.sql`, `assert_city_signal_monitoring_contract.sql` and `assert_city_signal_v2_*.sql` | Operational spine, monitoring contract, exact-run coherence, raw-payload consistency, availability semantics and deterministic worst day |
 | `frontend/tests/e2e/dashboard.spec.ts` | Live Paris three-horizon forecast flow and Stockholm unmonitored-River presentation |
 
@@ -219,6 +220,18 @@ commit/run identifier before Playwright starts. The suite then verifies the
 rule-baseline API rather than assuming that the newly registered candidate
 passed. See
 [End-to-End Testing](13-end-to-end-testing.md).
+
+The Cold UI fixture suite runs locally with `npm run test:cold-ui`; the current
+workflows do not invoke that command. It verifies deterministic rendered states
+without deploying the application or changing warehouse aggregation. The checked-in
+`cold_in_global_score` default is true. Merge the `dev` → `staging` PR, then run
+`make deploy` from the latest merged staging checkout to update the ingestion
+image and rebuild/test the warehouse. This shared-output rollout affects both
+websites when dbt rebuilds the marts; the scheduled job must use the updated image
+to preserve the setting. The existing CD schema gate and live E2E suite omit
+Cold-specific activation verification, so separately check the API mode, score,
+driver, counts, coverage and UI before opening the `staging` → `main` PR.
+See the [activation and rollback procedure](4-mart-layer.md#six-factor-aggregation-activation).
 
 ### Checks not provided by the current workflows
 

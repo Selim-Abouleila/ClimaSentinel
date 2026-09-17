@@ -5,6 +5,12 @@ deduplicated and harmonized relations in BigQuery. It uses **dbt** (data build
 tool) to manage SQL transformations with dependency ordering, schema tests and
 auto-generated documentation.
 
+> **Read before relying on staged output:** [Critical limitations](0-critical-limitations.md)
+> records unresolved correctness boundaries. The active-run selector can
+> promote a partial, failed or still-running ingestion that has any raw
+> evidence, and hourly `valid_ts_utc` values are provider-local clock text
+> interpreted as UTC. The current implementation has not fixed either issue.
+
 ## Purpose
 
 The `raw.*` tables accumulate overlapping data on every ingestion run (e.g.,
@@ -17,7 +23,8 @@ layer exposes three intentionally different paths:
 - the unsuffixed `stg_latest_*` path remains temporarily for legacy mart
   rollback compatibility and is not the active dashboard contract; and
 - the parallel `*_vintage` path preserves every eligible ingestion run for
-  point-in-time ML training and serving.
+  retrieval-vintage ML training and serving at calendar-day grain. It prevents
+  cross-run mixing, but does not establish exact UTC valid times or lead hours.
 
 Before computing active operational v2 tipping scores, we:
 
@@ -34,7 +41,7 @@ Before computing active operational v2 tipping scores, we:
 5. **Unify** — Publish one exact-run row per `(city_id, date)` in
    `stg.city_signal_input_v2` for the active v2 mart layer.
 
-For point-in-time ML inputs, we instead:
+For retrieval-vintage ML inputs at calendar-day grain, we instead:
 
 1. **Preserve forecast runs** — Retain `ingestion_run_id` and `ingested_at_utc`
 2. **Aggregate within a run** — Never mix forecast revisions in one daily row
@@ -65,7 +72,7 @@ raw.air_quality_hourly ────────→ stg_air_quality_hourly_vintag
 raw.flood_daily ───────────────→ stg_flood_daily_vintage ──────────────────────────────────────────────────┤
                                                                                                            ▼
                                                                                          stg_city_signal_vintage
-                                                                                         (point-in-time ML marts)
+                                                                                         (retrieval-vintage ML marts)
 ```
 
 ---
@@ -78,9 +85,9 @@ Static configuration data loaded directly into BigQuery tables via `dbt seed`.
 
 | Seed | Description | Source |
 |---|---|---|
-| `city_monthly_normals` | Structurally validated 240-row lookup: one temperature, precipitation and wind baseline row for each of 12 months across 20 operational cities. The Gold layer uses its maximum-temperature value as the Heat baseline. | `transform/seeds/city_monthly_normals.csv` |
-| `forecast_city_allowlist` | Frozen original 10-city/timezone contract for forecast-vintage staging and point-in-time feature, training and serving outputs. The other 10 operational cities remain outside that path. | `transform/seeds/forecast_city_allowlist.csv` |
-| `city_signal_monitoring` | One row per active operational city declaring whether Heat, Wind, Rain, Air Quality and River are monitored. Weather and AQ are enabled for all 20 cities; River mirrors `config/cities.csv:river_enabled`. | `transform/seeds/city_signal_monitoring.csv` |
+| `city_monthly_normals` | Structurally validated 240-row lookup: one temperature, precipitation and wind baseline row for each of 12 months across 20 operational cities. The Gold layer uses its maximum-temperature value as the Heat baseline and its minimum-temperature value for the independent history Cold score. | `transform/seeds/city_monthly_normals.csv` |
+| `forecast_city_allowlist` | Frozen original 10-city/timezone contract for forecast-vintage staging and calendar-day retrieval-vintage feature, training and serving outputs. The other 10 operational cities remain outside that path. | `transform/seeds/forecast_city_allowlist.csv` |
+| `city_signal_monitoring` | One row per active operational city declaring whether Heat, Cold, Wind, Rain, Air Quality and River are monitored. Weather and AQ are enabled for all 20 cities; River mirrors `config/cities.csv:river_enabled`. Cold's aggregate participation is controlled separately by `cold_in_global_score`, which defaults true. | `transform/seeds/city_signal_monitoring.csv` |
 
 `transform/scripts/generate_city_monthly_normals.py` generated the expansion's
 120 rows from the Open-Meteo Historical Weather endpoint with
@@ -93,19 +100,50 @@ rounds outputs to two decimal places.
 model, 2026-08-01 retrieval date, interval, variables, units and aggregation
 policy.
 
-The original cities' 120 rows are intentionally retained from the historical
-seed. They predate the generator and cannot be claimed as exactly regenerable;
-Open-Meteo's Best Match archive can also be revised after retrieval. The
-generator/provenance pair makes the new expansion procedure auditable without
+The original cities' existing baseline columns are intentionally retained from
+the historical seed. They predate the generator and cannot be claimed as
+exactly regenerable; Open-Meteo's Best Match archive can also be revised after
+retrieval. The generator/provenance pair makes the new expansion procedure auditable without
 misrepresenting the legacy half of the seed.
+
+`normal_temperature_2m_min` is a separate addition across **all 20 cities and
+240 city/month rows**. It is the arithmetic mean of daily
+`temperature_2m_min` archive values for each city-local calendar month over
+2014-01-01 through 2023-12-31, in degrees Celsius, using the same
+`models=best_match` archive request and two-decimal rounding. It is not an
+estimate from the existing mean or maximum baseline, nor the lowest
+temperature recorded in that month. Its column-specific provenance records
+the new retrieval separately; all previously checked-in baseline values remain
+unchanged. The operational history mart now joins this baseline and exposes
+`cold_anomaly_c` alongside the forecast and normal minimum temperatures; see
+[the cold diagnostic](4-mart-layer.md#cold-temperature-diagnostic).
+The [initial Cold score](4-mart-layer.md#cold-scoring-rule-cold_anomaly_v1)
+is implemented in history and projected into the detail view on its selected
+score date. Their APIs expose Cold and its temperature context; the city-detail
+UI renders its score and availability. ML support remains a separate later step.
+
+`cold_monitored` is a separate boolean in `city_signal_monitoring`, required
+`true` for all 20 active cities. `stg_city_signal_input_v2` carries it directly
+from the city/date spine, including rows with missing weather data. It is a
+monitoring policy, not a claim that Cold inputs are available. The history mart
+uses it to calculate the nullable Cold score and availability metadata; its
+global aggregates include Cold by default when the updated models are built. API responses expose Cold and
+the stored aggregate mode; the city-detail UI presents six factors and identifies
+Cold's participation separately from its monitoring and availability.
+The [six-factor aggregation setting](4-mart-layer.md#six-factor-aggregation-activation)
+defaults true; it controls aggregate participation separately from monitoring.
+The persisted warehouse mode, rather than the checked-in setting alone,
+determines the behavior served by the API.
 
 The standard-library city validator checks unique city/month keys, exactly 12
 months for every active city, finite physical ranges, registry consistency,
 the frozen original forecast IDs, and exact monitoring-seed alignment before
-deployment. It rejects a missing active city, a disabled weather/AQ factor, or
+deployment. It rejects a missing active city, a disabled weather/AQ factor
+(including Cold), a missing/invalid Cold boolean, or
 a River monitoring value that differs from `river_enabled`. dbt adds seed-level
 not-null/unique checks and warehouse-side monitoring and normal-completeness
-contracts.
+contracts. The monitoring contract also verifies that each staging row's Cold
+flag matches its city's seeded value.
 
 ### Active Exact-Run Operational v2 Models (5)
 
@@ -123,11 +161,21 @@ configured city dimension is the 20-row `city_signal_monitoring` seed, so every
 operational city remains observable even when the selected run has no weather
 rows for it.
 
-`stg_operational_run_v2` currently selects by raw run/timestamp evidence; no
-durable completed-run manifest exists. A failed run can therefore leave the
-prior snapshot in service, and an overlapping/in-progress run can briefly be
-selected. Downstream run ID/timestamp fields plus the frontend's 36-hour stale
-warning improve visibility but do not provide transactional run auditing.
+`stg_operational_run_v2` selects by raw run/timestamp evidence; no durable
+completed-run manifest exists. Any `ingestion_run_id` with at least one row in
+any active raw source family is eligible. Consequently, a partial run that
+later fails, or a still-running overlapping execution, can become the active
+snapshot when dbt rebuilds the selector. Exact-run staging preserves that
+run's missing sources as unavailable instead of falling back to the prior
+healthy snapshot. A zero-row failed run instead leaves the prior snapshot in
+service.
+
+The current warehouse and staging-readiness gates validate run coherence,
+schemas, snapshot age and the configured city spine, but do not require every
+expected city/source payload or a minimum factor-availability level. Passing
+them is therefore not proof of source completeness. Run ID/timestamp fields
+and the frontend's 36-hour stale warning improve visibility only; durable run
+state and atomic promotion remain future hardening.
 
 **Operational v2 nullability, coverage and monitoring rules:**
 
@@ -166,7 +214,7 @@ as-of history.
 These views preserve every ingestion run for cities in
 `forecast_city_allowlist`. The three entry models join that seed before their
 forecast rows are ranked, so a new operational dashboard city is excluded from
-point-in-time forecast features, training and serving by default. The allowlist
+retrieval-vintage forecast features, training and serving by default. The allowlist
 remains the original Paris, London, Madrid, Berlin, Rome, Amsterdam, Athens,
 Warsaw, Lisbon and Stockholm set; Vienna, Brussels, Copenhagen, Dublin, Oslo,
 Helsinki, Prague, Budapest, Zurich and Bucharest are operational-only.
@@ -196,7 +244,7 @@ forecast snapshot that was available at prediction time.
 - AQ and flood never fall back to a different run after a partial ingestion failure.
 - Flood is legitimately absent for non-river-enabled cities.
 - AQ has a five-day window while weather and flood have seven-day windows.
-- City IDs absent from `forecast_city_allowlist` are excluded from all three vintage entry models; they never silently enter point-in-time forecast features, training or serving outputs.
+- City IDs absent from `forecast_city_allowlist` are excluded from all three vintage entry models; they never silently enter retrieval-vintage forecast features, training or serving outputs.
 
 `has_24_hour_coverage` means exactly 24 distinct stored timestamps, not
 "complete for the local civil day." If an upstream response represents a DST
@@ -209,12 +257,15 @@ timezone-aware 23/24/25-hour eligibility rule.
 > **Timestamp caveat:** despite its name and BigQuery `TIMESTAMP` type,
 > `valid_ts_utc` is not currently a trustworthy UTC instant. The fetcher
 > requests city-local timestamps and stores the provider's offset-free strings
-> in that field. Calendar-day horizons are anchored to the city-local ingestion
-> date, including off-schedule runs that cross local midnight, but consumers
-> must not use the field for precise lead-hour, cross-time-zone or DST
-> calculations. Those uses require an ingestion change that preserves the
-> provider timestamp offset. When the field is corrected to contain a true UTC
-> instant, `valid_date` must also change to
+> in that field, after which BigQuery interprets that local clock as UTC. Exact
+> UTC event-time, lead-hour, cross-time-zone ordering and DST claims are invalid
+> under the current schema. `DATE(valid_ts_utc)` still preserves the provider's
+> local calendar-date text in ordinary responses, so day-level aggregation and
+> day-number horizons remain usable for normal scheduled runs, subject to the
+> 23/25-hour coverage rule above and the per-city request-midnight edge case
+> below. Exact-time uses require an ingestion change that preserves the provider
+> timestamp offset. When the field is corrected to contain a true UTC instant,
+> `valid_date` must also change to
 > `DATE(valid_ts_utc, forecast_origin_time_zone)` so the calendar contract
 > remains local.
 
@@ -273,8 +324,52 @@ gcloud auth application-default login
 | `make validate-cities` | Validate the operational registry, 240-row normals seed, 20-row signal-monitoring contract, and frozen forecast allowlist |
 | `make deploy` | Full GCP data pipeline: validate + build + Terraform + waited ingestion + dbt seed/run/test |
 | `make dbt-stg` | Run staging models only |
-| `make dbt-run` | Run all models (stg + mart) |
-| `make dbt-test` | Run schema and singular data tests |
+| `make dbt-run` | Validate city files, load static seeds, then run all models (stg + mart); stop on failure |
+| `make dbt-test` | Run schema, singular data and fixture unit tests |
+
+### Apply the Cold baseline from GCP Cloud Shell
+
+Use the updated `dev` checkout in the repository root, with `.env` populated
+and the dbt installation and GCP authentication prerequisites above satisfied:
+
+```bash
+git switch dev
+git pull --ff-only origin dev
+make validate-cities
+make dbt-run
+make dbt-test
+```
+
+`make dbt-run` validates city files and loads the checked-in CSVs before
+rebuilding their dependent models. Both `city_monthly_normals` and
+`city_signal_monitoring` have `full_refresh: true` in
+`transform/seeds/_seeds.yml`, so dbt recreates these small lookups with the
+minimum-temperature baseline and `cold_monitored` columns. The setting is
+scoped to those two seeds; the command
+does not pass a full-refresh flag to mart models, and seeding does not modify
+raw data. `make dbt-stg` remains a staging-only command and does not seed.
+
+This refresh reads the CSV; it does not fetch historical API data or deploy a
+new ingestion image. Scheduled ingestion uses the CSV embedded in its deployed
+image. Run `make deploy` from the updated checkout to keep scheduled runs on
+the same seed version; an older image can otherwise reload its older CSV.
+
+To inspect Cold monitoring after the run, use the BigQuery console (replace
+`PROJECT_ID` with your project). The seed should return 20 rows with `true`,
+and the staging query should return no rows:
+
+```sql
+SELECT city_id, cold_monitored
+FROM `PROJECT_ID.stg.city_signal_monitoring`
+ORDER BY city_id;
+
+SELECT signals.city_id, signals.date, signals.cold_monitored
+FROM `PROJECT_ID.stg.stg_city_signal_input_v2` AS signals
+LEFT JOIN `PROJECT_ID.stg.city_signal_monitoring` AS monitoring
+  ON signals.city_id = monitoring.city_id
+WHERE monitoring.city_id IS NULL
+   OR signals.cold_monitored IS DISTINCT FROM monitoring.cold_monitored;
+```
 
 ### From the transform directory
 
@@ -283,6 +378,7 @@ cd transform
 set -a
 source ../.env
 set +a
+dbt seed --profiles-dir .                   # Load static CSVs before models
 dbt run --profiles-dir . --select stg        # Build staging relations
 dbt test --profiles-dir . --select stg       # Run schema + singular staging tests
 dbt build --profiles-dir . --select tag:forecast_vintage
@@ -347,3 +443,7 @@ For staging approval, all hard operational-v2 and vintage tests must pass. The
 vintage coverage audit may warn for preserved historical partial responses,
 older AQ windows, DST days or off-schedule source-window differences; every
 warning must be explainable rather than removed or imputed in staging.
+
+These tests do not establish completed-run status or require every expected
+city/source payload and factor to be available. A passing suite can therefore
+describe a structurally coherent but partial active snapshot.

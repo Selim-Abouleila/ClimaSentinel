@@ -307,7 +307,7 @@ export default async function Dashboard() {
 
               <footer className="dashboard-data-note">
                 <span>Signal catalogue</span>
-                Heat · Wind · Rain · Air quality · River discharge · Availability varies by city
+                Heat · Cold · Wind · Rain · Air quality · River discharge · Availability varies by city
               </footer>
             </section>
           </>

@@ -11,6 +11,13 @@ credentials, variables secrètes ou captures contenant ces valeurs.
 > Streamlit. Les étapes ci-dessous décrivent un composant à créer ; elles ne
 > documentent pas un service ClimaSentinel déjà exploité.
 
+> **Lecture obligatoire avant implémentation :** consultez le
+> [contrat des limitations critiques](0-critical-limitations.md). Il interdit de
+> présenter l'indice heuristique comme une probabilité ou une classe de gravité,
+> de déclarer un snapshot complet sans manifeste de run, d'interpréter
+> `valid_ts_utc` comme un instant UTC exact ou de traiter `era5_*` comme une
+> provenance ERA5 vérifiée.
+
 > **Périmètre bêta — mart opérationnel v2.** Les relations
 > `mart_city_score_history_v2`, `mart_city_score_current_v2` et
 > `mart_city_zone_current_v2` sont dérivées de prévisions. Elles ne représentent ni des
@@ -26,11 +33,14 @@ doivent pas servir de source à un nouveau dashboard de disponibilité.
 L'application doit afficher de façon visible :
 
 > **Prévision bêta.** Scores ponctuels déterministes sans intervalle de
-> confiance. Heat dispose d'un backtest limité sur les données
-> d'archive/réanalyse Open-Meteo ; Rain a montré une compétence insuffisante ;
+> confiance. Le produit décrit le backtest Heat sur l'API Archive Open-Meteo
+> comme limité et Rain comme insuffisant, mais aucun rapport reproductible
+> n'est épinglé dans ce dépôt ;
 > Wind, Air Quality et River ne sont pas validés sur des
 > observations. Une donnée manquante est exclue du maximum et doit être
-> affichée comme indisponible ou non suivie, jamais comme `0 · Stable`.
+> affichée comme indisponible ou non suivie, jamais comme `0 · Stable`. Le
+> modèle source exact de l'archive n'est ni fixé ni conservé ; les identifiants
+> `era5_*` sont des noms hérités, pas une preuve de provenance ERA5.
 
 ---
 

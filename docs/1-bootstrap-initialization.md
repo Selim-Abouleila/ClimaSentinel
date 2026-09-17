@@ -220,7 +220,7 @@ the same exact release ID before the live end-to-end checks.
 | `make deploy` | Validate + build/push + Terraform apply + waited ingestion + dbt seed/run/test |
 | `make plan` | Dry run — show changes without applying |
 | `make destroy` | Destroy only Terraform-managed resources |
-| `make dbt-run` | Run all staging and mart models |
+| `make dbt-run` | Validate city files, load static seeds, then run all staging and mart models |
 | `make dbt-stg` | Run staging models only |
 | `make dbt-test` | Run dbt schema and singular tests |
 

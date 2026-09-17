@@ -1,5 +1,9 @@
 # 13. End-to-End Testing
 
+> **Read first:** [Critical Interpretation and Evidence Limits](0-critical-limitations.md)
+> explains the scientific and data-contract limits that a passing E2E smoke
+> test cannot resolve.
+
 Playwright provides live staging smoke paths through the forecast frontend and
 one operational city-detail missingness state. MLflow challengers are evaluated
 separately. Unit/dbt contract tests remain responsible for formula boundaries,
@@ -7,6 +11,53 @@ partial coverage, measured-zero semantics, the 36-hour freshness threshold and
 failure branches. This test increases confidence in the
 deployed contracts, but it is not a complete release, browser, city or
 failure-mode suite.
+
+Cold backend contract tests now cover required warehouse aggregation mode,
+five-/six-factor validation, endpoint field projection, missing/partial and
+unmonitored states, valid zero and nullable temperature context. dbt fixtures
+check the persisted mode and selected-row lineage. The city-detail UI now
+displays Cold's score, status and coverage, with a dedicated local fixture
+browser suite described below. The checked-in dbt default is true, but existing
+live staging E2E and the CD schema check do not verify Cold-specific activation.
+The chosen rollout uses shared outputs: after PR `dev` → `staging`, run
+`make deploy` from the latest merged staging checkout to update the ingestion
+image and rebuild/test the marts. That rebuild affects both websites. Verify
+the API reports true and check the maximum, driver, counts, coverage, selected
+date and UI participation separately; fixture success is not evidence of live
+activation. Only after deployed verification passes, open PR `staging` → `main`.
+See the [activation and rollback procedure](4-mart-layer.md#six-factor-aggregation-activation).
+
+## Local Cold UI fixture suite
+
+`npm run test:cold-ui` exercises the rendered city-detail page with deterministic
+API fixtures in a local browser. It is separate from the existing live staging
+`npm run test:e2e` suite and does not call BigQuery or activate six-factor
+aggregation in the warehouse.
+
+The dedicated configuration starts a local fixture API on port 4319 and a Next
+server on port 4318; both are bound to `127.0.0.1`. It supplies fixtures at the
+server's fetch boundary because the city page loads its API data on the Next
+server. The suite uses separate build output and local font responses, so it
+does not depend on the deployed backend or Google Fonts requests.
+
+The Cold cases cover:
+
+- the Cold row after Heat, with its independent score, status and coverage;
+- a valid zero Cold score and omission of the temperature-context panel,
+  including its raw temperatures, anomaly and selected-date explanation;
+- neutral unavailable, partial, unmonitored and older-payload states without
+  invented zero scores or Stable bands;
+- `cold_in_global_score: false`, where a larger Cold score remains separate
+  from the aggregate and its dominant factor;
+- `cold_in_global_score: true`, where Cold participates and can dominate;
+- an omitted mode, shown as unreported rather than inferred from counts; and
+- aggregate copy that follows the API counts instead of all six visible rows.
+
+These fixtures make Cold-positive and missingness branches repeatable without
+waiting for matching weather in live data. They verify rendering against the
+supplied API contract, not ingestion, dbt arithmetic, deployed release identity
+or the state of the staging warehouse. Isolated staging must still verify the
+real API, stored mode, selected-row lineage and UI before a production PR.
 
 ## What the staging test verifies
 
@@ -31,6 +82,11 @@ Chromium. That path verifies that:
 - the visible validation-scope disclaimer remains present; and
 - `model_version` is null and no learned component is claimed by the
   operational response.
+
+The two asserted `era5_*` strings are legacy wire-compatibility identifiers.
+This test confirms API stability only; it does not verify ERA5 provenance. The
+evidenced scientific description is a backtest against Open-Meteo Archive API
+labels whose returned source model/version is not currently pinned.
 
 The test does not force an AQ or River outage. If the live source is available,
 the unavailable UI branch is not exercised. It also does not assert visible
@@ -74,9 +130,10 @@ concurrently.
 The workflow pins Railway CLI `5.30.4` and submits both services with
 `railway up --detach`. This prevents an intermittent attached build-log stream
 failure from terminating CI after Railway accepted an upload. Detached
-submission is not counted as deployment success: each service has a bounded
-600-second release deadline, with individual requests capped at 10 seconds and
-no more than 10 seconds between attempts.
+submission is not counted as deployment success: the primary frontend release
+poll has a 600-second deadline, and the backend release poll allows 1200 seconds
+(20 minutes). Individual requests remain capped at 10 seconds, with no more than
+10 seconds between attempts.
 
 The frontend build includes a unique
 `/releases/<commit-sha>-<workflow-run-id>.txt` marker. The backend health payload
@@ -124,6 +181,7 @@ The current smoke test does not cover:
 - authentication, rate limiting, continuous dependency readiness or monitoring;
 - authenticated dbt builds/tests, complete lineage or live-mart freshness;
 - a completed-run manifest or overlapping/in-progress ingestion behavior;
+- timezone-aware source normalization or exact UTC lead-hour/DST correctness;
 - exact rendered score values against the corresponding API fields; or
 - screenshot-based visual regression.
 
@@ -135,7 +193,9 @@ These are coverage gaps, not claims that those paths are broken.
 frontend/
 ├── playwright.config.ts
 ├── playwright.unit.config.ts
+├── playwright.cold-ui.config.ts
 └── tests/
+    ├── cold-ui/              # Local browser specs and fixture servers
     ├── e2e/
     │   └── dashboard.spec.ts
     └── unit/
@@ -152,6 +212,7 @@ cd frontend
 npm ci
 npm run test:unit
 npx playwright install --with-deps chromium
+npm run test:cold-ui
 ```
 
 The unit command runs pure TypeScript availability/aggregation cases without a
@@ -161,7 +222,7 @@ unavailable AQ, unmonitored River and the exact 36-hour stale threshold. It also
 invokes the backend-health route directly with a mocked fetch to verify no-cache
 proxying and its `502` failure response.
 
-The Playwright configuration does not start a web server. The frontend must
+The existing live E2E Playwright configuration does not start a web server. The frontend must
 already be running at the default target `http://localhost:3000`, built or
 started with `NEXT_PUBLIC_API_URL` pointing to the compatible backend. Override
 only the frontend target for a live deployment:

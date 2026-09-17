@@ -5,7 +5,7 @@
   "checked_in_snapshot": {
     "city_count": 20,
     "row_count": 240,
-    "sha256": "a61f2413353327bfadff9d3365e0285d3b16b0911156958cbf1df7ab86f41733"
+    "sha256": "fa0b76cca0cad855a52ae59d1f6ec79d2722744e1f9d019210d13ba2ec214348"
   },
   "source": {
     "provider": "Open-Meteo Historical Weather API",
@@ -156,5 +156,671 @@
     "usage": "Repeat --city-id for the intended cohort, write CSV and metadata to temporary files, review both, then merge rows explicitly. The generator never edits the seed in place.",
     "example": "python transform/scripts/generate_city_monthly_normals.py --city-id vienna_at --output /tmp/vienna_normals.csv --metadata-output /tmp/vienna_normals.metadata.json"
   },
-  "reproducibility_note": "Open-Meteo's best_match archive may be revised or its seamless model mix may evolve. The request contract, response grid, retrieval timestamp, and SHA-256 checksums identify the checked-in snapshot."
+  "reproducibility_note": "Open-Meteo's best_match archive may be revised or its seamless model mix may evolve. The request contract, response grid, retrieval timestamp, and SHA-256 checksums identify the checked-in snapshot.",
+  "column_additions": [
+    {
+      "name": "minimum_temperature_baseline_2026_09_13",
+      "column": "normal_temperature_2m_min",
+      "retrieved_at_utc": "2026-09-13T15:05:53Z",
+      "city_count": 20,
+      "row_count": 240,
+      "city_ids": [
+        "paris_fr",
+        "london_gb",
+        "madrid_es",
+        "berlin_de",
+        "rome_it",
+        "amsterdam_nl",
+        "athens_gr",
+        "warsaw_pl",
+        "lisbon_pt",
+        "stockholm_se",
+        "vienna_at",
+        "brussels_be",
+        "copenhagen_dk",
+        "dublin_ie",
+        "oslo_no",
+        "helsinki_fi",
+        "prague_cz",
+        "budapest_hu",
+        "zurich_ch",
+        "bucharest_ro"
+      ],
+      "source": {
+        "cell_selection": "land",
+        "citation": "https://doi.org/10.5281/ZENODO.7970649",
+        "daily_variables": [
+          "temperature_2m_mean",
+          "temperature_2m_max",
+          "temperature_2m_min",
+          "precipitation_sum",
+          "wind_speed_10m_max"
+        ],
+        "documentation": "https://open-meteo.com/en/docs/historical-weather-api",
+        "endpoint": "https://archive-api.open-meteo.com/v1/archive",
+        "model_selector": "best_match",
+        "period": {
+          "end_date": "2023-12-31",
+          "start_date": "2014-01-01"
+        },
+        "provider": "Open-Meteo Historical Weather API",
+        "timeformat": "iso8601",
+        "timezone": "Per-city IANA timezone from config/cities.csv",
+        "units": {
+          "precipitation": "mm",
+          "temperature": "celsius",
+          "wind_speed": "km/h"
+        }
+      },
+      "method": {
+        "aggregation": "Arithmetic mean of every daily value in the 2014-2023 period, grouped by local calendar month",
+        "missing_data_policy": "Fail generation if any requested day or variable is missing, non-numeric, or non-finite",
+        "rounding": "Decimal ROUND_HALF_UP to two decimal places"
+      },
+      "source_grid": [
+        {
+          "city_id": "paris_fr",
+          "daily_row_count": 3652,
+          "daily_rows_by_month": {
+            "1": 310,
+            "10": 310,
+            "11": 300,
+            "12": 310,
+            "2": 282,
+            "3": 310,
+            "4": 300,
+            "5": 310,
+            "6": 300,
+            "7": 310,
+            "8": 310,
+            "9": 300
+          },
+          "requested": {
+            "latitude": 48.85341,
+            "longitude": 2.3488,
+            "timezone": "Europe/Paris"
+          },
+          "returned": {
+            "elevation_m": 43.0,
+            "latitude": 48.822495,
+            "longitude": 2.2881355,
+            "timezone": "Europe/Paris",
+            "utc_offset_seconds": 7200
+          }
+        },
+        {
+          "city_id": "london_gb",
+          "daily_row_count": 3652,
+          "daily_rows_by_month": {
+            "1": 310,
+            "10": 310,
+            "11": 300,
+            "12": 310,
+            "2": 282,
+            "3": 310,
+            "4": 300,
+            "5": 310,
+            "6": 300,
+            "7": 310,
+            "8": 310,
+            "9": 300
+          },
+          "requested": {
+            "latitude": 51.50853,
+            "longitude": -0.12574,
+            "timezone": "Europe/London"
+          },
+          "returned": {
+            "elevation_m": 23.0,
+            "latitude": 51.493847,
+            "longitude": -0.1630249,
+            "timezone": "Europe/London",
+            "utc_offset_seconds": 3600
+          }
+        },
+        {
+          "city_id": "madrid_es",
+          "daily_row_count": 3652,
+          "daily_rows_by_month": {
+            "1": 310,
+            "10": 310,
+            "11": 300,
+            "12": 310,
+            "2": 282,
+            "3": 310,
+            "4": 300,
+            "5": 310,
+            "6": 300,
+            "7": 310,
+            "8": 310,
+            "9": 300
+          },
+          "requested": {
+            "latitude": 40.4165,
+            "longitude": -3.70256,
+            "timezone": "Europe/Madrid"
+          },
+          "returned": {
+            "elevation_m": 651.0,
+            "latitude": 40.386642,
+            "longitude": -3.6760864,
+            "timezone": "Europe/Madrid",
+            "utc_offset_seconds": 7200
+          }
+        },
+        {
+          "city_id": "berlin_de",
+          "daily_row_count": 3652,
+          "daily_rows_by_month": {
+            "1": 310,
+            "10": 310,
+            "11": 300,
+            "12": 310,
+            "2": 282,
+            "3": 310,
+            "4": 300,
+            "5": 310,
+            "6": 300,
+            "7": 310,
+            "8": 310,
+            "9": 300
+          },
+          "requested": {
+            "latitude": 52.52437,
+            "longitude": 13.41053,
+            "timezone": "Europe/Berlin"
+          },
+          "returned": {
+            "elevation_m": 46.0,
+            "latitude": 52.54833,
+            "longitude": 13.407822,
+            "timezone": "Europe/Berlin",
+            "utc_offset_seconds": 7200
+          }
+        },
+        {
+          "city_id": "rome_it",
+          "daily_row_count": 3652,
+          "daily_rows_by_month": {
+            "1": 310,
+            "10": 310,
+            "11": 300,
+            "12": 310,
+            "2": 282,
+            "3": 310,
+            "4": 300,
+            "5": 310,
+            "6": 300,
+            "7": 310,
+            "8": 310,
+            "9": 300
+          },
+          "requested": {
+            "latitude": 41.89193,
+            "longitude": 12.51133,
+            "timezone": "Europe/Rome"
+          },
+          "returned": {
+            "elevation_m": 54.0,
+            "latitude": 41.862915,
+            "longitude": 12.539912,
+            "timezone": "Europe/Rome",
+            "utc_offset_seconds": 7200
+          }
+        },
+        {
+          "city_id": "amsterdam_nl",
+          "daily_row_count": 3652,
+          "daily_rows_by_month": {
+            "1": 310,
+            "10": 310,
+            "11": 300,
+            "12": 310,
+            "2": 282,
+            "3": 310,
+            "4": 300,
+            "5": 310,
+            "6": 300,
+            "7": 310,
+            "8": 310,
+            "9": 300
+          },
+          "requested": {
+            "latitude": 52.37403,
+            "longitude": 4.88969,
+            "timezone": "Europe/Amsterdam"
+          },
+          "returned": {
+            "elevation_m": 14.0,
+            "latitude": 52.40773,
+            "longitude": 4.842301,
+            "timezone": "Europe/Amsterdam",
+            "utc_offset_seconds": 7200
+          }
+        },
+        {
+          "city_id": "athens_gr",
+          "daily_row_count": 3652,
+          "daily_rows_by_month": {
+            "1": 310,
+            "10": 310,
+            "11": 300,
+            "12": 310,
+            "2": 282,
+            "3": 310,
+            "4": 300,
+            "5": 310,
+            "6": 300,
+            "7": 310,
+            "8": 310,
+            "9": 300
+          },
+          "requested": {
+            "latitude": 37.98376,
+            "longitude": 23.72784,
+            "timezone": "Europe/Athens"
+          },
+          "returned": {
+            "elevation_m": 92.0,
+            "latitude": 37.996483,
+            "longitude": 23.709677,
+            "timezone": "Europe/Athens",
+            "utc_offset_seconds": 10800
+          }
+        },
+        {
+          "city_id": "warsaw_pl",
+          "daily_row_count": 3652,
+          "daily_rows_by_month": {
+            "1": 310,
+            "10": 310,
+            "11": 300,
+            "12": 310,
+            "2": 282,
+            "3": 310,
+            "4": 300,
+            "5": 310,
+            "6": 300,
+            "7": 310,
+            "8": 310,
+            "9": 300
+          },
+          "requested": {
+            "latitude": 52.22977,
+            "longitude": 21.01178,
+            "timezone": "Europe/Warsaw"
+          },
+          "returned": {
+            "elevation_m": 113.0,
+            "latitude": 52.26713,
+            "longitude": 20.961182,
+            "timezone": "Europe/Warsaw",
+            "utc_offset_seconds": 7200
+          }
+        },
+        {
+          "city_id": "lisbon_pt",
+          "daily_row_count": 3652,
+          "daily_rows_by_month": {
+            "1": 310,
+            "10": 310,
+            "11": 300,
+            "12": 310,
+            "2": 282,
+            "3": 310,
+            "4": 300,
+            "5": 310,
+            "6": 300,
+            "7": 310,
+            "8": 310,
+            "9": 300
+          },
+          "requested": {
+            "latitude": 38.71667,
+            "longitude": -9.13333,
+            "timezone": "Europe/Lisbon"
+          },
+          "returned": {
+            "elevation_m": 48.0,
+            "latitude": 38.69947,
+            "longitude": -9.196167,
+            "timezone": "Europe/Lisbon",
+            "utc_offset_seconds": 3600
+          }
+        },
+        {
+          "city_id": "stockholm_se",
+          "daily_row_count": 3652,
+          "daily_rows_by_month": {
+            "1": 310,
+            "10": 310,
+            "11": 300,
+            "12": 310,
+            "2": 282,
+            "3": 310,
+            "4": 300,
+            "5": 310,
+            "6": 300,
+            "7": 310,
+            "8": 310,
+            "9": 300
+          },
+          "requested": {
+            "latitude": 59.32938,
+            "longitude": 18.06871,
+            "timezone": "Europe/Stockholm"
+          },
+          "returned": {
+            "elevation_m": 24.0,
+            "latitude": 59.36731,
+            "longitude": 18.0,
+            "timezone": "Europe/Stockholm",
+            "utc_offset_seconds": 7200
+          }
+        },
+        {
+          "city_id": "vienna_at",
+          "daily_row_count": 3652,
+          "daily_rows_by_month": {
+            "1": 310,
+            "10": 310,
+            "11": 300,
+            "12": 310,
+            "2": 282,
+            "3": 310,
+            "4": 300,
+            "5": 310,
+            "6": 300,
+            "7": 310,
+            "8": 310,
+            "9": 300
+          },
+          "requested": {
+            "latitude": 48.2082,
+            "longitude": 16.3738,
+            "timezone": "Europe/Vienna"
+          },
+          "returned": {
+            "elevation_m": 179.0,
+            "latitude": 48.189804,
+            "longitude": 16.377296,
+            "timezone": "Europe/Vienna",
+            "utc_offset_seconds": 7200
+          }
+        },
+        {
+          "city_id": "brussels_be",
+          "daily_row_count": 3652,
+          "daily_rows_by_month": {
+            "1": 310,
+            "10": 310,
+            "11": 300,
+            "12": 310,
+            "2": 282,
+            "3": 310,
+            "4": 300,
+            "5": 310,
+            "6": 300,
+            "7": 310,
+            "8": 310,
+            "9": 300
+          },
+          "requested": {
+            "latitude": 50.8503,
+            "longitude": 4.3517,
+            "timezone": "Europe/Brussels"
+          },
+          "returned": {
+            "elevation_m": 26.0,
+            "latitude": 50.861156,
+            "longitude": 4.3315506,
+            "timezone": "Europe/Brussels",
+            "utc_offset_seconds": 7200
+          }
+        },
+        {
+          "city_id": "copenhagen_dk",
+          "daily_row_count": 3652,
+          "daily_rows_by_month": {
+            "1": 310,
+            "10": 310,
+            "11": 300,
+            "12": 310,
+            "2": 282,
+            "3": 310,
+            "4": 300,
+            "5": 310,
+            "6": 300,
+            "7": 310,
+            "8": 310,
+            "9": 300
+          },
+          "requested": {
+            "latitude": 55.6761,
+            "longitude": 12.5683,
+            "timezone": "Europe/Copenhagen"
+          },
+          "returned": {
+            "elevation_m": 10.0,
+            "latitude": 55.641476,
+            "longitude": 12.596349,
+            "timezone": "Europe/Copenhagen",
+            "utc_offset_seconds": 7200
+          }
+        },
+        {
+          "city_id": "dublin_ie",
+          "daily_row_count": 3652,
+          "daily_rows_by_month": {
+            "1": 310,
+            "10": 310,
+            "11": 300,
+            "12": 310,
+            "2": 282,
+            "3": 310,
+            "4": 300,
+            "5": 310,
+            "6": 300,
+            "7": 310,
+            "8": 310,
+            "9": 300
+          },
+          "requested": {
+            "latitude": 53.3498,
+            "longitude": -6.2603,
+            "timezone": "Europe/Dublin"
+          },
+          "returned": {
+            "elevation_m": 11.0,
+            "latitude": 53.391914,
+            "longitude": -6.171417,
+            "timezone": "Europe/Dublin",
+            "utc_offset_seconds": 3600
+          }
+        },
+        {
+          "city_id": "oslo_no",
+          "daily_row_count": 3652,
+          "daily_rows_by_month": {
+            "1": 310,
+            "10": 310,
+            "11": 300,
+            "12": 310,
+            "2": 282,
+            "3": 310,
+            "4": 300,
+            "5": 310,
+            "6": 300,
+            "7": 310,
+            "8": 310,
+            "9": 300
+          },
+          "requested": {
+            "latitude": 59.9139,
+            "longitude": 10.7522,
+            "timezone": "Europe/Oslo"
+          },
+          "returned": {
+            "elevation_m": 21.0,
+            "latitude": 59.8594,
+            "longitude": 10.808314,
+            "timezone": "Europe/Oslo",
+            "utc_offset_seconds": 7200
+          }
+        },
+        {
+          "city_id": "helsinki_fi",
+          "daily_row_count": 3652,
+          "daily_rows_by_month": {
+            "1": 310,
+            "10": 310,
+            "11": 300,
+            "12": 310,
+            "2": 282,
+            "3": 310,
+            "4": 300,
+            "5": 310,
+            "6": 300,
+            "7": 310,
+            "8": 310,
+            "9": 300
+          },
+          "requested": {
+            "latitude": 60.1699,
+            "longitude": 24.9384,
+            "timezone": "Europe/Helsinki"
+          },
+          "returned": {
+            "elevation_m": 8.0,
+            "latitude": 60.210896,
+            "longitude": 25.023365,
+            "timezone": "Europe/Helsinki",
+            "utc_offset_seconds": 10800
+          }
+        },
+        {
+          "city_id": "prague_cz",
+          "daily_row_count": 3652,
+          "daily_rows_by_month": {
+            "1": 310,
+            "10": 310,
+            "11": 300,
+            "12": 310,
+            "2": 282,
+            "3": 310,
+            "4": 300,
+            "5": 310,
+            "6": 300,
+            "7": 310,
+            "8": 310,
+            "9": 300
+          },
+          "requested": {
+            "latitude": 50.0755,
+            "longitude": 14.4378,
+            "timezone": "Europe/Prague"
+          },
+          "returned": {
+            "elevation_m": 251.0,
+            "latitude": 50.08787,
+            "longitude": 14.475525,
+            "timezone": "Europe/Prague",
+            "utc_offset_seconds": 7200
+          }
+        },
+        {
+          "city_id": "budapest_hu",
+          "daily_row_count": 3652,
+          "daily_rows_by_month": {
+            "1": 310,
+            "10": 310,
+            "11": 300,
+            "12": 310,
+            "2": 282,
+            "3": 310,
+            "4": 300,
+            "5": 310,
+            "6": 300,
+            "7": 310,
+            "8": 310,
+            "9": 300
+          },
+          "requested": {
+            "latitude": 47.4979,
+            "longitude": 19.0402,
+            "timezone": "Europe/Budapest"
+          },
+          "returned": {
+            "elevation_m": 113.0,
+            "latitude": 47.486816,
+            "longitude": 19.06404,
+            "timezone": "Europe/Budapest",
+            "utc_offset_seconds": 7200
+          }
+        },
+        {
+          "city_id": "zurich_ch",
+          "daily_row_count": 3652,
+          "daily_rows_by_month": {
+            "1": 310,
+            "10": 310,
+            "11": 300,
+            "12": 310,
+            "2": 282,
+            "3": 310,
+            "4": 300,
+            "5": 310,
+            "6": 300,
+            "7": 310,
+            "8": 310,
+            "9": 300
+          },
+          "requested": {
+            "latitude": 47.3769,
+            "longitude": 8.5417,
+            "timezone": "Europe/Zurich"
+          },
+          "returned": {
+            "elevation_m": 409.0,
+            "latitude": 47.34622,
+            "longitude": 8.543372,
+            "timezone": "Europe/Zurich",
+            "utc_offset_seconds": 7200
+          }
+        },
+        {
+          "city_id": "bucharest_ro",
+          "daily_row_count": 3652,
+          "daily_rows_by_month": {
+            "1": 310,
+            "10": 310,
+            "11": 300,
+            "12": 310,
+            "2": 282,
+            "3": 310,
+            "4": 300,
+            "5": 310,
+            "6": 300,
+            "7": 310,
+            "8": 310,
+            "9": 300
+          },
+          "requested": {
+            "latitude": 44.4268,
+            "longitude": 26.1025,
+            "timezone": "Europe/Bucharest"
+          },
+          "returned": {
+            "elevation_m": 72.0,
+            "latitude": 44.46397,
+            "longitude": 26.088955,
+            "timezone": "Europe/Bucharest",
+            "utc_offset_seconds": 10800
+          }
+        }
+      ],
+      "standalone_generated_csv_sha256": "c6db9807321b078cf59d5af1a7df2f00ffb2684eadccbf63362e7481f5e91d88",
+      "preservation": "Only normal_temperature_2m_min was merged from this retrieval. All pre-existing seed values and row order are unchanged; existing columns retain their original cohort provenance."
+    }
+  ]
 }

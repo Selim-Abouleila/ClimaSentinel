@@ -1,0 +1,2 @@
+# The provenance manifest hashes the exact seed bytes on every platform.
+transform/seeds/city_monthly_normals.csv text eol=lf

@@ -9,6 +9,8 @@ export interface CityScore {
   // Optional during the expand/contract rollout so this frontend can be
   // deployed before the v2 backend contract without hiding legacy scores.
   current_score_available?: boolean;
+  // Missing on older APIs; undefined means the aggregation mode is unknown.
+  cold_in_global_score?: boolean;
   monitored_factor_count?: number;
   available_factor_count?: number;
   overall_coverage?: number | null;
@@ -25,6 +27,8 @@ export interface CityDetail {
   current_tipping_score: number | null;
   current_primary_driver: string | null;
   current_score_available?: boolean;
+  // Missing on older APIs; undefined means the aggregation mode is unknown.
+  cold_in_global_score?: boolean;
   monitored_factor_count?: number;
   available_factor_count?: number;
   overall_coverage?: number | null;
@@ -34,6 +38,12 @@ export interface CityDetail {
   heat_monitored?: boolean;
   heat_available?: boolean;
   heat_coverage?: number | null;
+  // Omitted by older APIs; null is an explicit unavailable value from the new API.
+  cold_score?: number | null;
+  cold_status?: SignalStatus;
+  cold_monitored?: boolean;
+  cold_available?: boolean;
+  cold_coverage?: number | null;
   wind_score: number | null;
   wind_status?: SignalStatus;
   wind_monitored?: boolean;
@@ -54,6 +64,9 @@ export interface CityDetail {
   river_monitored?: boolean;
   river_available?: boolean;
   river_coverage?: number | null;
+  temperature_2m_min?: number | null;
+  normal_temperature_2m_min?: number | null;
+  cold_anomaly_c?: number | null;
 }
 
 export async function fetchCurrentScores(): Promise<CityScore[]> {

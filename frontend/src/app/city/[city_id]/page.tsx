@@ -17,7 +17,7 @@ interface RiskBand {
 interface ScoreFactor {
   label: string;
   score: number | null;
-  status: SignalStatus;
+  status: SignalStatus | "not_reported";
   monitored: boolean;
   available: boolean;
   coverage: number | null;
@@ -76,6 +76,7 @@ function normalizeFactor(
 function buildFactors(city: CityDetail): ScoreFactor[] {
   return [
     normalizeFactor("Heat", city.heat_score, city.heat_status, city.heat_monitored, city.heat_available, city.heat_coverage),
+    normalizeColdFactor(city),
     normalizeFactor("Wind", city.wind_score, city.wind_status, city.wind_monitored, city.wind_available, city.wind_coverage),
     normalizeFactor("Rain", city.rain_score, city.rain_status, city.rain_monitored, city.rain_available, city.rain_coverage),
     normalizeFactor("Air Quality", city.air_score, city.air_status, city.air_monitored, city.air_available, city.air_coverage),
@@ -83,18 +84,54 @@ function buildFactors(city: CityDetail): ScoreFactor[] {
   ];
 }
 
+function normalizeColdFactor(city: CityDetail): ScoreFactor {
+  const notReported = [city.cold_score, city.cold_status, city.cold_monitored,
+    city.cold_available, city.cold_coverage].every((value) => value === undefined);
+  if (notReported) {
+    return { label: "Cold", score: null, status: "not_reported", monitored: false,
+      available: false, coverage: null, band: null };
+  }
+
+  // Cold has no legacy numeric-only contract. Require its availability metadata
+  // before displaying a score, including zero; partial coverage stays unavailable.
+  const status = city.cold_monitored === false ? "not_monitored"
+    : city.cold_status === "available" && city.cold_monitored === true && city.cold_available === true
+      ? "available" : city.cold_status === "not_monitored" ? "not_monitored" : "unavailable";
+  return normalizeFactor("Cold", city.cold_score ?? null, status,
+    city.cold_monitored, city.cold_available, city.cold_coverage);
+}
+
+function getAggregateCounts(city: CityDetail, factors: ScoreFactor[]) {
+  const monitored = city.monitored_factor_count;
+  const available = city.available_factor_count;
+  if (typeof monitored === "number" && Number.isInteger(monitored) && monitored >= 0
+    && typeof available === "number" && Number.isInteger(available) && available >= 0
+    && available <= monitored) {
+    return { monitored, available };
+  }
+  // A missing mode is unknown. Never infer inclusion from a count or Cold score.
+  if (city.cold_in_global_score === undefined) return null;
+  const participating = factors.filter((factor) => factor.label !== "Cold" || city.cold_in_global_score === true);
+  return {
+    monitored: participating.filter((factor) => factor.monitored).length,
+    available: participating.filter((factor) => factor.available).length,
+  };
+}
+
 function getFactorStatusLabel(factor: ScoreFactor) {
+  if (factor.status === "not_reported") return "Not reported";
   if (factor.status === "not_monitored") return "Not monitored";
   if (factor.status === "unavailable") return "Unavailable";
   return factor.band?.label ?? "Unavailable";
 }
 
 function getCoverageLabel(factor: ScoreFactor) {
+  if (factor.status === "not_reported") return "Cold data not reported";
   if (factor.status === "not_monitored") return "No source configured";
   if (factor.coverage === null) {
     return factor.status === "available" ? "Coverage not reported" : "Coverage unavailable";
   }
-  return `${Math.round(factor.coverage * 100)}% window coverage`;
+  return `${Math.round(factor.coverage * 100)}% ${factor.label === "Cold" ? "daily temperature" : "window"} coverage`;
 }
 
 export default async function CityDetailPage({
@@ -109,14 +146,23 @@ export default async function CityDetailPage({
 
   const cityName = formatCity(city_id);
   const hasGlobalScore = typeof city.current_tipping_score === "number"
-    && Number.isFinite(city.current_tipping_score);
+    && Number.isFinite(city.current_tipping_score) && city.current_score_available !== false;
   const globalScore = hasGlobalScore ? city.current_tipping_score : null;
   const globalBand = globalScore === null ? null : getRiskBand(globalScore);
   const factors = buildFactors(city);
-  const primaryDriver = normalizeDriver(city.current_primary_driver ?? "");
-  const monitoredFactorCount = factors.filter((factor) => factor.monitored).length;
-  const availableFactorCount = factors.filter((factor) => factor.available).length;
-  const notMonitoredFactorCount = factors.length - monitoredFactorCount;
+  const reportedDriver = city.current_primary_driver || "Unknown";
+  const driverLabel = normalizeDriver(reportedDriver) === "cold" && city.cold_in_global_score !== true
+    ? "Unknown" : reportedDriver;
+  const primaryDriver = normalizeDriver(driverLabel);
+  const aggregateCounts = getAggregateCounts(city, factors);
+  const aggregateCoverage = typeof city.overall_coverage === "number" && Number.isFinite(city.overall_coverage)
+    && city.overall_coverage >= 0 && city.overall_coverage <= 1
+    ? `${Math.round(city.overall_coverage * 100)}% aggregate coverage.` : null;
+  const coldContribution = city.cold_in_global_score === true
+    ? "Cold is included in the current tipping score when available."
+    : city.cold_in_global_score === false
+      ? "Cold is shown separately from the current tipping score."
+      : "Cold’s contribution to the current tipping score is not reported.";
   const snapshot = getSnapshotFreshness(city.operational_ingested_at_utc);
   const snapshotLabel = snapshot?.ingestedAt.toLocaleString("en-GB", {
     day: "2-digit",
@@ -142,21 +188,21 @@ export default async function CityDetailPage({
           <div className="city-detail-hero__identity">
             <div className="dashboard-eyebrow">
               <span className="dashboard-eyebrow__dot" aria-hidden="true" />
-              City profile · Current 48-hour window
+              City profile · Today / tomorrow (UTC)
             </div>
             <div className="city-detail-hero__title">
               <h1>{cityName.cityName}</h1>
               <span>{cityName.countryCode}</span>
             </div>
             <p>
-              {availableFactorCount > 0
+              {globalScore !== null
                 ? "Current climate stress composition from available monitored signals."
-                : "No monitored signals have enough source coverage for a current score."}
+                : "The current tipping score is unavailable. Individual signal readings are shown below."}
             </p>
             <div className="city-detail-hero__metadata">
               <span>
                 <small>Dominant driver</small>
-                <strong>{globalScore === null ? "Unavailable" : city.current_primary_driver || "Unknown"}</strong>
+                <strong>{globalScore === null ? "Unavailable" : driverLabel}</strong>
               </span>
               <span className="city-detail-hero__band">
                 <small>Risk band</small>
@@ -185,7 +231,7 @@ export default async function CityDetailPage({
                 <span style={{ width: `${Math.min(100, Math.max(0, globalScore))}%` }} />
               )}
             </div>
-            <p>{globalBand ? `${globalBand.range} · ${globalBand.label}` : "Unavailable · No scored signals"}</p>
+            <p>{globalBand ? `${globalBand.range} · ${globalBand.label}` : "Unavailable · No aggregate score"}</p>
           </div>
         </header>
 
@@ -195,13 +241,16 @@ export default async function CityDetailPage({
               <span className="section-kicker">Factor Breakdown</span>
               <h2 id="factor-breakdown-title">Current signal composition</h2>
               <p>Each factor is scored independently on the same zero-to-one-hundred scale.</p>
-              <p className="city-factor-panel__availability">
-                {availableFactorCount} of {monitoredFactorCount} monitored signals available
-                {notMonitoredFactorCount > 0
-                  ? ` · ${notMonitoredFactorCount} ${notMonitoredFactorCount === 1 ? "signal" : "signals"} not monitored for this city`
-                  : ""}
-                . Missing signals are excluded from the overall score.
-              </p>
+              <div className="city-factor-panel__composition" role="region" aria-label="Overall score composition">
+                <p className="city-factor-panel__availability">
+                  {aggregateCounts
+                    ? `${aggregateCounts.available} of ${aggregateCounts.monitored} monitored signals available for the current score.`
+                    : "Aggregate availability not reported."}
+                  {aggregateCoverage && ` ${aggregateCoverage}`}
+                  {" "}Missing signals are excluded from the overall score.
+                </p>
+                <p className="city-factor-panel__availability">{coldContribution}</p>
+              </div>
             </div>
             <div className="risk-legend" aria-label="Risk thresholds">
               {RISK_BANDS.map((band) => (
@@ -216,7 +265,8 @@ export default async function CityDetailPage({
 
           <div className="city-factor-list">
             {factors.map((factor, index) => {
-              const isPrimary = factor.available && normalizeDriver(factor.label) === primaryDriver;
+              const isPrimary = globalScore !== null && factor.available
+                && normalizeDriver(factor.label) === primaryDriver;
               const score = factor.score === null ? null : Math.min(100, Math.max(0, factor.score));
               const statusLabel = getFactorStatusLabel(factor);
               const stateClass = factor.status === "available" && factor.band
@@ -278,7 +328,7 @@ export default async function CityDetailPage({
 
         <footer className="dashboard-data-note">
           <span>Signal catalogue</span>
-          Heat · Wind · Rain · Air quality · River discharge · Availability varies by city
+          Heat · Cold · Wind · Rain · Air quality · River discharge · Availability varies by city
         </footer>
       </div>
     </main>

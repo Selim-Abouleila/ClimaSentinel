@@ -1,17 +1,24 @@
 # 11. Machine Learning and MLOps
 
+> **Read first:** [Critical Interpretation and Evidence Limits](0-critical-limitations.md)
+> defines the score's validation scope, timestamp limitation, snapshot
+> completeness gap and legacy provenance identifiers. This chapter must be read
+> within those boundaries.
+
 ClimaSentinel trains `ClimaSentinel_HeatRainForecaster` as an **offline
-challenger** for realized Heat and Rain risk at Day +1, Day +2 and Day +3. The
-operational endpoint currently serves deterministic same-vintage rules for all
-five factors. A registered candidate is not production evidence: it must beat
-the corresponding rule baseline before it can receive `champion`, and serving
-requires a separate reviewed integration decision.
+challenger** for archive-derived Heat and Rain heuristic scores at Day +1,
+Day +2 and Day +3. The operational endpoint currently serves deterministic
+same-vintage rules for all five factors. A registered candidate is not
+production evidence: it must beat the corresponding rule baseline before it
+can receive `champion`, and serving requires a separate reviewed integration
+decision.
 
 This boundary avoids both training/serving skew and false claims. Training a
 five-component model against later forecasts would teach it to reproduce
-another forecast, not validate it against reality.
+another forecast, not compare it with later archive-derived labels. Those
+labels validate neither the overall Tipping Score nor real-world harm.
 
-> **Evidence scope (reviewed 2026-07-28).** This document describes the
+> **Evidence scope (reviewed 2026-08-13).** This document describes the
 > repository's implemented contracts and gates. It is not an inventory of the
 > mutable DagsHub/MLflow registry, and the repository does not pin a current
 > schema-v3 run ID, registered version, alias target or evaluation report.
@@ -19,7 +26,7 @@ another forecast, not validate it against reality.
 ## End-to-end architecture
 
 ```text
-forecast vintages                  realized archive/reanalysis weather
+forecast vintages                  Open-Meteo Archive API labels
         │                                          │
         ▼                                          ▼
 mart_ml_forecast_features_vintage     mart_city_realized_weather_daily
@@ -50,7 +57,7 @@ mart_ml_serving_features_current
 backend response: Heat/Rain/Wind/AQ/River same-vintage rules
 ```
 
-## Point-in-time training data
+## Same-vintage, leakage-controlled training data
 
 `model/extract_data.py` reads `mart_ml_training_examples`. Each row is one
 canonical `(city_id, forecast_origin_date)` example with:
@@ -59,33 +66,50 @@ canonical `(city_id, forecast_origin_date)` example with:
 - the same ordered feature names used by
   `mart_ml_serving_features_current`;
 - exact Day +1, Day +2 and Day +3 target dates;
-- six realized targets whose outcomes are available: Heat and Rain for each
-  horizon; and
+- six later archive-derived heuristic targets: Heat and Rain for each horizon;
+  and
 - feature and label run/timestamp provenance.
 
 Labels are built only from `mart_city_realized_weather_daily`, backed by lagged
-Open-Meteo archive/reanalysis weather. A label is eligible only after its
+Open-Meteo Archive API weather. A label is eligible only after its
 outcome has occurred and the corresponding archive row has been ingested.
 The source request does not currently pin `models=era5` or retain a returned
 model/version; existing `era5_*` validation-status names and the
 `label_source='open_meteo_era5'` value are legacy contract labels rather than
-per-row source proof. Air-quality and flood forecast
+per-row source proof or verified ERA5 provenance. Air-quality and flood forecast
 features remain nullable; their upstream mart also retains explicit source
 presence/completeness flags for rule-serving decisions. Extraction does not
 forward-fill, backward-fill or replace a missing optional source with zero.
 
+“Same-vintage” means that an example's forecast features come from one selected
+ingestion run and that labels are joined only after the target outcome date. It
+is leakage-controlled at the run/date level, but it is **not exact UTC
+lead-hour safe**: provider-local offset-free forecast times are currently
+stored in UTC-typed columns. Do not use this dataset for hourly lead-time or DST
+claims until timezone-aware source timestamps are persisted and backfilled.
+
 ### Tracked snapshot compatibility
 
-On the current `dev` line, `model/data/training_snapshot.csv.dvc` references
-legacy object MD5 `44a4b85de5546b4cf649c71414468f52` (99,126 bytes), first
-committed in `486889d`. That object predates the schema-v3 point-in-time
+As reviewed on 2026-08-13, `dev` at `a5f03b3` and the feature branch state
+inherited from it reference legacy object MD5
+`44a4b85de5546b4cf649c71414468f52` (99,126 bytes), first committed in
+`486889d`. That object predates the schema-v3 same-vintage
 contract. It is not compatible with `mart_ml_training_examples_v1` and must not
 be used to reproduce, benchmark or promote the current challenger.
 
 The reusable MLOps workflow performs a fresh authorized extraction and runs
 `dvc add` before training. Local work must do the same until a schema-v3
 snapshot has been pushed and its updated pointer committed. A plain `dvc pull`
-from the current pointer does not establish reproducibility for this model.
+from the pointer on those revisions does not establish reproducibility for this
+model. This statement is deliberately branch-scoped: other branches can contain
+different DVC hashes, and a pointer's size/hash alone does not prove its schema
+or evaluation result.
+
+At the same review point, default branch `main` at `7798e7f` referenced a
+different object, MD5 `80a7723241f52ea77ef8d7c83bc231bc` (1,182,610 bytes).
+That fact corrects the former repository-wide “legacy pointer” wording; it does
+not, by itself, prove the object's contract compatibility or a successful
+evaluation. Reproduction evidence must remain tied to the exact branch and run.
 Any evaluation report must identify the exact Git commit, updated DVC hash,
 MLflow run ID/model version, data date range and held-out sample counts.
 
@@ -97,7 +121,7 @@ commit has a different Git ID. Those two identifiers must therefore be retained
 together—the logged source commit alone does not locate the fresh snapshot
 pointer.
 
-The realized score definitions are clipped to `0-100`:
+The archive-derived heuristic label definitions are clipped to `0-100`:
 
 ```text
 Heat(D) = (Tmax(D) - monthly_normal) * 5
@@ -144,7 +168,8 @@ Vienna, Brussels, Copenhagen, Dublin, Oslo, Helsinki, Prague, Budapest, Zurich
 and Bucharest do not enter forecast feature rows, training examples or artifact
 categories. Expanding the model scope requires synchronizing both contracts,
 updating the separate frontend selector and tests, collecting sufficient
-point-in-time history, regenerating the DVC snapshot, retraining and validating
+same-vintage leakage-controlled history, regenerating the DVC snapshot,
+retraining and validating
 a new artifact contract. Operational dashboard growth alone must not mutate the
 learned feature space.
 
@@ -243,6 +268,9 @@ component as `forecast_rule`. Heat is `era5_backtested_limited`; Rain, Wind, AQ
 and River are explicit about their different evidence states: Rain is
 `era5_backtested_insufficient_skill`, while Wind, AQ and River are
 `not_observation_validated` because their observed labels are not ingested.
+The two literal `era5_*` values are legacy API identifiers retained for wire
+compatibility; they mean “Open-Meteo Archive API backtest with the stated
+scope,” not verified ERA5 provenance.
 
 The deterministic forecast rules are:
 
@@ -267,15 +295,17 @@ data is `unavailable`, not zero.
 
 ## Validation evidence and uncertainty
 
-The repository does not currently contain a schema-v3-compatible DVC snapshot
-pointer or a pinned evaluation report that would make an exact row count,
-metric value or performance comparison independently reproducible. Do not
+The `dev`/`feature/fix_ml` revisions identified above do not contain a
+schema-v3-compatible DVC pointer, and no branch-scoped evaluation report is
+pinned here that would make an exact row count, metric value or performance
+comparison independently reproducible. Other branches may have different
+pointers; do not infer compatibility or results from a DVC hash alone. Do not
 quote a fixed sample count, R², MAE or improvement claim from this document.
 
-Reviewed prior evidence supports only the product's conservative status: Heat
-has limited backtest evidence against Open-Meteo archive/reanalysis data, while
-Rain was backtested against the same source but did not demonstrate sufficient
-predictive skill. Those labels are not a current benchmark result. The
+The existing product policy records Heat as having a limited Open-Meteo Archive
+API backtest and Rain as having insufficient skill against that source. The
+repository does not pin the report needed to independently verify either
+conclusion, so those statuses are not a reproducible benchmark result. The
 authoritative result for a future run is the evaluation
 record tied to its Git commit, updated DVC hash, MLflow run/model version, date
 range and per-target held-out counts. Until that record is published, neither
@@ -290,7 +320,8 @@ uncertainty method is `none`.
 From the repository root:
 
 ```bash
-# Required while the checked-in DVC pointer is legacy: extract a fresh
+# First inspect the pointer in the exact revision being run. On the dev and
+# feature/fix_ml revisions reviewed above, it is legacy, so extract a fresh
 # schema-v3 snapshot with authorized BigQuery access.
 python -m model.extract_data
 dvc add model/data/training_snapshot.csv
@@ -315,18 +346,21 @@ Production and staging challenger evaluation require DagsHub/MLflow
 credentials, while extraction and serving require BigQuery access. A rejected
 challenger leaves the rule endpoint and `champion` alias unchanged.
 
-Do not use `dvc pull` on the current checked-in pointer as the input to
-`model.train`. Do not infer current registry state from this document. Once a
-compatible pointer is published on `dev`, update this section with its DVC hash
-and add a pinned evaluation record containing the run ID, registered version,
-alias decision and held-out support.
+On the `dev`/`feature/fix_ml` revisions identified above, do not use `dvc pull`
+from the legacy pointer as the input to `model.train`. On any other revision,
+inspect and verify its pointer and associated run evidence first. Do not infer
+current registry state from this document. Once a compatible pointer is
+published on `dev`, update this section with its DVC hash and add a pinned
+evaluation record containing the run ID, registered version, alias decision
+and held-out support.
 
 ## Current limitation
 
-Only Heat and Rain currently have genuine realized labels, and the available
-history is not yet sufficient to deploy the tested challenger. Supporting Wind,
-AQ and River as learned outputs requires observed gust, historical AQ and
-observed river discharge ingestion, corresponding point-in-time label marts,
-retraining and baseline-relative outcome gates. Until a challenger passes and a
-serving integration is reviewed, all five outputs remain forecast-rule
-estimates with the validation scope stated above.
+Only Heat and Rain currently have realized Open-Meteo Archive API labels. The
+repository does not pin evidence that a challenger passed every promotion gate,
+and no learned model is integrated into serving. Supporting Wind, AQ and River
+as learned outputs requires observed gust, historical AQ and observed river
+discharge ingestion, corresponding leakage-controlled label marts, retraining
+and baseline-relative outcome gates. Until a challenger passes and a serving
+integration is reviewed, all five outputs remain forecast-rule estimates with
+the validation scope stated above.

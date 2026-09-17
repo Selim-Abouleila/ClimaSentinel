@@ -26,15 +26,25 @@ FROM expected
 LEFT JOIN actual
     ON expected.city_id = actual.city_id
 WHERE actual.city_id IS NULL
+    OR actual.operational_ingestion_run_id IS DISTINCT FROM expected.operational_ingestion_run_id
     OR actual.score_date IS DISTINCT FROM expected.date
     OR actual.current_tipping_score IS DISTINCT FROM expected.global_tipping_score
     OR actual.current_primary_driver IS DISTINCT FROM expected.primary_driver
+    OR actual.cold_in_global_score IS DISTINCT FROM expected.cold_in_global_score
     OR actual.heat_score IS DISTINCT FROM expected.heat_score
     OR actual.wind_score IS DISTINCT FROM expected.wind_score
     OR actual.rain_score IS DISTINCT FROM expected.rain_score
     OR actual.air_score IS DISTINCT FROM expected.air_score
     OR actual.river_score IS DISTINCT FROM expected.river_score
     OR actual.heat_status IS DISTINCT FROM expected.heat_status
+    OR actual.cold_score IS DISTINCT FROM expected.cold_score
+    OR actual.cold_status IS DISTINCT FROM expected.cold_status
+    OR actual.cold_monitored IS DISTINCT FROM expected.cold_monitored
+    OR actual.cold_available IS DISTINCT FROM expected.cold_available
+    OR actual.cold_coverage IS DISTINCT FROM expected.cold_coverage
+    OR actual.temperature_2m_min IS DISTINCT FROM expected.temperature_2m_min
+    OR actual.normal_temperature_2m_min IS DISTINCT FROM expected.normal_temperature_2m_min
+    OR actual.cold_anomaly_c IS DISTINCT FROM expected.cold_anomaly_c
     OR actual.wind_status IS DISTINCT FROM expected.wind_status
     OR actual.rain_status IS DISTINCT FROM expected.rain_status
     OR actual.air_status IS DISTINCT FROM expected.air_status

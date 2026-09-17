@@ -1,0 +1,42 @@
+version: 2
+
+unit_tests:
+  - name: test_cold_aggregate_current_v2
+    description: >
+      Select and rank current rows from coherent six-factor history. Cold can
+      make today or tomorrow win over the date preferred by the five original
+      factors. Equal scores choose the earlier date; an available zero outranks
+      an unavailable date and city. Tied city scores share a rank and skip the
+      next rank. Missing, partial and unmonitored Cold preserve other winners,
+      and rows outside the two-date UTC window never enter the result.
+    model: mart_city_score_current_v2
+    overrides:
+      vars:
+        cold_in_global_score: true
+    given:
+      - input: ref('mart_city_score_history_v2')
+        format: sql
+        fixture: cold_aggregate_selection_history
+    expect:
+      format: sql
+      fixture: cold_aggregate_selection_current
+
+  - name: test_cold_aggregate_detail_v2
+    description: >
+      Project all 60 detail fields from the selected six-factor history row.
+      Literal expectations cover Cold-driven date changes, earlier-date ties,
+      a scored zero versus an unavailable day, two unavailable days, missing or
+      partial Cold when another factor wins, unmonitored Cold, coherent
+      coverage/counts and existing-factor driver precedence over tied Cold.
+      Out-of-window rows and a city with no in-window row are excluded.
+    model: mart_city_score_detail_v2
+    overrides:
+      vars:
+        cold_in_global_score: true
+    given:
+      - input: ref('mart_city_score_history_v2')
+        format: sql
+        fixture: cold_aggregate_selection_history
+    expect:
+      format: sql
+      fixture: cold_aggregate_selection_detail

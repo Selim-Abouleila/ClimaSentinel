@@ -2,6 +2,11 @@
 
 **Live dashboard:** [climasentinel.up.railway.app](https://climasentinel.up.railway.app/)
 
+> **Prototype interpretation contract:** “Live” means the URL is reachable; it
+> does not certify a production release, a completed ingestion run or complete
+> factor coverage. Before interpreting any score, band, timestamp or validation
+> label, read [Critical System Limitations](0-critical-limitations.md).
+
 The ClimaSentinel frontend is a Next.js 16 App Router application written in
 TypeScript and deployed to Railway. It consumes only the FastAPI contract; it
 does not query BigQuery or load MLflow artifacts directly.
@@ -11,8 +16,8 @@ does not query BigQuery or load MLflow artifacts directly.
 - Next.js 16 and React 19;
 - TypeScript API types in `frontend/src/lib/api.ts`;
 - Tailwind CSS v4 plus shared design tokens; and
-- Playwright for pure availability and backend-health proxy unit tests plus live
-  staging end-to-end tests.
+- Playwright for pure availability and backend-health proxy unit tests, local
+  Cold UI fixture tests and live staging end-to-end tests.
 
 `NEXT_PUBLIC_API_URL` identifies the backend and is embedded into the
 browser-facing bundle at build time. Railway must therefore provide the correct
@@ -22,10 +27,20 @@ operational payloads with dedicated Pydantic models. The TypeScript interfaces
 in `frontend/src/lib/api.ts` are compile-time only: the browser currently trusts
 parsed JSON and does not perform independent runtime-schema validation.
 
+The API types now include optional `cold_in_global_score` on overview/detail,
+plus Cold score/status/monitoring/availability/coverage and Tmin/reference/anomaly
+on detail. These additions remain optional for the frontend-first rollout:
+an omitted field means the older API did not report it, while an explicit null
+score means unavailable data. An absent aggregation mode is unknown, not false.
+The city-detail catalogue now displays Cold after Heat, with its own score,
+status and coverage. The checked-in dbt default is true; deploying the updated
+ingestion image and rebuilding the warehouse applies it to served scores.
+Implementing the UI alone does not enable Cold in live aggregate scores.
+
 ## Main dashboard and city detail
 
-The `/` dashboard renders current operational risk from
-`GET /data/current-scores`. `/city/[city_id]` renders the five-factor signal
+The `/` dashboard renders the current operational heuristic score from
+`GET /data/current-scores`. `/city/[city_id]` renders the six-factor signal
 catalogue from `GET /data/city/{city_id}/scores`, but only factors with complete
 required input coverage receive a numeric score. These pages describe the
 current operational marts; they must not be interpreted as model-validation
@@ -39,20 +54,42 @@ spine keeps that operational surface at 20 cities, including the 10
 dashboard-only additions, even when some selected-run signals are unavailable.
 
 The underlying mart selects the two UTC dates “today + tomorrow,” not a rolling
-48-hour interval. The current overview and city page still display “48-hour”
-copy, which is a known product-label mismatch. Unlike `/forecast`, they do not
-currently render the beta/validation disclosure.
+48-hour interval. City detail now labels the window “Today / tomorrow (UTC).”
+The overview still displays “48-hour” copy, which remains a known product-label
+mismatch. Unlike `/forecast`, these pages do not currently render the
+beta/validation disclosure.
 
-Operational factors have three explicit UI states. `available` renders the
-numeric score and risk band; `unavailable` renders a neutral em dash plus the
-reported coverage; `not_monitored` renders “Not monitored / No source
+Operational factors have three explicit availability states. `available`
+renders the numeric heuristic score and product band; `unavailable` renders a
+neutral em dash plus the reported coverage; `not_monitored` renders “Not monitored / No source
 configured.” Neither missing state receives a green Stable label or meter fill.
 Detail copy reports available versus monitored factor counts and states that
 missing factors are excluded from the overall maximum. A fully covered input
 whose rule genuinely evaluates to zero remains `0.0 · Stable`.
 
-The overview accepts a nullable city-level score. Cities without any available
-factor are excluded from the network mean, highest-risk selection and spectrum,
+The Cold row does not render a temperature-context panel or its selected-date
+explanation. Forecast Tmin, monthly normal Tmin, anomaly and `score_date` remain
+available in the API and warehouse. An older API payload that omits Cold shows
+“Not reported,” without a synthetic zero, Stable band or meter fill.
+
+The reported `cold_in_global_score` mode controls the aggregate explanation and
+dominant-factor eligibility:
+
+| API mode | Cold presentation |
+|---|---|
+| `false` | Display the independent Cold score, while stating that it is excluded from the aggregate. Even a larger Cold score does not become the dominant participating factor. |
+| `true` | Identify Cold as participating; an available Cold score can be the dominant factor. |
+| Omitted | Explain that participation was not reported. Do not infer a mode from the presence of a Cold score or the number of monitored factors. |
+
+Aggregate availability and coverage copy displays the counts and overall
+coverage supplied by the API. If an older payload omits counts, only a reported
+mode permits a fallback count of its participating factors; otherwise counts
+remain unreported.
+This keeps counts consistent with the stored aggregation mode and each factor's
+monitoring/availability state, rather than counting all six visible rows.
+
+The overview accepts a nullable city-level score. Cities without an available
+participating factor are excluded from the network mean, highest-risk selection and spectrum,
 but remain visible as Unavailable cards. Tied worst dates resolve to one
 deterministic dbt row before the UI receives them; see
 [Mart Layer](4-mart-layer.md#mart_city_score_detail_v2-view).
@@ -67,8 +104,9 @@ Overview and detail responses carry `operational_ingestion_run_id` and
 `operational_ingested_at_utc`. Both pages display the selected snapshot time and
 switch to a visible stale warning after 36 hours. This is a mitigation, not a
 run audit: there is no completed-run manifest yet, so a failed ingestion can
-leave the old snapshot selected and an overlapping/in-progress run can briefly
-appear newest.
+leave the old snapshot selected and an overlapping, in-progress or partially
+successful run can appear newest. The timestamp and freshness threshold do not
+prove that all expected sources or factors completed.
 
 The overview converts any API failure into an empty array and shows the same
 empty state as a legitimate zero-row response. The city client converts a
@@ -88,7 +126,7 @@ contract: Paris, London, Madrid, Berlin, Rome, Amsterdam, Athens, Warsaw,
 Lisbon and Stockholm. Vienna, Brussels, Copenhagen, Dublin, Oslo, Helsinki,
 Prague, Budapest, Zurich and Bucharest appear on the operational dashboard but
 are absent from the forecast selector and `forecast_city_allowlist.csv`; they do
-not enter point-in-time forecast features, ML training or serving. Any future
+not enter same-vintage forecast features, ML training or serving. Any future
 forecast expansion requires an explicit coordinated allowlist, backend and
 frontend contract change rather than following operational registry growth.
 
@@ -104,7 +142,7 @@ The page gives a prominent global beta disclosure and validation-scope note:
 
 The API carries `method`, `validation_status`, `provenance` and `method_reason`
 for every factor, but the current factor cards do **not** render those values as
-visible per-factor labels. They show the factor score/risk band or a source-data
+visible per-factor labels. They show the factor score/product band or a source-data
 unavailable state. `method` is present only as a non-visible
 `data-forecast-method` attribute. Product copy must therefore not claim that the
 current UI presents detailed provenance on every card.
@@ -148,13 +186,24 @@ The availability release uses a deliberate expand-and-contract order:
 
 Both submissions are asynchronous, but the cutovers are intentionally not
 parallel: mart readiness and frontend confirmation must both pass before the
-backend is submitted. Each primary release poll has a strict 600-second
-deadline, caps individual requests at 10 seconds and waits no more than 10
-seconds between attempts. The E2E job reconfirms both identities after its job
-boundary.
+backend is submitted. The primary frontend release poll has a strict 600-second
+deadline; the backend release poll allows 1200 seconds (20 minutes). Both cap
+individual requests at 10 seconds and wait no more than 10 seconds between
+attempts. The E2E job reconfirms both identities after its job boundary.
 
 The unsuffixed marts remain temporary rollback compatibility and do not expose
 the v2 column contract.
+
+Cold release verification remains separate from the current live E2E suite
+and CD schema check, which do not verify Cold-specific activation. Promote
+through PR `dev` → `staging`, run `make deploy` from the latest merged staging
+checkout to apply the true setting and update the scheduled ingestion image,
+then verify the warehouse, API and UI. This shared-output rollout changes both
+websites when dbt rebuilds the marts. Only after verification passes, open PR
+`staging` → `main`. Local fixture browser success does not establish that the
+release is deployed; the production Railway deployment workflow remains disabled.
+The [mart activation procedure](4-mart-layer.md#six-factor-aggregation-activation)
+also describes reverting to false mode with an updated image and warehouse rebuild.
 
 The pure unit suite checks legacy compatibility, explicit v2 false precedence,
 measured zero, unavailable factors and aggregation with partial/all-unavailable
@@ -162,6 +211,14 @@ inputs in `signal-availability.spec.ts`. It also verifies the health proxy's
 no-cache pass-through and unreachable-backend `502` response in
 `backend-health-route.spec.ts`. It runs in PR CI with `npm run test:unit` and
 does not contact a browser or live service.
+
+`npm run test:cold-ui` runs a separate local browser suite against deterministic
+Cold fixtures. It checks the rendered Cold score/status/coverage, valid zero,
+the absence of the temperature-context panel, missing/partial/unmonitored
+states, older payloads and both reported aggregation
+modes. See [End-to-End Testing](13-end-to-end-testing.md#local-cold-ui-fixture-suite)
+for its scope and execution. It does not replace live BigQuery or staging
+release verification and is separate from `npm run test:e2e`.
 
 The staging Playwright smoke test verifies the
 `forecast_rules_baseline` API contract for Paris across all three horizons and
