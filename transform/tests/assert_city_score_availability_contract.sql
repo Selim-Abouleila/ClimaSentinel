@@ -105,7 +105,7 @@ factor_violations AS (
 ),
 
 -- Cold metadata is always checked. Aggregate expectations follow the explicit
--- rollout setting, which defaults to the live five-factor serving contract.
+-- rollout setting used to build the marts, including Cold by default.
 global_expectations AS (
     SELECT
         *,

@@ -48,11 +48,13 @@ means no below-reference anomaly, not safe absolute conditions. The
 history mart exposes the anomaly, score and availability metadata, and the
 detail view projects them from its selected date. History/detail APIs expose
 these fields, and the city-detail UI displays Cold's score and availability.
-Temperature context remains available through the API and warehouse. Cold is
-excluded from the default live aggregate.
-Six-factor aggregation code is available behind `cold_in_global_score`, default
-false, pending isolated staging verification and a coordinated release. The backend supports
-both modes using warehouse metadata. Enabling Cold changes score composition;
+Temperature context remains available through the API and warehouse, but is
+not displayed in the city-detail UI. The checked-in `cold_in_global_score`
+default is true; deployment and a warehouse rebuild apply that setting to
+served scores. The backend supports both enabled and rollback/compatibility
+false modes using warehouse metadata. The shared-output rollout affects both
+websites when the marts are rebuilt and still requires deployed verification.
+Enabling Cold changes score composition;
 it does not add outcome calibration or validate the existing zone thresholds.
 
 ## Evidence by component

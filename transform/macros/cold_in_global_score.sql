@@ -1,5 +1,5 @@
 {% macro cold_in_global_score() %}
-    {# Keep the live five-factor contract until the application cutover. #}
+    {# Explicit project configuration enables Cold; omission falls back to false. #}
     {% set enabled = var('cold_in_global_score', false) %}
     {% if enabled is not boolean %}
         {{ exceptions.raise_compiler_error(

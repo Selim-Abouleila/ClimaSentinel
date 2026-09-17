@@ -223,10 +223,15 @@ passed. See
 
 The Cold UI fixture suite runs locally with `npm run test:cold-ui`; the current
 workflows do not invoke that command. It verifies deterministic rendered states
-without deploying the application or changing warehouse aggregation. Keep
-`cold_in_global_score` false until staging data isolation and Cold-specific
-deployment checks are in place. Merge the `dev` → `staging` PR, deploy and verify
-there, and only then open the `staging` → `main` PR.
+without deploying the application or changing warehouse aggregation. The checked-in
+`cold_in_global_score` default is true. Merge the `dev` → `staging` PR, then run
+`make deploy` from the latest merged staging checkout to update the ingestion
+image and rebuild/test the warehouse. This shared-output rollout affects both
+websites when dbt rebuilds the marts; the scheduled job must use the updated image
+to preserve the setting. The existing CD schema gate and live E2E suite omit
+Cold-specific activation verification, so separately check the API mode, score,
+driver, counts, coverage and UI before opening the `staging` → `main` PR.
+See the [activation and rollback procedure](4-mart-layer.md#six-factor-aggregation-activation).
 
 ### Checks not provided by the current workflows
 

@@ -36,12 +36,11 @@ independent from the frozen 10-city same-vintage ML path.
 ### `mart_city_score_history_v2` (table)
 
 Calculates the forecast-derived Tipping Score for every city and valid date. It
-combines five component indicators by default and takes their maximum as the
-global score.
-It also calculates Cold independently in the history table, with its own
-monitoring and availability fields. Six-factor aggregation is implemented behind
-`cold_in_global_score: false`, pending isolated staging verification and a
-coordinated application/data release.
+combines six component indicators by default and takes the maximum available
+score as the global score. Cold has its own monitoring and availability fields.
+The checked-in `cold_in_global_score: true` setting takes effect in the warehouse
+when the updated models are built; it is not evidence of a completed live release.
+The false mode remains available for rollback/compatibility.
 
 These formulas, multipliers, activation thresholds and the maximum aggregation
 are product-defined and uncalibrated. Their permitted uses and evidence gaps are
@@ -52,6 +51,7 @@ Every component is clipped to the `0-100` range before the maximum is taken.
 | Component | Operational calculation |
 |---|---|
 | Heat | `(Tmax - monthly normal) * 5 + max(0, Tmax[D+1] - Tmax[D]) * 5` |
+| Cold | `5 * cold_anomaly_c`, capped at 100 and rounded to one decimal; see `cold_anomaly_v1` below. |
 | Wind | `max(0, gust_km_h - 40) * 2.5` |
 | Rain | `precipitation_mm * 2` |
 | Air quality | `(European_AQI - 40) * 1.67` |
@@ -110,15 +110,16 @@ This diagnostic uses the existing operational date and city/month join. The
 staging date is derived from `DATE(valid_ts_utc)`, while the seed averages
 city-local calendar days. This addition preserves that existing date convention.
 
-The anomaly is not a 0–100 risk score. It does not enter the global score,
-primary driver, factor counts or coverage aggregates. Inspect it in
+The raw anomaly is a temperature difference, not a 0–100 score. Its derived
+`cold_score` participates in aggregation when the stored mode is true. Inspect the anomaly in
 `mart.mart_city_score_history_v2` or on the selected date in
 `mart.mart_city_score_detail_v2`. The history/detail APIs expose the Cold fields;
 the ML and three-day forecast contracts still omit Cold.
 
 After updating the GCP checkout, run `make dbt-run` and `make dbt-test`.
 The cold-anomaly fixture unit test covers anomaly and Cold-score boundaries,
-missingness, city/month selection and unchanged five-factor outputs. The
+missingness, city/month selection and five-factor outputs under an explicit
+false-mode override. The
 singular test `assert_city_cold_anomaly_contract` checks diagnostic lineage and
 availability on built data. `assert_city_cold_score_contract` checks Cold's
 monitoring lineage, eligibility, status, coverage and finite score range.
@@ -137,11 +138,11 @@ dbt test --project-dir transform --profiles-dir transform --select test_cold_ano
 **Status:** implemented in `mart_city_score_history_v2`. After applying the
 dbt changes, the history table exposes `cold_score`, `cold_status`,
 `cold_monitored`, `cold_available` and `cold_coverage`, alongside the raw Tmin,
-monthly reference and anomaly. Cold is excluded from the live global score,
-driver, factor counts and overall coverage pending coordinated API/UI support.
-The detail view passes through these fields from its selected history row;
-current/detail aggregates still use five factors by default. Typed API responses
-expose Cold independently and validate aggregates using the stored mode.
+monthly reference and anomaly. With the checked-in true mode, Cold participates
+in the global score, driver, factor counts and overall coverage after the models
+are rebuilt. The detail view passes through these fields from its selected
+history row. Typed API responses expose Cold and validate aggregates using the
+stored mode, including the false mode retained for rollback/compatibility.
 The rule identifier names this specification, not a warehouse column.
 
 `cold_monitored` comes from `city_signal_monitoring` through
@@ -236,8 +237,8 @@ counts days in spells of at least six consecutive days below a daily Tmin
 **Verification:** fixture unit tests cover rounding, clipping, increasing
 anomalies, missing and invalid counts, non-finite values, unmonitored Cold,
 city/month selection and independence from Heat or tomorrow. The expected SQL
-includes all history output columns and verifies the existing five-factor
-results even when Cold exceeds their maximum. Schema and singular tests check
+includes all history output columns and verifies five-factor results under an
+explicit false-mode override even when Cold exceeds their maximum. Schema and singular tests check
 Cold metadata, source lineage, eligibility, coverage and finite 0–100 scores.
 Run `make dbt-run` followed by `make dbt-test` against BigQuery, then inspect
 the new fields directly (replace `PROJECT_ID`):
@@ -252,18 +253,19 @@ ORDER BY city_id, date;
 
 Cold is now available in history, the detail view and their API responses. The
 city-detail UI displays its score and availability from the selected row;
-temperature context remains in the API and warehouse. Existing global score,
-driver, counts and coverage stay on five factors until the six-factor aggregation change is
-released with compatible backend/frontend contracts.
-The opt-in aggregation and consumer selection are tested as described below.
+temperature context remains in the API and warehouse. The checked-in default
+includes Cold in the global score, driver, counts and coverage after deployment
+and rebuild. Compatible backend/frontend contracts read the persisted mode.
+Both aggregation modes and consumer selection are tested as described below.
 ML features, labels and the three-day forecast experience
 require their own later Cold specification.
 
 #### Six-factor aggregation activation
 
 `transform/dbt_project.yml` defines the boolean `cold_in_global_score`, default
-`false`. With that default, all existing aggregate values and date selection
-remain on Heat, Wind, Rain, Air Quality and River. Cold's individual score and
+`true`. Updated builds include Cold alongside Heat, Wind, Rain, Air Quality and
+River in aggregate values and date selection. Setting `false` restores
+five-factor aggregation for rollback/compatibility. Cold's individual score and
 detail fields are available in either mode. Non-boolean values, including the
 string `"false"`, cause a compilation error instead of silently enabling Cold.
 
@@ -296,12 +298,13 @@ already rounded per-factor fields.
 Current/detail views consume the resulting global score and select the same
 complete row by availability, score descending, then earlier date. For example,
 today's five-factor maximum 20 with Cold 100 beats tomorrow's maximum 40 with
-Cold 10 when enabled; the default still selects tomorrow. A sole available Cold
+Cold 10 with the true default; false mode selects tomorrow. A sole available Cold
 score, including zero, wins over an unavailable date. Current ranking and zone
 membership follow the selected aggregate; zone thresholds are unchanged.
 
 `make dbt-test` exercises both modes through native unit-test variable overrides:
-`test_cold_anomaly_v2` verifies the default five-factor contract;
+`test_cold_anomaly_v2` explicitly overrides the setting to false and verifies
+the five-factor compatibility contract;
 `test_cold_aggregate_v2` verifies six-factor arithmetic and missingness;
 `test_cold_aggregate_current_v2` and `test_cold_aggregate_detail_v2` verify
 six-factor date selection and ranking using complete SQL fixtures. These tests
@@ -310,21 +313,35 @@ use mocked inputs and do not activate six-factor scoring in the built marts.
 `assert_city_score_v2_current_detail_consistent` checks matching aggregates,
 run provenance and ranking across the built consumer views.
 
-**Release boundary:** backend and frontend code now support both modes, and the
-city-detail UI displays Cold independently when the stored mode is false.
-Local fixture browser tests cover the visible states; isolated staging and
-Cold-specific deployment gates remain required.
-Keep this setting false until compatible application versions are deployed and
-staging data is isolated. Use PR `dev` → `staging`, deploy and verify both modes
-there, and only then open PR `staging` → `main`. Enable the setting in the release's dbt
-configuration and rebuild/deploy the ingestion image so scheduled runs retain
-the same mode. Run the models and tests with matching configuration and verify
-API responses and dashboard behavior together. Changing `--target` alone does
-not create an isolated preview: the project uses the same explicit `stg`/`mart`
-schemas. The normal `make dbt-run` / `make dbt-test` workflow keeps the default
-five-factor live behavior while validating the enabled unit cases. The current
-production Railway workflow does not deploy the application; merging `main`
-alone is not evidence that compatible production services are running.
+**Release boundary:** backend and frontend code support both modes. They use
+the persisted warehouse flag; there is no separate frontend activation switch.
+Local fixture tests cover both modes, but the existing live E2E suite and CD
+schema check do not provide Cold-specific activation verification.
+
+This release uses the existing shared backend and warehouse. Changing `--target`
+does not isolate outputs: both targets use the explicit `stg`/`mart` schemas.
+Rebuilding the shared marts therefore changes scores on both the public and
+staging websites before the `main` PR. Follow this rollout order:
+
+1. Merge the reviewed PR `dev` → `staging` containing the true setting.
+2. In Cloud Shell, update to the latest merged staging checkout and run
+   `make deploy`. This rebuilds and deploys the ingestion image, executes its
+   ingestion/dbt job, and runs dbt models and tests. The warehouse rebuild is
+   the activation point; the updated image keeps subsequent scheduled runs
+   on the same mode. `make dbt-run` alone does not update that image.
+3. Verify the deployed history/current/detail mode is true and check the
+   API/UI maximum, driver, monitored/available counts, coverage and selected
+   date. Counts depend on monitoring and availability; enabling six-factor
+   aggregation does not imply six monitored or six available factors for
+   every city. Temperature details remain hidden in the UI. Rerun staging E2E
+   as a smoke check, alongside the separate Cold-specific verification.
+4. Only after warehouse/API/UI verification passes, open PR `staging` → `main`.
+
+For rollback, set `cold_in_global_score: false` in the release configuration,
+then deploy the updated ingestion image and rebuild/test the marts with the
+same setting. Changing only application code or rerunning an older image does
+not restore the intended warehouse mode. The production Railway workflow does
+not deploy the application; merging `main` alone is not evidence of deployment.
 
 ### `mart_city_score_current_v2` (view)
 
@@ -359,7 +376,7 @@ standalone safety advice.
 
 ### `mart_city_score_detail_v2` (view)
 
-Exposes the five aggregate component scores plus the independent Cold score,
+Exposes all six component scores, including Cold,
 their monitoring/availability/coverage metadata and raw forecast context. One
 `ROW_NUMBER` selection chooses the complete worst-day row, ordered by score
 availability, score descending and date ascending. Every returned field
@@ -371,13 +388,13 @@ The Cold projection adds `cold_score`, `cold_status`, `cold_monitored`,
 from the row identified by `score_date` and `operational_ingestion_run_id`.
 NULL scores, fractional coverage and unmonitored states are preserved.
 
-With the default setting, the chosen date uses the five-factor global score.
+In false rollback/compatibility mode, the chosen date uses the five-factor global score.
 A larger Cold score on the other date does not change the selection. For example, if today has
 global score 20 and Cold 100, while tomorrow has global score 40 and Cold 10,
 detail selects tomorrow and exposes Cold 10. When both dates lack a five-factor
 score, the earlier date wins even if Cold is available. Cold does not change
 ranking, driver selection, factor counts or overall coverage in that mode.
-With `cold_in_global_score: true`, the same selector uses the six-factor
+With the default `cold_in_global_score: true`, the same selector uses the six-factor
 aggregate described above; every projected field still comes from one row.
 
 The backend's explicit SELECT and typed response expose all six factors, Cold

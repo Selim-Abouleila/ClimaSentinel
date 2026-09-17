@@ -21,10 +21,10 @@ clean-targets:
   - "target"
   - "dbt_packages"
 
-# Cold is calculated independently. Activate six-factor aggregates only with
-# compatible backend/frontend contracts; native unit tests exercise both modes.
+# Cold participates in aggregates after models are rebuilt with this setting.
+# Keep the deployed ingestion image in sync; native unit tests cover both modes.
 vars:
-  cold_in_global_score: false
+  cold_in_global_score: true
 
 # ─── Model materialization defaults ──────────────────────────────────────────
 models:

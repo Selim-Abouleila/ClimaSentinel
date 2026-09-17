@@ -260,30 +260,37 @@ lowest reading or a value inferred from the mean/maximum columns.
 The operational `mart_city_score_history_v2` exposes forecast minimum,
 normal minimum and `cold_anomaly_c` (degrees below normal). The diagnostic
 requires 24 non-null hourly readings and finite aggregate inputs; otherwise it
-is NULL. It does not affect the five-factor score or require tomorrow's data.
+is NULL. It supplies the Cold score and does not require tomorrow's data.
 See [Doc 4](../docs/4-mart-layer.md#cold-temperature-diagnostic) for the formula
 and tests. The [initial Cold scoring rule](../docs/4-mart-layer.md#cold-scoring-rule-cold_anomaly_v1)
 is implemented in history: five points per degree below the monthly Tmin
 reference, capped at 100 and rounded to one decimal. It exposes `cold_score`,
-`cold_monitored`, `cold_available`, `cold_status` and `cold_coverage`. The global
-score and aggregate metadata still use five factors. `mart_city_score_detail_v2`
+`cold_monitored`, `cold_available`, `cold_status` and `cold_coverage`. With the
+checked-in true aggregation mode, the rebuilt global score and aggregate metadata
+include Cold. `mart_city_score_detail_v2`
 now passes through those Cold fields and Tmin/reference/anomaly context from
-the same selected `score_date`. The date is still chosen by the five-factor
-aggregate; Cold does not independently choose a different day. See the
+the same selected `score_date`. The date is chosen by the participating-factor
+aggregate, including Cold when enabled; all detail fields come from that row. See the
 [detail-view contract](../docs/4-mart-layer.md#mart_city_score_detail_v2-view)
 for verification queries and tests. The history/detail APIs expose Cold, and the
 city-detail UI displays its score and availability from that row. Temperature
-context remains in the API and warehouse. Isolated staging activation and ML
-support remain separate work.
-Six-factor aggregation is implemented behind the strict boolean
-`cold_in_global_score`, default `false` in `dbt_project.yml`. `make dbt-test`
-exercises both modes through unit-test overrides without changing the live
-marts. Keep the default until compatible backend/frontend support is deployed;
+context remains in the API and warehouse and is hidden in the UI. Cold support
+for the separate ML/forecast feature remains separate work.
+Six-factor aggregation uses the strict boolean
+`cold_in_global_score`, default `true` in `dbt_project.yml`. `make dbt-test`
+exercises both modes through unit-test overrides and checks built marts against
+the configured mode. Changing the file alone does not activate existing marts;
 see [activation and verification](../docs/4-mart-layer.md#six-factor-aggregation-activation).
 History persists the chosen mode in a Boolean `cold_in_global_score` column,
 and current/detail pass it through from the selected row. The backend requires
-this field to validate both modes without guessing from counts. Run `make dbt-run`
-and `make dbt-test` before deploying the updated backend; the default remains false.
+this field to validate both modes without guessing from counts. After merging
+the `dev` to `staging` PR, run `make deploy` from the updated staging checkout.
+It updates the ingestion image, executes ingestion, and runs dbt seed/run/test so
+scheduled runs retain the enabled mode. This rollout uses the existing shared
+`stg`/`mart` datasets and affects every application reading those marts. Verify
+the persisted true mode and API/UI behavior before opening `staging` to `main`.
+Rollback requires setting the flag to `false`, updating the ingestion image and
+rebuilding the marts with matching tests; a Git-only change leaves live data intact.
 `seeds/_seeds.yml` sets `full_refresh: true` on `city_monthly_normals` and
 `city_signal_monitoring` so every seed run applies their new baseline and
 monitoring columns from the CSVs. The setting is scoped to these two seeds;

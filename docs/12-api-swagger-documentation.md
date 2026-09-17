@@ -85,7 +85,8 @@ participants; true includes Cold in the maximum, driver, counts and coverage.
 All six factor states are validated on detail/history even when Cold is excluded
 from aggregation. Missing, null or string-valued modes are contract errors;
 counts alone never determine the mode. Deploy this backend only after refreshing
-the marts with that column. The dbt setting remains false for the current rollout.
+the marts with that column. The checked-in dbt default is true; the mode served
+by the API changes only when the warehouse is rebuilt with that setting.
 
 The active routes below read `_v2` relations. Unsuffixed operational marts are
 temporary legacy rollback compatibility with their legacy schemas; they do not
@@ -128,7 +129,8 @@ including Cold context and the aggregation mode. These are operational score-mar
 outputs, not claims that the factors have
 realized-label model validation. The aggregate covers today and tomorrow UTC,
 not a rolling 48-hour window. One ordered row selection makes the response
-deterministic when both dates tie.
+deterministic when both dates tie. The example below illustrates the retained
+false rollback/compatibility mode, not the checked-in true default.
 
 ```json
 {
